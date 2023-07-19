@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::SinkExt;
 use selium::prelude::*;
 
 #[tokio::main]
@@ -9,7 +10,8 @@ async fn main() -> Result<()> {
         .connect("127.0.0.1:7001")
         .await?;
 
-    publisher.publish("{{\"APL\":\"+53.5\"}}").await?;
+    publisher.send("{{\"APL\":\"+53.5\"}}").await?;
+    publisher.finish().await?;
 
     Ok(())
 }
