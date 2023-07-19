@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::StreamExt;
 use selium::prelude::*;
 
 #[tokio::main]
@@ -10,7 +11,11 @@ async fn main() -> Result<()> {
         .connect("127.0.0.1:7001")
         .await?;
 
-    subscriber.subscribe().await?;
+    while let Some(Ok(message)) = subscriber.next().await {
+        println!("{message}");
+    }
+
+    subscriber.finish().await?;
 
     Ok(())
 }

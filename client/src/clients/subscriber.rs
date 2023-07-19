@@ -7,9 +7,11 @@ use crate::utils::net::get_socket_addrs;
 use crate::Operation;
 use anyhow::Result;
 use async_trait::async_trait;
-use futures::{future, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, Stream};
 use rustls::RootCertStore;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub struct WantsCert {
@@ -90,21 +92,33 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
-    pub async fn subscribe(&mut self) -> Result<()> {
-        let (_, ref mut read) = self.streams;
-
-        read.for_each(|frame| future::ready(println!("{:?}", frame)))
-            .await;
-
-        Ok(())
-    }
-
     pub async fn finish(self) -> Result<()> {
         let (write, _) = self.streams;
 
         write.into_inner().finish().await?;
 
         Ok(())
+    }
+}
+
+impl Stream for Subscriber {
+    type Item = Result<String>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let frame = match futures::ready!(self.streams.1.poll_next_unpin(cx)) {
+            Some(Ok(frame)) => frame,
+            Some(Err(err)) => return Poll::Ready(Some(Err(err))),
+            None => return Poll::Ready(None),
+        };
+
+        match frame {
+            Frame::Message(inner_string) => Poll::Ready(Some(Ok(inner_string))),
+            _ => Poll::Ready(None)
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+       self.streams.1.size_hint() 
     }
 }
 
