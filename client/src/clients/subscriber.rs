@@ -1,7 +1,7 @@
 use crate::aliases::Streams;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, SubscriberPayload};
-use crate::traits::{ClientAuth, Connect, Operations, ClientConfig, IntoTimestamp};
+use crate::traits::{Connect, ClientConfig, IntoTimestamp, Client};
 use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
 use crate::utils::net::get_socket_addrs;
 use crate::Operation;
@@ -12,25 +12,26 @@ use rustls::RootCertStore;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use super::builder::ClientBuilder;
 
 #[derive(Debug)]
-pub struct WantsCert {
+pub struct SubscriberWantsCert {
     topic: String,
     operations: Vec<Operation>,
     keep_alive: u64,
 }
 
 #[derive(Debug)]
-pub struct HasCert {
+pub struct SubscriberHasCert {
     topic: String,
     operations: Vec<Operation>,
     keep_alive: u64,
     root_store: RootCertStore,
 }
 
-pub fn subscriber(topic: &str) -> SubscriberBuilder<WantsCert> {
-    SubscriberBuilder {
-        state: WantsCert {
+pub fn subscriber(topic: &str) -> ClientBuilder<SubscriberWantsCert> {
+    ClientBuilder {
+        state: SubscriberWantsCert {
             topic: topic.to_owned(),
             operations: Vec::new(),
             keep_alive: 5_000,
@@ -38,18 +39,9 @@ pub fn subscriber(topic: &str) -> SubscriberBuilder<WantsCert> {
     }
 }
 
-pub struct SubscriberBuilder<T> {
-    state: T,
-}
+impl ClientConfig for ClientBuilder<SubscriberWantsCert> {
+    type NextState = ClientBuilder<SubscriberHasCert>;
 
-impl ClientConfig for SubscriberBuilder<WantsCert> {
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
-        self.state.keep_alive = interval.into_timestamp(); 
-        self
-    }
-}
-
-impl Operations for SubscriberBuilder<WantsCert> {
     fn map(mut self, module_path: &str) -> Self {
         self.state
             .operations
@@ -63,27 +55,28 @@ impl Operations for SubscriberBuilder<WantsCert> {
             .push(Operation::Filter(module_path.into()));
         self
     }
-}
 
-impl ClientAuth for SubscriberBuilder<WantsCert> {
-    type Output = SubscriberBuilder<HasCert>;
+    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
+        self.state.keep_alive = interval.into_timestamp(); 
+        self
+    }
 
-    fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::Output> {
+    fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::NextState> {
         let root_store = load_root_store(&ca_path.into())?;
 
-        let state = HasCert {
+        let state = SubscriberHasCert {
             topic: self.state.topic,
             operations: self.state.operations,
             keep_alive: self.state.keep_alive,
             root_store,
         };
 
-        Ok(SubscriberBuilder { state })
+        Ok(ClientBuilder { state })
     }
 }
 
 #[async_trait]
-impl Connect for SubscriberBuilder<HasCert> {
+impl Connect for ClientBuilder<SubscriberHasCert> {
     type Output = Subscriber;
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
@@ -102,8 +95,9 @@ pub struct Subscriber {
     streams: Streams,
 }
 
-impl Subscriber {
-    pub async fn finish(self) -> Result<()> {
+#[async_trait]
+impl Client for Subscriber {
+    async fn finish(self) -> Result<()> {
         let (write, _) = self.streams;
 
         write.into_inner().finish().await?;
@@ -134,7 +128,7 @@ impl Stream for Subscriber {
 }
 
 pub async fn register_subscriber(
-    client: SubscriberBuilder<HasCert>,
+    client: ClientBuilder<SubscriberHasCert>,
     streams: &mut Streams,
 ) -> Result<()> {
     let (ref mut write, _) = streams;

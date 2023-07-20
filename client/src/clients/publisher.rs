@@ -1,7 +1,7 @@
 use crate::aliases::Streams;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, PublisherPayload};
-use crate::traits::{ClientAuth, Connect, IntoTimestamp, Operations, ClientConfig};
+use crate::traits::{Connect, IntoTimestamp, ClientConfig, Client};
 use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
 use crate::utils::net::get_socket_addrs;
 use crate::Operation;
@@ -12,9 +12,10 @@ use rustls::RootCertStore;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use super::builder::ClientBuilder;
 
 #[derive(Debug)]
-pub struct WantsCert {
+pub struct PublisherWantsCert {
     topic: String,
     retention_policy: u64,
     keep_alive: u64,
@@ -22,7 +23,7 @@ pub struct WantsCert {
 }
 
 #[derive(Debug)]
-pub struct HasCert {
+pub struct PublisherHasCert {
     topic: String,
     retention_policy: u64,
     keep_alive: u64,
@@ -30,9 +31,9 @@ pub struct HasCert {
     root_store: RootCertStore,
 }
 
-pub fn publisher(topic: &str) -> PublisherBuilder<WantsCert> {
-    PublisherBuilder {
-        state: WantsCert {
+pub fn publisher(topic: &str) -> ClientBuilder<PublisherWantsCert> {
+    ClientBuilder {
+        state: PublisherWantsCert {
             topic: topic.to_owned(),
             retention_policy: 0,
             keep_alive: 5_000,
@@ -41,25 +42,16 @@ pub fn publisher(topic: &str) -> PublisherBuilder<WantsCert> {
     }
 }
 
-pub struct PublisherBuilder<T> {
-    state: T,
-}
-
-impl PublisherBuilder<WantsCert> {
+impl ClientBuilder<PublisherWantsCert> {
     pub fn retain<T: IntoTimestamp>(mut self, policy: T) -> Self {
         self.state.retention_policy = policy.into_timestamp();
         self
     }
 }
 
-impl ClientConfig for PublisherBuilder<WantsCert> {
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
-        self.state.keep_alive = interval.into_timestamp(); 
-        self
-    }
-}
+impl ClientConfig for ClientBuilder<PublisherWantsCert> {
+    type NextState = ClientBuilder<PublisherHasCert>;
 
-impl Operations for PublisherBuilder<WantsCert> {
     fn map(mut self, module_path: &str) -> Self {
         self.state
             .operations
@@ -73,15 +65,16 @@ impl Operations for PublisherBuilder<WantsCert> {
             .push(Operation::Filter(module_path.into()));
         self
     }
-}
 
-impl ClientAuth for PublisherBuilder<WantsCert> {
-    type Output = PublisherBuilder<HasCert>;
+    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
+        self.state.keep_alive = interval.into_timestamp(); 
+        self
+    }
 
-    fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::Output> {
+    fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::NextState> {
         let root_store = load_root_store(&ca_path.into())?;
 
-        let state = HasCert {
+        let state = PublisherHasCert {
             topic: self.state.topic,
             retention_policy: self.state.retention_policy,
             keep_alive: self.state.keep_alive,
@@ -89,12 +82,12 @@ impl ClientAuth for PublisherBuilder<WantsCert> {
             root_store,
         };
 
-        Ok(PublisherBuilder { state })
+        Ok(ClientBuilder { state })
     }
 }
 
 #[async_trait]
-impl Connect for PublisherBuilder<HasCert> {
+impl Connect for ClientBuilder<PublisherHasCert> {
     type Output = Publisher;
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
@@ -113,8 +106,9 @@ pub struct Publisher {
     streams: Streams,
 }
 
-impl Publisher {
-    pub async fn finish(self) -> Result<()> {
+#[async_trait]
+impl Client for Publisher {
+    async fn finish(self) -> Result<()> {
         let (write, _) = self.streams;
 
         write.into_inner().finish().await?;
@@ -144,7 +138,7 @@ impl Sink<&str> for Publisher {
 }
 
 pub async fn register_publisher(
-    client: PublisherBuilder<HasCert>,
+    client: ClientBuilder<PublisherHasCert>,
     streams: &mut Streams,
 ) -> Result<()> {
     let (ref mut write, _) = streams;
