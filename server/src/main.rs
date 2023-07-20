@@ -35,8 +35,8 @@ struct Args {
     #[clap(long = "keylog")]
     keylog: bool,
     /// Maximum time a client can idle waiting for data - defaults to infinity
-    #[clap(long = "max-idle-timeout")]
-    max_idle_timeout: Option<u64>,
+    #[clap(long = "max-idle-timeout", default_value_t = 15, value_parser = clap::value_parser!(u32).range(5..30))]
+    max_idle_timeout: u32,
 }
 
 #[tokio::main]
@@ -58,9 +58,7 @@ async fn main() -> Result<()> {
     let mut opts = quic::ConfigOptions::default();
     opts.keylog = args.keylog;
     opts.stateless_retry = args.stateless_retry;
-    opts.max_idle_timeout = args
-        .max_idle_timeout
-        .map(|i| IdleTimeout::from(VarInt::from_u64(i).unwrap()));
+    opts.max_idle_timeout = IdleTimeout::from(VarInt::from_u32(args.max_idle_timeout));
     let config = quic::server_config(certs, key, opts)?;
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 

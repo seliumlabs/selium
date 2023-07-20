@@ -15,7 +15,7 @@ const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 pub struct ConfigOptions {
     pub keylog: bool,
     pub stateless_retry: bool,
-    pub max_idle_timeout: Option<IdleTimeout>,
+    pub max_idle_timeout: IdleTimeout,
 }
 
 pub fn server_config(
@@ -35,7 +35,7 @@ pub fn server_config(
     let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
     transport_config.max_concurrent_uni_streams(0_u8.into());
-    transport_config.max_idle_timeout(options.max_idle_timeout);
+    transport_config.max_idle_timeout(Some(options.max_idle_timeout));
     if options.stateless_retry {
         server_config.use_retry(true);
     }
