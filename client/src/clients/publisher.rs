@@ -1,7 +1,7 @@
 use crate::aliases::Streams;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, PublisherPayload};
-use crate::traits::{ClientAuth, Connect, IntoTimestamp, Operations};
+use crate::traits::{ClientAuth, Connect, IntoTimestamp, Operations, ClientConfig};
 use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
 use crate::utils::net::get_socket_addrs;
 use crate::Operation;
@@ -17,6 +17,7 @@ use std::task::{Context, Poll};
 pub struct WantsCert {
     topic: String,
     retention_policy: u64,
+    keep_alive: u64,
     operations: Vec<Operation>,
 }
 
@@ -24,6 +25,7 @@ pub struct WantsCert {
 pub struct HasCert {
     topic: String,
     retention_policy: u64,
+    keep_alive: u64,
     operations: Vec<Operation>,
     root_store: RootCertStore,
 }
@@ -33,6 +35,7 @@ pub fn publisher(topic: &str) -> PublisherBuilder<WantsCert> {
         state: WantsCert {
             topic: topic.to_owned(),
             retention_policy: 0,
+            keep_alive: 5_000,
             operations: Vec::new(),
         },
     }
@@ -45,6 +48,13 @@ pub struct PublisherBuilder<T> {
 impl PublisherBuilder<WantsCert> {
     pub fn retain<T: IntoTimestamp>(mut self, policy: T) -> Self {
         self.state.retention_policy = policy.into_timestamp();
+        self
+    }
+}
+
+impl ClientConfig for PublisherBuilder<WantsCert> {
+    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
+        self.state.keep_alive = interval.into_timestamp(); 
         self
     }
 }
@@ -74,6 +84,7 @@ impl ClientAuth for PublisherBuilder<WantsCert> {
         let state = HasCert {
             topic: self.state.topic,
             retention_policy: self.state.retention_policy,
+            keep_alive: self.state.keep_alive,
             operations: self.state.operations,
             root_store,
         };
@@ -88,7 +99,7 @@ impl Connect for PublisherBuilder<HasCert> {
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
         let addr = get_socket_addrs(host)?;
-        let config = configure_client(&self.state.root_store)?;
+        let config = configure_client(&self.state.root_store, self.state.keep_alive)?;
         let connection = get_client_connection(config, addr).await?;
         let mut streams = get_client_streams(connection).await?;
 

@@ -1,22 +1,28 @@
 use crate::aliases::Streams;
 use crate::protocol::MessageCodec;
 use anyhow::Result;
-use quinn::{ClientConfig, Connection, Endpoint};
+use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::RootCertStore;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 use std::sync::Arc;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
-pub fn configure_client(root_store: &RootCertStore) -> Result<ClientConfig> {
+pub fn configure_client(root_store: &RootCertStore, keep_alive: u64) -> Result<ClientConfig> {
     let mut crypto = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_store.to_owned())
         .with_no_client_auth();
 
     crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
-    let config = ClientConfig::new(Arc::new(crypto));
+
+    let mut config = ClientConfig::new(Arc::new(crypto));
+    let mut transport_config = TransportConfig::default();
+    let keep_alive = Duration::from_millis(keep_alive);
+
+    transport_config.keep_alive_interval(Some(keep_alive));
+    config.transport_config(Arc::new(transport_config));
 
     Ok(config)
 }

@@ -1,7 +1,7 @@
 use crate::aliases::Streams;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, SubscriberPayload};
-use crate::traits::{ClientAuth, Connect, Operations};
+use crate::traits::{ClientAuth, Connect, Operations, ClientConfig, IntoTimestamp};
 use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
 use crate::utils::net::get_socket_addrs;
 use crate::Operation;
@@ -17,12 +17,14 @@ use std::task::{Context, Poll};
 pub struct WantsCert {
     topic: String,
     operations: Vec<Operation>,
+    keep_alive: u64,
 }
 
 #[derive(Debug)]
 pub struct HasCert {
     topic: String,
     operations: Vec<Operation>,
+    keep_alive: u64,
     root_store: RootCertStore,
 }
 
@@ -31,12 +33,20 @@ pub fn subscriber(topic: &str) -> SubscriberBuilder<WantsCert> {
         state: WantsCert {
             topic: topic.to_owned(),
             operations: Vec::new(),
+            keep_alive: 5_000,
         },
     }
 }
 
 pub struct SubscriberBuilder<T> {
     state: T,
+}
+
+impl ClientConfig for SubscriberBuilder<WantsCert> {
+    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
+        self.state.keep_alive = interval.into_timestamp(); 
+        self
+    }
 }
 
 impl Operations for SubscriberBuilder<WantsCert> {
@@ -64,6 +74,7 @@ impl ClientAuth for SubscriberBuilder<WantsCert> {
         let state = HasCert {
             topic: self.state.topic,
             operations: self.state.operations,
+            keep_alive: self.state.keep_alive,
             root_store,
         };
 
@@ -77,7 +88,7 @@ impl Connect for SubscriberBuilder<HasCert> {
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
         let addr = get_socket_addrs(host)?;
-        let config = configure_client(&self.state.root_store)?;
+        let config = configure_client(&self.state.root_store, self.state.keep_alive)?;
         let connection = get_client_connection(config, addr).await?;
         let mut streams = get_client_streams(connection).await?;
 
