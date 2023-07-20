@@ -1,1 +1,1 @@
-pub use crate::traits::{ClientAuth, Connect, Operations};
+pub use crate::traits::{ClientAuth, ClientConfig, Connect, Operations};
