@@ -1,0 +1,58 @@
+name: Create Release
+
+on:
+  push:
+    branches:
+      - release
+
+jobs:
+  release:
+    name: Create GitHub Release
+    strategy:
+      matrix:
+        name: [client, server]
+        include:
+          - name: client
+            display: Client
+          - name: server
+            display: Server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Get latest tag
+        id: latesttag
+        uses: "WyriHaximus/github-action-get-previous-tag@v1"
+        with:
+          fallback: ${{ matrix.name }}-0.0.0
+
+      - name: Get crate version
+        id: version
+        run: echo ::set-output name=value::$(sed -ne 's/^version = "\(.*\)"/\1/p' < ${{ matrix.name }}/Cargo.toml)
+
+      - name: Get CHANGELOG entry
+        id: changelog
+        run: |
+          body=$(python ci/changelog.py ${{ steps.version.outputs.value }})
+          body="${body//$'\n'/'%0A'}"
+          echo ::set-output name=body::$body
+        if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
+
+      - name: Tag branch
+        uses: rickstaa/action-create-tag@v1
+        with:
+          tag: ${{ format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
+          message: ${{ format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
+        if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
+        with:
+          tag_name: ${{ format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
+          name: ${{ matrix.display }} Release ${{ steps.version.outputs.value }}
+          body: ${{ steps.changelog.outputs.body }}
+          draft: false
+          prerelease: false
