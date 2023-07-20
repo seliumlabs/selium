@@ -63,23 +63,25 @@ impl Decoder for MessageCodec {
 mod tests {
     use super::*;
     use crate::protocol::SubscriberPayload;
-    use crate::Operation;
     use bytes::Bytes;
 
     #[test]
     fn encodes_register_subscriber_frame() {
         let frame = Frame::RegisterSubscriber(SubscriberPayload {
             topic: "Some topic".into(),
-            operations: vec![
-                Operation::Map("first/module.wasm".into()),
-                Operation::Map("second/module.wasm".into()),
-                Operation::Filter("third/module.wasm".into()),
-            ],
+            // @TODO - WASM Support
+            // operations: vec![
+            //     Operation::Map("first/module.wasm".into()),
+            //     Operation::Map("second/module.wasm".into()),
+            //     Operation::Filter("third/module.wasm".into()),
+            // ],
         });
 
         let mut codec = MessageCodec::new();
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0v\x01\0\0\0\n\0\0\0\0\0\0\0Some topic\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        // @TODO - WASM Support
+        // let expected = Bytes::from("\0\0\0v\x01\0\0\0\n\0\0\0\0\0\0\0Some topic\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let expected = Bytes::from("\0\0\0\x16\x01\0\0\0\n\0\0\0\0\0\0\0Some topic");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -89,15 +91,18 @@ mod tests {
     #[test]
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec::new();
-        let mut src = BytesMut::from("\0\0\0v\x01\0\0\0\n\0\0\0\0\0\0\0Some topic\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        // @TODO - WASM Support
+        // let mut src = BytesMut::from("\0\0\0v\x01\0\0\0\n\0\0\0\0\0\0\0Some topic\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let mut src = BytesMut::from("\0\0\0\x16\x01\0\0\0\n\0\0\0\0\0\0\0Some topic");
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
             topic: "Some topic".into(),
-            operations: vec![
-                Operation::Map("first/module.wasm".into()),
-                Operation::Map("second/module.wasm".into()),
-                Operation::Filter("third/module.wasm".into()),
-            ],
+            // @TODO - WASM Support
+            // operations: vec![
+            //     Operation::Map("first/module.wasm".into()),
+            //     Operation::Map("second/module.wasm".into()),
+            //     Operation::Filter("third/module.wasm".into()),
+            // ],
         });
 
         let result = codec.decode(&mut src).unwrap().unwrap();

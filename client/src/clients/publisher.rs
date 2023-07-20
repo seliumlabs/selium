@@ -1,13 +1,12 @@
 use crate::aliases::Streams;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, PublisherPayload};
-use crate::traits::{ClientAuth, Connect, IntoTimestamp, Operations, ClientConfig};
+use crate::traits::{ClientAuth, ClientConfig, Connect, IntoTimestamp};
 use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
 use crate::utils::net::get_socket_addrs;
-use crate::Operation;
 use anyhow::Result;
 use async_trait::async_trait;
-use futures::{SinkExt, Sink};
+use futures::{Sink, SinkExt};
 use rustls::RootCertStore;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -18,7 +17,8 @@ pub struct WantsCert {
     topic: String,
     retention_policy: u64,
     keep_alive: u64,
-    operations: Vec<Operation>,
+    // @TODO - WASM Support
+    // operations: Vec<Operation>,
 }
 
 #[derive(Debug)]
@@ -26,7 +26,8 @@ pub struct HasCert {
     topic: String,
     retention_policy: u64,
     keep_alive: u64,
-    operations: Vec<Operation>,
+    // @TODO - WASM Support
+    // operations: Vec<Operation>,
     root_store: RootCertStore,
 }
 
@@ -36,7 +37,8 @@ pub fn publisher(topic: &str) -> PublisherBuilder<WantsCert> {
             topic: topic.to_owned(),
             retention_policy: 0,
             keep_alive: 5_000,
-            operations: Vec::new(),
+            // @TODO - WASM Support
+            // operations: Vec::new(),
         },
     }
 }
@@ -54,26 +56,27 @@ impl PublisherBuilder<WantsCert> {
 
 impl ClientConfig for PublisherBuilder<WantsCert> {
     fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
-        self.state.keep_alive = interval.into_timestamp(); 
+        self.state.keep_alive = interval.into_timestamp();
         self
     }
 }
 
-impl Operations for PublisherBuilder<WantsCert> {
-    fn map(mut self, module_path: &str) -> Self {
-        self.state
-            .operations
-            .push(Operation::Map(module_path.into()));
-        self
-    }
+// @TODO - WASM Support
+// impl Operations for PublisherBuilder<WantsCert> {
+//     fn map(mut self, module_path: &str) -> Self {
+//         self.state
+//             .operations
+//             .push(Operation::Map(module_path.into()));
+//         self
+//     }
 
-    fn filter(mut self, module_path: &str) -> Self {
-        self.state
-            .operations
-            .push(Operation::Filter(module_path.into()));
-        self
-    }
-}
+//     fn filter(mut self, module_path: &str) -> Self {
+//         self.state
+//             .operations
+//             .push(Operation::Filter(module_path.into()));
+//         self
+//     }
+// }
 
 impl ClientAuth for PublisherBuilder<WantsCert> {
     type Output = PublisherBuilder<HasCert>;
@@ -85,7 +88,8 @@ impl ClientAuth for PublisherBuilder<WantsCert> {
             topic: self.state.topic,
             retention_policy: self.state.retention_policy,
             keep_alive: self.state.keep_alive,
-            operations: self.state.operations,
+            // @TODO - WASM Support
+            // operations: self.state.operations,
             root_store,
         };
 
@@ -127,19 +131,21 @@ impl Sink<&str> for Publisher {
     type Error = anyhow::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-       self.streams.0.poll_ready_unpin(cx) 
+        self.streams.0.poll_ready_unpin(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: &str) -> Result<()> {
-       self.streams.0.start_send_unpin(Frame::Message(item.to_owned())) 
+        self.streams
+            .0
+            .start_send_unpin(Frame::Message(item.to_owned()))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-       self.streams.0.poll_flush_unpin(cx) 
+        self.streams.0.poll_flush_unpin(cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-       self.streams.0.poll_close_unpin(cx) 
+        self.streams.0.poll_close_unpin(cx)
     }
 }
 
@@ -152,7 +158,8 @@ pub async fn register_publisher(
     let frame = Frame::RegisterPublisher(PublisherPayload {
         topic: client.state.topic,
         retention_policy: client.state.retention_policy,
-        operations: client.state.operations,
+        // @TODO - WASM Support
+        // operations: client.state.operations,
     });
 
     write.send(frame).await?;

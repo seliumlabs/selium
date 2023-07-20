@@ -2,10 +2,7 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use futures::channel::mpsc::UnboundedSender;
-use selium::{
-    protocol::{PublisherPayload, SubscriberPayload},
-    Operation,
-};
+use selium::protocol::{PublisherPayload, SubscriberPayload};
 
 use crate::graph::{hash_key, PipeGraph};
 
@@ -14,7 +11,8 @@ enum PipelineNode {
     Publisher,
     Subscriber(SocketAddr, UnboundedSender<String>),
     Topic(String),
-    Wasm(String),
+    // @TODO - WASM Support
+    // Wasm(String),
 }
 
 #[derive(Debug)]
@@ -28,7 +26,8 @@ impl ToString for PipelineNode {
             Self::Publisher => "Publisher".into(),
             Self::Subscriber(_, _) => "Subscriber".into(),
             Self::Topic(_) => "Topic".into(),
-            Self::Wasm(s) => format!("WASM ({s})"),
+            // @TODO - WASM Support
+            // Self::Wasm(s) => format!("WASM ({s})"),
         }
     }
 }
@@ -48,22 +47,23 @@ impl Pipeline {
 
     pub fn add_publisher(&self, addr: SocketAddr, payload: PublisherPayload) {
         // First add the topic
-        let mut left_of = self
+        let left_of = self
             .graph
             .add_root(payload.topic.clone(), PipelineNode::Topic(payload.topic));
 
         // Now iterate backwards up the pipe operations towards the socket.
         // We do this so that we can set the next hop.
-        for op in payload.operations.into_iter().rev() {
-            let key = match op {
-                Operation::Filter(f) => f,
-                Operation::Map(m) => m,
-            };
+        // @TODO - WASM Support
+        // for op in payload.operations.into_iter().rev() {
+        //     let key = match op {
+        //         Operation::Filter(f) => f,
+        //         Operation::Map(m) => m,
+        //     };
 
-            left_of = self
-                .graph
-                .add_left(key.clone(), PipelineNode::Wasm(key), left_of);
-        }
+        //     left_of = self
+        //         .graph
+        //         .add_left(key.clone(), PipelineNode::Wasm(key), left_of);
+        // }
 
         // Finally, add the publisher
         self.graph
@@ -77,21 +77,22 @@ impl Pipeline {
         sock: UnboundedSender<String>,
     ) {
         // First add the topic
-        let mut right_of = self
+        let right_of = self
             .graph
             .add_root(payload.topic.clone(), PipelineNode::Topic(payload.topic));
 
         // Now iterate over the pipe operations towards the socket
-        for op in payload.operations.into_iter() {
-            let key = match op {
-                Operation::Filter(f) => f,
-                Operation::Map(m) => m,
-            };
+        // @TODO - WASM Support
+        // for op in payload.operations.into_iter() {
+        //     let key = match op {
+        //         Operation::Filter(f) => f,
+        //         Operation::Map(m) => m,
+        //     };
 
-            right_of = self
-                .graph
-                .add_right(key.clone(), PipelineNode::Wasm(key), right_of);
-        }
+        //     right_of = self
+        //         .graph
+        //         .add_right(key.clone(), PipelineNode::Wasm(key), right_of);
+        // }
 
         // Finally, add the subscriber
         self.graph.add_right_leaf(
@@ -111,14 +112,14 @@ impl Pipeline {
 
     pub fn traverse(&self, publisher: SocketAddr, message: String) -> Result<String> {
         let key = hash_key(publisher.to_string(), "left", None);
-        self.graph.fold(message, key, |mut msg, node| {
+        self.graph.fold(message, key, |msg, node| {
             match node {
                 PipelineNode::Publisher | PipelineNode::Topic(_) => (),
                 PipelineNode::Subscriber(_, sock) => {
                     sock.unbounded_send(msg.clone())?;
                 }
-                // @TODO - Implement WASM executor
-                PipelineNode::Wasm(w) => msg += w,
+                // @TODO - WASM Support
+                // PipelineNode::Wasm(w) => msg += w,
             };
 
             Ok(msg)
@@ -142,11 +143,12 @@ mod tests {
         let payload1 = PublisherPayload {
             topic: "/namespace/topic".into(),
             retention_policy: 0,
-            operations: vec![
-                Operation::Map("/namespace/map1".into()),
-                Operation::Filter("/namespace/filter1".into()),
-                Operation::Map("/namespace/map2".into()),
-            ],
+            // @TODO - WASM Support
+            // operations: vec![
+            //     Operation::Map("/namespace/map1".into()),
+            //     Operation::Filter("/namespace/filter1".into()),
+            //     Operation::Map("/namespace/map2".into()),
+            // ],
         };
         pipe.add_publisher(addr1, payload1);
 
@@ -154,11 +156,12 @@ mod tests {
         let payload2 = PublisherPayload {
             topic: "/namespace/topic".into(),
             retention_policy: 0,
-            operations: vec![
-                Operation::Map("/namespace/map1".into()),
-                Operation::Filter("/namespace/filter2".into()),
-                Operation::Map("/namespace/map2".into()),
-            ],
+            // @TODO - WASM Support
+            // operations: vec![
+            //     Operation::Map("/namespace/map1".into()),
+            //     Operation::Filter("/namespace/filter2".into()),
+            //     Operation::Map("/namespace/map2".into()),
+            // ],
         };
         pipe.add_publisher(addr2, payload2);
 
@@ -166,11 +169,12 @@ mod tests {
         let payload3 = PublisherPayload {
             topic: "/namespace/topic".into(),
             retention_policy: 0,
-            operations: vec![
-                Operation::Map("/namespace/map1".into()),
-                Operation::Filter("/namespace/filter2".into()),
-                Operation::Map("/namespace/map2".into()),
-            ],
+            // @TODO - WASM Support
+            // operations: vec![
+            //     Operation::Map("/namespace/map1".into()),
+            //     Operation::Filter("/namespace/filter2".into()),
+            //     Operation::Map("/namespace/map2".into()),
+            // ],
         };
         pipe.add_publisher(addr3, payload3);
 
@@ -178,78 +182,88 @@ mod tests {
         let pub1_key = hash_key("127.0.0.1:40009", "left", None);
         let pub2_key = hash_key("127.0.0.1:40010", "left", None);
         let pub3_key = hash_key("127.0.0.1:40011", "left", None);
-        let map2_key = hash_key("/namespace/map2", "left", Some(topic_key));
-        let filter1_key = hash_key("/namespace/filter1", "left", Some(map2_key));
-        let filter2_key = hash_key("/namespace/filter2", "left", Some(map2_key));
-        let map11_key = hash_key("/namespace/map1", "left", Some(filter1_key));
-        let map12_key = hash_key("/namespace/map1", "left", Some(filter2_key));
+        // @TODO - WASM Support
+        // let map2_key = hash_key("/namespace/map2", "left", Some(topic_key));
+        // let filter1_key = hash_key("/namespace/filter1", "left", Some(map2_key));
+        // let filter2_key = hash_key("/namespace/filter2", "left", Some(map2_key));
+        // let map11_key = hash_key("/namespace/map1", "left", Some(filter1_key));
+        // let map12_key = hash_key("/namespace/map1", "left", Some(filter2_key));
 
         assert_eq!(
             *pipe.graph.get(pub1_key).unwrap(),
-            Node::LeftLeaf(PipelineNode::Publisher, map11_key)
+            // @TODO - WASM Support
+            // Node::LeftLeaf(PipelineNode::Publisher, map11_key)
+            Node::LeftLeaf(PipelineNode::Publisher, topic_key)
         );
 
         assert_eq!(
             *pipe.graph.get(pub2_key).unwrap(),
-            Node::LeftLeaf(PipelineNode::Publisher, map12_key)
+            // @TODO - WASM Support
+            // Node::LeftLeaf(PipelineNode::Publisher, map12_key)
+            Node::LeftLeaf(PipelineNode::Publisher, topic_key)
         );
 
         assert_eq!(
             *pipe.graph.get(pub3_key).unwrap(),
-            Node::LeftLeaf(PipelineNode::Publisher, map12_key)
+            // @TODO - WASM Support
+            // Node::LeftLeaf(PipelineNode::Publisher, map12_key)
+            Node::LeftLeaf(PipelineNode::Publisher, topic_key)
         );
 
-        assert_eq!(
-            *pipe.graph.get(map11_key).unwrap(),
-            Node::Left(
-                PipelineNode::Wasm("/namespace/map1".into()),
-                filter1_key,
-                MultiHop::Hop(pub1_key),
-            )
-        );
+        // @TODO - WASM Support
+        // assert_eq!(
+        //     *pipe.graph.get(map11_key).unwrap(),
+        //     Node::Left(
+        //         PipelineNode::Wasm("/namespace/map1".into()),
+        //         filter1_key,
+        //         MultiHop::Hop(pub1_key),
+        //     )
+        // );
 
-        assert_eq!(
-            *pipe.graph.get(map12_key).unwrap(),
-            Node::Left(
-                PipelineNode::Wasm("/namespace/map1".into()),
-                filter2_key,
-                MultiHop::MultiHop(vec![pub2_key, pub3_key]),
-            )
-        );
+        // assert_eq!(
+        //     *pipe.graph.get(map12_key).unwrap(),
+        //     Node::Left(
+        //         PipelineNode::Wasm("/namespace/map1".into()),
+        //         filter2_key,
+        //         MultiHop::MultiHop(vec![pub2_key, pub3_key]),
+        //     )
+        // );
 
-        assert_eq!(
-            *pipe.graph.get(filter1_key).unwrap(),
-            Node::Left(
-                PipelineNode::Wasm("/namespace/filter1".into()),
-                map2_key,
-                MultiHop::Hop(map11_key),
-            )
-        );
+        // assert_eq!(
+        //     *pipe.graph.get(filter1_key).unwrap(),
+        //     Node::Left(
+        //         PipelineNode::Wasm("/namespace/filter1".into()),
+        //         map2_key,
+        //         MultiHop::Hop(map11_key),
+        //     )
+        // );
 
-        assert_eq!(
-            *pipe.graph.get(filter2_key).unwrap(),
-            Node::Left(
-                PipelineNode::Wasm("/namespace/filter2".into()),
-                map2_key,
-                MultiHop::Hop(map12_key),
-            )
-        );
+        // assert_eq!(
+        //     *pipe.graph.get(filter2_key).unwrap(),
+        //     Node::Left(
+        //         PipelineNode::Wasm("/namespace/filter2".into()),
+        //         map2_key,
+        //         MultiHop::Hop(map12_key),
+        //     )
+        // );
 
-        assert_eq!(
-            *pipe.graph.get(map2_key).unwrap(),
-            Node::Left(
-                PipelineNode::Wasm("/namespace/map2".into()),
-                topic_key,
-                MultiHop::MultiHop(vec![filter1_key, filter2_key]),
-            )
-        );
+        // assert_eq!(
+        //     *pipe.graph.get(map2_key).unwrap(),
+        //     Node::Left(
+        //         PipelineNode::Wasm("/namespace/map2".into()),
+        //         topic_key,
+        //         MultiHop::MultiHop(vec![filter1_key, filter2_key]),
+        //     )
+        // );
 
         assert_eq!(
             *pipe.graph.get(topic_key).unwrap(),
             Node::Root(
                 PipelineNode::Topic("/namespace/topic".into()),
                 MultiHop::None,
-                MultiHop::Hop(map2_key)
+                // @TODO - WASM Support
+                // MultiHop::Hop(map2_key)
+                MultiHop::MultiHop(vec![pub1_key, pub2_key, pub3_key])
             )
         );
     }
@@ -262,11 +276,12 @@ mod tests {
         let (tx1, _) = mpsc::unbounded();
         let payload1 = SubscriberPayload {
             topic: "/namespace/topic".into(),
-            operations: vec![
-                Operation::Map("/namespace/map1".into()),
-                Operation::Filter("/namespace/filter1".into()),
-                Operation::Map("/namespace/map2".into()),
-            ],
+            // @TODO - WASM Support
+            // operations: vec![
+            //     Operation::Map("/namespace/map1".into()),
+            //     Operation::Filter("/namespace/filter1".into()),
+            //     Operation::Map("/namespace/map2".into()),
+            // ],
         };
         pipe.add_subscriber(addr1, payload1, tx1.clone());
 
@@ -274,11 +289,12 @@ mod tests {
         let (tx2, _) = mpsc::unbounded();
         let payload2 = SubscriberPayload {
             topic: "/namespace/topic".into(),
-            operations: vec![
-                Operation::Map("/namespace/map1".into()),
-                Operation::Filter("/namespace/filter2".into()),
-                Operation::Map("/namespace/map2".into()),
-            ],
+            // @TODO - WASM Support
+            // operations: vec![
+            //     Operation::Map("/namespace/map1".into()),
+            //     Operation::Filter("/namespace/filter2".into()),
+            //     Operation::Map("/namespace/map2".into()),
+            // ],
         };
         pipe.add_subscriber(addr2, payload2, tx2.clone());
 
@@ -286,11 +302,12 @@ mod tests {
         let (tx3, _) = mpsc::unbounded();
         let payload3 = SubscriberPayload {
             topic: "/namespace/topic".into(),
-            operations: vec![
-                Operation::Map("/namespace/map1".into()),
-                Operation::Filter("/namespace/filter2".into()),
-                Operation::Map("/namespace/map2".into()),
-            ],
+            // @TODO - WASM Support
+            // operations: vec![
+            //     Operation::Map("/namespace/map1".into()),
+            //     Operation::Filter("/namespace/filter2".into()),
+            //     Operation::Map("/namespace/map2".into()),
+            // ],
         };
         pipe.add_subscriber(addr3, payload3, tx3.clone());
 
@@ -298,71 +315,77 @@ mod tests {
         let sub1_key = hash_key("127.0.0.1:40009", "right", None);
         let sub2_key = hash_key("127.0.0.1:40010", "right", None);
         let sub3_key = hash_key("127.0.0.1:40011", "right", None);
-        let map1_key = hash_key("/namespace/map1", "right", Some(topic_key));
-        let filter1_key = hash_key("/namespace/filter1", "right", Some(map1_key));
-        let filter2_key = hash_key("/namespace/filter2", "right", Some(map1_key));
-        let map21_key = hash_key("/namespace/map2", "right", Some(filter1_key));
-        let map22_key = hash_key("/namespace/map2", "right", Some(filter2_key));
+        // @TODO - WASM Support
+        // let map1_key = hash_key("/namespace/map1", "right", Some(topic_key));
+        // let filter1_key = hash_key("/namespace/filter1", "right", Some(map1_key));
+        // let filter2_key = hash_key("/namespace/filter2", "right", Some(map1_key));
+        // let map21_key = hash_key("/namespace/map2", "right", Some(filter1_key));
+        // let map22_key = hash_key("/namespace/map2", "right", Some(filter2_key));
 
         assert_eq!(
             *pipe.graph.get(topic_key).unwrap(),
             Node::Root(
                 PipelineNode::Topic("/namespace/topic".into()),
-                MultiHop::Hop(map1_key),
+                // @TODO - WASM Support
+                // MultiHop::Hop(map1_key),
+                MultiHop::MultiHop(vec![sub1_key, sub2_key, sub3_key]),
                 MultiHop::None
             )
         );
 
-        assert_eq!(
-            *pipe.graph.get(map1_key).unwrap(),
-            Node::Right(
-                PipelineNode::Wasm("/namespace/map1".into()),
-                MultiHop::MultiHop(vec![filter1_key, filter2_key]),
-                topic_key,
-            )
-        );
+        // @TODO - WASM Support
+        // assert_eq!(
+        //     *pipe.graph.get(map1_key).unwrap(),
+        //     Node::Right(
+        //         PipelineNode::Wasm("/namespace/map1".into()),
+        //         MultiHop::MultiHop(vec![filter1_key, filter2_key]),
+        //         topic_key,
+        //     )
+        // );
 
-        assert_eq!(
-            *pipe.graph.get(filter1_key).unwrap(),
-            Node::Right(
-                PipelineNode::Wasm("/namespace/filter1".into()),
-                MultiHop::Hop(map21_key),
-                map1_key,
-            )
-        );
+        // assert_eq!(
+        //     *pipe.graph.get(filter1_key).unwrap(),
+        //     Node::Right(
+        //         PipelineNode::Wasm("/namespace/filter1".into()),
+        //         MultiHop::Hop(map21_key),
+        //         map1_key,
+        //     )
+        // );
 
-        assert_eq!(
-            *pipe.graph.get(filter2_key).unwrap(),
-            Node::Right(
-                PipelineNode::Wasm("/namespace/filter2".into()),
-                MultiHop::Hop(map22_key),
-                map1_key,
-            )
-        );
+        // assert_eq!(
+        //     *pipe.graph.get(filter2_key).unwrap(),
+        //     Node::Right(
+        //         PipelineNode::Wasm("/namespace/filter2".into()),
+        //         MultiHop::Hop(map22_key),
+        //         map1_key,
+        //     )
+        // );
 
-        assert_eq!(
-            *pipe.graph.get(map21_key).unwrap(),
-            Node::Right(
-                PipelineNode::Wasm("/namespace/map2".into()),
-                MultiHop::Hop(sub1_key),
-                filter1_key,
-            )
-        );
+        // assert_eq!(
+        //     *pipe.graph.get(map21_key).unwrap(),
+        //     Node::Right(
+        //         PipelineNode::Wasm("/namespace/map2".into()),
+        //         MultiHop::Hop(sub1_key),
+        //         filter1_key,
+        //     )
+        // );
 
-        assert_eq!(
-            *pipe.graph.get(map22_key).unwrap(),
-            Node::Right(
-                PipelineNode::Wasm("/namespace/map2".into()),
-                MultiHop::MultiHop(vec![sub2_key, sub3_key]),
-                filter2_key,
-            )
-        );
+        // assert_eq!(
+        //     *pipe.graph.get(map22_key).unwrap(),
+        //     Node::Right(
+        //         PipelineNode::Wasm("/namespace/map2".into()),
+        //         MultiHop::MultiHop(vec![sub2_key, sub3_key]),
+        //         filter2_key,
+        //     )
+        // );
 
         assert_eq!(
             *pipe.graph.get(sub1_key).unwrap(),
             Node::RightLeaf(
                 PipelineNode::Subscriber(SocketAddr::from_str("127.0.0.1:40009").unwrap(), tx1),
-                map21_key
+                // @TODO - WASM Support
+                // map21_key
+                topic_key
             ),
         );
 
@@ -370,7 +393,9 @@ mod tests {
             *pipe.graph.get(sub2_key).unwrap(),
             Node::RightLeaf(
                 PipelineNode::Subscriber(SocketAddr::from_str("127.0.0.1:40010").unwrap(), tx2),
-                map22_key
+                // @TODO - WASM Support
+                // map22_key
+                topic_key
             ),
         );
 
@@ -378,7 +403,9 @@ mod tests {
             *pipe.graph.get(sub3_key).unwrap(),
             Node::RightLeaf(
                 PipelineNode::Subscriber(SocketAddr::from_str("127.0.0.1:40011").unwrap(), tx3),
-                map22_key
+                // @TODO - WASM Support
+                // map22_key
+                topic_key
             ),
         );
     }
