@@ -44,8 +44,8 @@ consume services over the same platform. No more gagging while you reach for tha
 
 Selium uses namespaces to achieve segmentation between facets of your data network. You can
 arbitrarily define namespaces much the same way as you'd create directories in a filesystem. Selium
-enforces isolation between between namespaces at the user level (see mTLS), so sharing between
-namespaces is simple, but secure.
+enforces isolation between namespaces at the user level (see mTLS), so sharing between namespaces
+is simple, but secure.
 
 ### QUIC protocol
 
