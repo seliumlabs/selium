@@ -56,3 +56,17 @@ jobs:
           body: ${{ steps.changelog.outputs.body }}
           draft: false
           prerelease: false
+        if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
+
+      - name: Login to Crates.io
+        uses: actions-rs/cargo@v1
+        with:
+          command: login
+          args: ${{ secrets.CRATES_TOKEN }}
+        if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
+
+      - name: Cargo publish
+        uses: actions-rs/cargo@v1
+        with:
+          command: publish
+        if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
