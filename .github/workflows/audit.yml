@@ -1,0 +1,26 @@
+name: Audit
+
+on:
+  push:
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  audit:
+    name: Crate Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Audit crates
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
