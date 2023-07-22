@@ -67,10 +67,11 @@ async fn main() -> Result<()> {
         // Clap ensures that either --cert + --key or --self-signed are present
         unreachable!();
     };
-    let mut opts = quic::ConfigOptions::default();
-    opts.keylog = args.keylog;
-    opts.stateless_retry = args.stateless_retry;
-    opts.max_idle_timeout = IdleTimeout::from(VarInt::from_u32(args.max_idle_timeout));
+    let opts = quic::ConfigOptions {
+        keylog: args.keylog,
+        stateless_retry: args.stateless_retry,
+        max_idle_timeout: IdleTimeout::from(VarInt::from_u32(args.max_idle_timeout)),
+    };
     let config = quic::server_config(certs, key, opts)?;
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 
@@ -115,8 +116,8 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
                 bail!(e);
             }
             Ok((tx, rx)) => (
-                FramedWrite::new(tx, MessageCodec::new()),
-                FramedRead::new(rx, MessageCodec::new()),
+                FramedWrite::new(tx, MessageCodec),
+                FramedRead::new(rx, MessageCodec),
             ),
         };
 

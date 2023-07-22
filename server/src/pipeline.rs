@@ -101,13 +101,13 @@ impl Pipeline {
         );
     }
 
-    pub fn rm_publisher(&self, _addr: SocketAddr) {
-        unimplemented!();
-    }
+    // pub fn rm_publisher(&self, _addr: SocketAddr) {
+    //     unimplemented!();
+    // }
 
-    pub fn rm_subscriber(&self, _addr: SocketAddr) {
-        unimplemented!();
-    }
+    // pub fn rm_subscriber(&self, _addr: SocketAddr) {
+    //     unimplemented!();
+    // }
 
     pub fn traverse(
         &self,

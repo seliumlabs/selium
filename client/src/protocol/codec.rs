@@ -6,13 +6,7 @@ use tokio_util::codec::{Decoder, Encoder};
 const LEN_MARKER_SIZE: usize = size_of::<u32>();
 
 #[derive(Debug, Default)]
-pub struct MessageCodec {}
-
-impl MessageCodec {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
+pub struct MessageCodec;
 
 impl Encoder<Frame> for MessageCodec {
     type Error = anyhow::Error;
@@ -77,7 +71,7 @@ mod tests {
             ],
         });
 
-        let mut codec = MessageCodec::new();
+        let mut codec = MessageCodec::default();
         let mut buffer = BytesMut::new();
         let expected = Bytes::from("\0\0\0v\x01\0\0\0\n\0\0\0\0\0\0\0Some topic\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
 
@@ -88,7 +82,7 @@ mod tests {
 
     #[test]
     fn decodes_register_subscriber_frame() {
-        let mut codec = MessageCodec::new();
+        let mut codec = MessageCodec::default();
         let mut src = BytesMut::from("\0\0\0v\x01\0\0\0\n\0\0\0\0\0\0\0Some topic\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
