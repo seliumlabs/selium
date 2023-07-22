@@ -1,11 +1,14 @@
-use anyhow::{anyhow, Result};
+use std::{pin::Pin, sync::Arc};
+
 use dashmap::DashMap;
+use futures::{future, Future, FutureExt};
 use hmac_sha512::Hash;
+use log::error;
 
 type SHA512 = [u8; 64];
 
-#[derive(Debug, PartialEq)]
-pub enum MultiHop {
+#[derive(Clone, Debug, PartialEq)]
+pub enum NextHop {
     Hop(SHA512),
     MultiHop(Vec<SHA512>),
     None,
@@ -14,83 +17,100 @@ pub enum MultiHop {
 #[derive(Debug, PartialEq)]
 pub enum Node<V> {
     // Value, Next Node, Previous Node
-    Root(V, MultiHop, MultiHop),
-    Left(V, SHA512, MultiHop),
-    Right(V, MultiHop, SHA512),
+    Root(Arc<V>, NextHop, NextHop),
+    Left(Arc<V>, SHA512, NextHop),
+    Right(Arc<V>, NextHop, SHA512),
     // Value, Next Node
-    LeftLeaf(V, SHA512),
+    LeftLeaf(Arc<V>, SHA512),
     // Value, Previous Node
-    RightLeaf(V, SHA512),
+    RightLeaf(Arc<V>, SHA512),
 }
 
 #[derive(Debug)]
-pub struct PipeGraph<V> {
-    inner: DashMap<SHA512, Node<V>>,
+pub struct DoubleEndedTree<V> {
+    inner: Arc<DashMap<SHA512, Node<V>>>,
 }
 
-impl MultiHop {
+impl NextHop {
     pub fn merge(self, other: Self) -> Self {
         match self {
-            MultiHop::Hop(k) => match other {
-                MultiHop::Hop(ko) => MultiHop::MultiHop(vec![k, ko]),
-                MultiHop::MultiHop(mut ko) => {
+            NextHop::Hop(k) => match other {
+                NextHop::Hop(ko) => NextHop::MultiHop(vec![k, ko]),
+                NextHop::MultiHop(mut ko) => {
                     ko.insert(0, k);
-                    MultiHop::MultiHop(ko)
+                    NextHop::MultiHop(ko)
                 }
-                MultiHop::None => MultiHop::Hop(k),
+                NextHop::None => NextHop::Hop(k),
             },
-            MultiHop::MultiHop(mut k) => match other {
-                MultiHop::Hop(ko) => {
+            NextHop::MultiHop(mut k) => match other {
+                NextHop::Hop(ko) => {
                     k.push(ko);
-                    MultiHop::MultiHop(k)
+                    NextHop::MultiHop(k)
                 }
-                MultiHop::MultiHop(mut ko) => {
+                NextHop::MultiHop(mut ko) => {
                     k.append(&mut ko);
-                    MultiHop::MultiHop(k)
+                    NextHop::MultiHop(k)
                 }
-                MultiHop::None => MultiHop::MultiHop(k),
+                NextHop::None => NextHop::MultiHop(k),
             },
-            MultiHop::None => other,
+            NextHop::None => other,
         }
     }
 }
 
 impl<V> Node<V> {
-    pub fn root(value: V, next_hop: MultiHop, prev_hop: MultiHop) -> Self {
-        Self::Root(value, next_hop, prev_hop)
+    pub fn root(value: V, next_hop: NextHop, prev_hop: NextHop) -> Self {
+        Self::Root(Arc::new(value), next_hop, prev_hop)
     }
 
-    pub fn left(value: V, next_hop: SHA512, prev_hop: MultiHop) -> Self {
-        Self::Left(value, next_hop, prev_hop)
+    pub fn left(value: V, next_hop: SHA512, prev_hop: NextHop) -> Self {
+        Self::Left(Arc::new(value), next_hop, prev_hop)
     }
 
     pub fn left_leaf(value: V, next_hop: SHA512) -> Self {
-        Self::LeftLeaf(value, next_hop)
+        Self::LeftLeaf(Arc::new(value), next_hop)
     }
 
-    pub fn right(value: V, next_hop: MultiHop, prev_hop: SHA512) -> Self {
-        Self::Right(value, next_hop, prev_hop)
+    pub fn right(value: V, next_hop: NextHop, prev_hop: SHA512) -> Self {
+        Self::Right(Arc::new(value), next_hop, prev_hop)
     }
 
     pub fn right_leaf(value: V, prev_hop: SHA512) -> Self {
-        Self::RightLeaf(value, prev_hop)
+        Self::RightLeaf(Arc::new(value), prev_hop)
     }
 
-    pub fn get_value(&self) -> &V {
+    pub fn get_value(&self) -> Arc<V> {
         match self {
-            Self::Root(v, _, _) => v,
-            Self::Left(v, _, _) => v,
-            Self::Right(v, _, _) => v,
-            Self::LeftLeaf(v, _) => v,
-            Self::RightLeaf(v, _) => v,
+            Self::Root(v, _, _) => v.clone(),
+            Self::Left(v, _, _) => v.clone(),
+            Self::Right(v, _, _) => v.clone(),
+            Self::LeftLeaf(v, _) => v.clone(),
+            Self::RightLeaf(v, _) => v.clone(),
         }
+    }
+
+    pub fn get_next_hop(&self) -> NextHop {
+        match self {
+            Self::Root(_, n, _) => n.clone(),
+            Self::Left(_, n, _) => NextHop::Hop(*n),
+            Self::Right(_, n, _) => n.clone(),
+            Self::LeftLeaf(_, n) => NextHop::Hop(*n),
+            Self::RightLeaf(_, _) => NextHop::None,
+        }
+    }
+
+    pub fn unpack(&self) -> (Arc<V>, NextHop) {
+        (self.get_value(), self.get_next_hop())
     }
 }
 
-impl<V> PipeGraph<V> {
+impl<V> DoubleEndedTree<V>
+where
+    V: Send + Sync + 'static,
+{
     pub fn new() -> Self {
-        PipeGraph {
-            inner: DashMap::new(),
+        DoubleEndedTree {
+            inner: Arc::new(DashMap::new()),
         }
     }
 
@@ -107,7 +127,7 @@ impl<V> PipeGraph<V> {
 
         if !self.inner.contains_key(&hkey) {
             self.inner
-                .insert(hkey, Node::root(value, MultiHop::None, MultiHop::None));
+                .insert(hkey, Node::root(value, NextHop::None, NextHop::None));
         }
 
         hkey
@@ -115,7 +135,7 @@ impl<V> PipeGraph<V> {
 
     pub fn add_left<K: AsRef<[u8]>>(&self, key: K, value: V, left_of: SHA512) -> SHA512 {
         let hkey = hash_key(key, "left", Some(left_of));
-        self._add_left(hkey, Node::left(value, left_of, MultiHop::None), left_of);
+        self._add_left(hkey, Node::left(value, left_of, NextHop::None), left_of);
 
         hkey
     }
@@ -129,7 +149,7 @@ impl<V> PipeGraph<V> {
 
     pub fn add_right<K: AsRef<[u8]>>(&self, key: K, value: V, right_of: SHA512) -> SHA512 {
         let hkey = hash_key(key, "right", Some(right_of));
-        self._add_right(hkey, Node::right(value, MultiHop::None, right_of), right_of);
+        self._add_right(hkey, Node::right(value, NextHop::None, right_of), right_of);
 
         hkey
     }
@@ -149,39 +169,19 @@ impl<V> PipeGraph<V> {
         unimplemented!();
     }
 
-    pub fn fold<F, T>(&self, mut init: T, start: SHA512, handler: F) -> Result<T>
+    pub fn fold_branches<T, F, Fut>(
+        &self,
+        init: T,
+        start: SHA512,
+        handler: F,
+    ) -> Pin<Box<dyn Future<Output = T> + Send>>
     where
-        F: Fn(T, &V) -> Result<T>,
+        F: Fn(T, Arc<V>) -> Fut + Copy + Send + Sync + 'static,
+        Fut: Future<Output = T> + Send + 'static,
+        T: Clone + Send + Sync + 'static,
     {
-        let mut node = self
-            .inner
-            .get(&start)
-            .ok_or(anyhow!("Invalid next hop: {:?}", start))?;
-
-        loop {
-            init = handler(init, node.get_value())?;
-
-            match *node {
-                Node::Left(_, ref hop, _) | Node::LeftLeaf(_, ref hop) => {
-                    node = self
-                        .inner
-                        .get(hop)
-                        .ok_or(anyhow!("Invalid next hop: {:?}", hop))?
-                }
-                Node::Right(_, MultiHop::Hop(ref hop), _)
-                | Node::Root(_, MultiHop::Hop(ref hop), _) => {
-                    node = self
-                        .inner
-                        .get(hop)
-                        .ok_or(anyhow!("Invalid next hop: {:?}", hop))?
-                }
-                Node::Right(_, MultiHop::MultiHop(ref _multi), _)
-                | Node::Root(_, MultiHop::MultiHop(ref _multi), _) => unimplemented!(),
-                _ => break,
-            }
-        }
-
-        Ok(init)
+        let inner = self.inner.clone();
+        _fold(inner, init, start, handler)
     }
 
     fn _add_left(&self, key: SHA512, value: Node<V>, left_of: SHA512) {
@@ -189,8 +189,8 @@ impl<V> PipeGraph<V> {
             self.inner.insert(key, value);
 
             self.inner.alter(&left_of, |_, node| match node {
-                Node::Root(v, n, p) => Node::Root(v, n, p.merge(MultiHop::Hop(key))),
-                Node::Left(v, n, p) => Node::Left(v, n, p.merge(MultiHop::Hop(key))),
+                Node::Root(v, n, p) => Node::Root(v, n, p.merge(NextHop::Hop(key))),
+                Node::Left(v, n, p) => Node::Left(v, n, p.merge(NextHop::Hop(key))),
                 Node::Right(_, _, _) | Node::RightLeaf(_, _) | Node::LeftLeaf(_, _) => {
                     panic!("Left nodes must be left of Node::Root or Node::Left");
                 }
@@ -203,12 +203,61 @@ impl<V> PipeGraph<V> {
             self.inner.insert(key, value);
 
             self.inner.alter(&right_of, |_, node| match node {
-                Node::Root(v, n, p) => Node::Root(v, n.merge(MultiHop::Hop(key)), p),
-                Node::Right(v, n, p) => Node::Right(v, n.merge(MultiHop::Hop(key)), p),
+                Node::Root(v, n, p) => Node::Root(v, n.merge(NextHop::Hop(key)), p),
+                Node::Right(v, n, p) => Node::Right(v, n.merge(NextHop::Hop(key)), p),
                 Node::Left(_, _, _) | Node::LeftLeaf(_, _) | Node::RightLeaf(_, _) => {
                     panic!("Right nodes must be right of Node::Root or Node::Right");
                 }
             });
+        }
+    }
+}
+
+impl<V> Clone for DoubleEndedTree<V> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+fn _fold<V, T, F, Fut>(
+    inner: Arc<DashMap<SHA512, Node<V>>>,
+    init: T,
+    mut start: SHA512,
+    handler: F,
+) -> Pin<Box<dyn Future<Output = T> + Send>>
+where
+    F: Fn(T, Arc<V>) -> Fut + Copy + Send + Sync + 'static,
+    Fut: Future<Output = T> + Send + 'static,
+    T: Clone + Send + Sync + 'static,
+    V: Send + Sync + 'static,
+{
+    let mut fut = future::ready(init).boxed();
+    loop {
+        let node = match inner.get(&start) {
+            Some(n) => n,
+            None => {
+                error!("Invalid next hop: {:?}", start);
+                return fut;
+            }
+        };
+
+        let (value, next_hop) = node.unpack();
+
+        fut = fut.then(move |i| handler(i, value)).boxed();
+
+        match next_hop {
+            NextHop::Hop(h) => start = h,
+            NextHop::MultiHop(m) => {
+                fut = fut.shared().boxed();
+                for hop in m {
+                    let inner_c = inner.clone();
+                    fut = fut.then(move |i| _fold(inner_c, i, hop, handler)).boxed();
+                }
+                break fut;
+            }
+            NextHop::None => break fut,
         }
     }
 }
@@ -232,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_add_root_idempotent() {
-        let p = PipeGraph::new();
+        let p = DoubleEndedTree::new();
         let key = "key".to_owned();
         p.add_root(key.clone(), ());
         assert_eq!(p.inner.len(), 1);
@@ -241,20 +290,23 @@ mod tests {
         assert_eq!(p.inner.len(), 1);
     }
 
-    #[test]
-    fn test_fold() {
-        let p = PipeGraph::new();
+    #[tokio::test]
+    async fn test_fold_branches() {
+        let p = DoubleEndedTree::new();
         let root = p.add_root("root", 2);
         let left1 = p.add_left("left1", 1, root);
         let left_leaf = p.add_left_leaf("left2", 0, left1);
-        // p.add_left_idempotent("unrelated_left", 5, "root");
+        p.add_left("unrelated_left", 5, root);
         let right1 = p.add_right("right1", 3, root);
         p.add_right_leaf("right2", 4, right1);
-        // p.add_right_idempotent("unrelated_right", 5, "right1");
+        p.add_right_leaf("right3", 5, right1);
+        p.add_right_leaf("right4", 6, right1);
 
         let x = p
-            .fold(0, left_leaf, |base, value| Ok(base + value))
-            .unwrap();
-        assert_eq!(x, 10);
+            .fold_branches(0, left_leaf, |base, value| {
+                future::ready(base + value.as_ref())
+            })
+            .await;
+        assert_eq!(x, 21);
     }
 }
