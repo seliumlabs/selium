@@ -3,7 +3,7 @@ use std::{
     process::{Child, Command},
 };
 
-use futures::{stream::iter, SinkExt, TryStreamExt};
+use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use selium::{prelude::*, Subscriber};
 
 const SERVER_ADDR: &'static str = "127.0.0.1:7001";
@@ -17,15 +17,19 @@ async fn test_pub_sub() {
     handle.kill().unwrap();
 
     let messages = result.unwrap();
-    assert_eq!(messages[0], "foo");
-    assert_eq!(messages[1], "bar");
+    assert_eq!(messages[0], Some("foo".to_owned()));
+    assert_eq!(messages[1], Some("bar".to_owned()));
+    assert_eq!(messages[2], Some("foo".to_owned()));
+    assert_eq!(messages[3], Some("bar".to_owned()));
+    assert!(messages[4].is_none());
+    assert!(messages[5].is_none());
 }
 
-async fn run() -> Result<[String; 2], Box<dyn Error>> {
+async fn run() -> Result<[Option<String>; 6], Box<dyn Error>> {
     let mut subscriber1 = start_subscriber("/acmeco/stocks").await?;
-    // let subscriber2 = start_subscriber("/acmeco/stocks").await?;
-    // let subscriber3 = start_subscriber("/acmeco/something_else").await?;
-    // let subscriber4 = start_subscriber("/bluthco/stocks").await?;
+    let mut subscriber2 = start_subscriber("/acmeco/stocks").await?;
+    let subscriber3 = start_subscriber("/acmeco/something_else").await?;
+    let subscriber4 = start_subscriber("/bluthco/stocks").await?;
 
     let mut publisher = selium::publisher("/acmeco/stocks")
         // .map("/acmeco/forge_numbers.wasm")
@@ -39,11 +43,21 @@ async fn run() -> Result<[String; 2], Box<dyn Error>> {
         .await?;
     publisher.finish().await?;
 
-    let message1: String = subscriber1.try_next().await?.unwrap_or("".to_owned());
-    let message2: String = subscriber1.try_next().await?.unwrap_or("".to_owned());
+    let message1 = subscriber1.try_next().await?;
+    let message2 = subscriber1.try_next().await?;
+    let message3 = subscriber2.try_next().await?;
+    let message4 = subscriber2.try_next().await?;
+    let message5 = subscriber3
+        .into_future()
+        .map(|_| String::new())
+        .now_or_never();
+    let message6 = subscriber4
+        .into_future()
+        .map(|_| String::new())
+        .now_or_never();
     subscriber1.finish().await?;
 
-    Ok([message1, message2])
+    Ok([message1, message2, message3, message4, message5, message6])
 }
 
 async fn start_subscriber(topic: &str) -> Result<Subscriber, Box<dyn Error>> {
