@@ -1,11 +1,10 @@
-use crate::aliases::Streams;
-use crate::protocol::MessageCodec;
+use super::net::get_socket_addrs;
+use crate::BiStream;
 use anyhow::Result;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::RootCertStore;
-use std::{net::SocketAddr, time::Duration};
 use std::sync::Arc;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use std::{net::SocketAddr, time::Duration};
 
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
@@ -27,7 +26,7 @@ pub fn configure_client(root_store: &RootCertStore, keep_alive: u64) -> Result<C
     Ok(config)
 }
 
-pub async fn get_client_connection(config: ClientConfig, addr: SocketAddr) -> Result<Connection> {
+pub async fn connect_to_endpoint(config: ClientConfig, addr: SocketAddr) -> Result<Connection> {
     let mut endpoint = Endpoint::client("[::]:0".parse()?)?;
     endpoint.set_default_client_config(config);
 
@@ -36,11 +35,16 @@ pub async fn get_client_connection(config: ClientConfig, addr: SocketAddr) -> Re
     Ok(connection)
 }
 
-pub async fn get_client_streams(connection: Connection) -> Result<Streams> {
-    let (write, read) = connection.open_bi().await?;
+pub async fn establish_connection(
+    host: &str,
+    root_store: &RootCertStore,
+    keep_alive: u64,
+) -> Result<BiStream> {
+    let addr = get_socket_addrs(host)?;
 
-    let write_stream = FramedWrite::new(write, MessageCodec::new());
-    let read_stream = FramedRead::new(read, MessageCodec::new());
+    let config = configure_client(root_store, keep_alive)?;
+    let connection = connect_to_endpoint(config, addr).await?;
+    let stream = BiStream::try_from_connection(connection).await?;
 
-    Ok((write_stream, read_stream))
+    Ok(stream)
 }

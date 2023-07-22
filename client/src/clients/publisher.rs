@@ -1,51 +1,45 @@
-use crate::aliases::Streams;
+use super::builder::{ClientBuilder, ClientCommon};
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, PublisherPayload};
-use crate::traits::{Connect, IntoTimestamp, ClientConfig, Client};
-use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
-use crate::utils::net::get_socket_addrs;
-use crate::Operation;
+use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp};
+use crate::utils::client::establish_connection;
+use crate::BiStream;
 use anyhow::Result;
 use async_trait::async_trait;
-use futures::{SinkExt, Sink};
+use futures::{Sink, SinkExt};
 use rustls::RootCertStore;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use super::builder::ClientBuilder;
+
+pub const RETENTION_POLICY_DEFAULT: u64 = 0;
 
 #[derive(Debug)]
 pub struct PublisherWantsCert {
-    topic: String,
+    common: ClientCommon,
     retention_policy: u64,
-    keep_alive: u64,
-    operations: Vec<Operation>,
 }
 
 #[derive(Debug)]
 pub struct PublisherHasCert {
-    topic: String,
+    common: ClientCommon,
     retention_policy: u64,
-    keep_alive: u64,
-    operations: Vec<Operation>,
     root_store: RootCertStore,
 }
 
 pub fn publisher(topic: &str) -> ClientBuilder<PublisherWantsCert> {
     ClientBuilder {
         state: PublisherWantsCert {
-            topic: topic.to_owned(),
-            retention_policy: 0,
-            keep_alive: 5_000,
-            operations: Vec::new(),
+            common: ClientCommon::new(topic),
+            retention_policy: RETENTION_POLICY_DEFAULT,
         },
     }
 }
 
 impl ClientBuilder<PublisherWantsCert> {
-    pub fn retain<T: IntoTimestamp>(mut self, policy: T) -> Self {
-        self.state.retention_policy = policy.into_timestamp();
-        self
+    pub fn retain<T: IntoTimestamp>(mut self, policy: T) -> Result<Self> {
+        self.state.retention_policy = policy.into_timestamp()?;
+        Ok(self)
     }
 }
 
@@ -53,32 +47,30 @@ impl ClientConfig for ClientBuilder<PublisherWantsCert> {
     type NextState = ClientBuilder<PublisherHasCert>;
 
     fn map(mut self, module_path: &str) -> Self {
-        self.state
-            .operations
-            .push(Operation::Map(module_path.into()));
+        self.state.common.map(module_path);
         self
     }
 
     fn filter(mut self, module_path: &str) -> Self {
-        self.state
-            .operations
-            .push(Operation::Filter(module_path.into()));
+        self.state.common.filter(module_path);
         self
     }
 
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
-        self.state.keep_alive = interval.into_timestamp(); 
-        self
+    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Result<Self> {
+        self.state.common.keep_alive(interval)?;
+        Ok(self)
     }
 
     fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::NextState> {
         let root_store = load_root_store(&ca_path.into())?;
 
         let state = PublisherHasCert {
-            topic: self.state.topic,
+            common: ClientCommon {
+                topic: self.state.common.topic,
+                keep_alive: self.state.common.keep_alive,
+                operations: self.state.common.operations,
+            },
             retention_policy: self.state.retention_policy,
-            keep_alive: self.state.keep_alive,
-            operations: self.state.operations,
             root_store,
         };
 
@@ -90,30 +82,37 @@ impl ClientConfig for ClientBuilder<PublisherWantsCert> {
 impl Connect for ClientBuilder<PublisherHasCert> {
     type Output = Publisher;
 
+    async fn register(self, stream: &mut BiStream) -> Result<()> {
+        let frame = Frame::RegisterPublisher(PublisherPayload {
+            topic: self.state.common.topic,
+            operations: self.state.common.operations,
+            retention_policy: self.state.retention_policy,
+        });
+
+        stream.send(frame).await?;
+
+        Ok(())
+    }
+
     async fn connect(self, host: &str) -> Result<Self::Output> {
-        let addr = get_socket_addrs(host)?;
-        let config = configure_client(&self.state.root_store, self.state.keep_alive)?;
-        let connection = get_client_connection(config, addr).await?;
-        let mut streams = get_client_streams(connection).await?;
+        let mut stream =
+            establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
+                .await?;
 
-        register_publisher(self, &mut streams).await?;
+        self.register(&mut stream).await?;
 
-        Ok(Publisher { streams })
+        Ok(Publisher { stream })
     }
 }
 
 pub struct Publisher {
-    streams: Streams,
+    stream: BiStream,
 }
 
 #[async_trait]
 impl Client for Publisher {
     async fn finish(self) -> Result<()> {
-        let (write, _) = self.streams;
-
-        write.into_inner().finish().await?;
-
-        Ok(())
+        self.stream.finish().await
     }
 }
 
@@ -121,35 +120,19 @@ impl Sink<&str> for Publisher {
     type Error = anyhow::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-       self.streams.0.poll_ready_unpin(cx) 
+        self.stream.poll_ready_unpin(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: &str) -> Result<()> {
-       self.streams.0.start_send_unpin(Frame::Message(item.to_owned())) 
+        self.stream
+            .start_send_unpin(Frame::Message(item.to_owned()))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-       self.streams.0.poll_flush_unpin(cx) 
+        self.stream.poll_flush_unpin(cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-       self.streams.0.poll_close_unpin(cx) 
+        self.stream.poll_close_unpin(cx)
     }
-}
-
-pub async fn register_publisher(
-    client: ClientBuilder<PublisherHasCert>,
-    streams: &mut Streams,
-) -> Result<()> {
-    let (ref mut write, _) = streams;
-
-    let frame = Frame::RegisterPublisher(PublisherPayload {
-        topic: client.state.topic,
-        retention_policy: client.state.retention_policy,
-        operations: client.state.operations,
-    });
-
-    write.send(frame).await?;
-
-    Ok(())
 }

@@ -5,7 +5,7 @@ use tokio_util::codec::{Decoder, Encoder};
 
 const LEN_MARKER_SIZE: usize = size_of::<u32>();
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MessageCodec {}
 
 impl MessageCodec {
@@ -51,7 +51,7 @@ impl Decoder for MessageCodec {
 
         src.advance(LEN_MARKER_SIZE);
 
-        let frame = bincode::deserialize(&src)?;
+        let frame = bincode::deserialize(src)?;
 
         src.advance(msg_len as usize);
 

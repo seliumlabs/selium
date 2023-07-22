@@ -1,40 +1,32 @@
-use crate::aliases::Streams;
+use super::builder::{ClientBuilder, ClientCommon};
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, SubscriberPayload};
-use crate::traits::{Connect, ClientConfig, IntoTimestamp, Client};
-use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
-use crate::utils::net::get_socket_addrs;
-use crate::Operation;
+use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp};
+use crate::utils::client::establish_connection;
+use crate::BiStream;
 use anyhow::Result;
 use async_trait::async_trait;
-use futures::{SinkExt, StreamExt, Stream};
+use futures::{SinkExt, Stream, StreamExt};
 use rustls::RootCertStore;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use super::builder::ClientBuilder;
 
 #[derive(Debug)]
 pub struct SubscriberWantsCert {
-    topic: String,
-    operations: Vec<Operation>,
-    keep_alive: u64,
+    common: ClientCommon,
 }
 
 #[derive(Debug)]
 pub struct SubscriberHasCert {
-    topic: String,
-    operations: Vec<Operation>,
-    keep_alive: u64,
+    common: ClientCommon,
     root_store: RootCertStore,
 }
 
 pub fn subscriber(topic: &str) -> ClientBuilder<SubscriberWantsCert> {
     ClientBuilder {
         state: SubscriberWantsCert {
-            topic: topic.to_owned(),
-            operations: Vec::new(),
-            keep_alive: 5_000,
+            common: ClientCommon::new(topic),
         },
     }
 }
@@ -43,31 +35,25 @@ impl ClientConfig for ClientBuilder<SubscriberWantsCert> {
     type NextState = ClientBuilder<SubscriberHasCert>;
 
     fn map(mut self, module_path: &str) -> Self {
-        self.state
-            .operations
-            .push(Operation::Map(module_path.into()));
+        self.state.common.map(module_path);
         self
     }
 
     fn filter(mut self, module_path: &str) -> Self {
-        self.state
-            .operations
-            .push(Operation::Filter(module_path.into()));
+        self.state.common.map(module_path);
         self
     }
 
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
-        self.state.keep_alive = interval.into_timestamp(); 
-        self
+    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Result<Self> {
+        self.state.common.keep_alive(interval)?;
+        Ok(self)
     }
 
     fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::NextState> {
         let root_store = load_root_store(&ca_path.into())?;
 
         let state = SubscriberHasCert {
-            topic: self.state.topic,
-            operations: self.state.operations,
-            keep_alive: self.state.keep_alive,
+            common: self.state.common,
             root_store,
         };
 
@@ -79,30 +65,36 @@ impl ClientConfig for ClientBuilder<SubscriberWantsCert> {
 impl Connect for ClientBuilder<SubscriberHasCert> {
     type Output = Subscriber;
 
+    async fn register(self, stream: &mut BiStream) -> Result<()> {
+        let frame = Frame::RegisterSubscriber(SubscriberPayload {
+            topic: self.state.common.topic,
+            operations: self.state.common.operations,
+        });
+
+        stream.send(frame).await?;
+
+        Ok(())
+    }
+
     async fn connect(self, host: &str) -> Result<Self::Output> {
-        let addr = get_socket_addrs(host)?;
-        let config = configure_client(&self.state.root_store, self.state.keep_alive)?;
-        let connection = get_client_connection(config, addr).await?;
-        let mut streams = get_client_streams(connection).await?;
+        let mut stream =
+            establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
+                .await?;
 
-        register_subscriber(self, &mut streams).await?;
+        self.register(&mut stream).await?;
 
-        Ok(Subscriber { streams })
+        Ok(Subscriber { stream })
     }
 }
 
 pub struct Subscriber {
-    streams: Streams,
+    stream: BiStream,
 }
 
 #[async_trait]
 impl Client for Subscriber {
     async fn finish(self) -> Result<()> {
-        let (write, _) = self.streams;
-
-        write.into_inner().finish().await?;
-
-        Ok(())
+        self.stream.finish().await
     }
 }
 
@@ -110,7 +102,7 @@ impl Stream for Subscriber {
     type Item = Result<String>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let frame = match futures::ready!(self.streams.1.poll_next_unpin(cx)) {
+        let frame = match futures::ready!(self.stream.poll_next_unpin(cx)) {
             Some(Ok(frame)) => frame,
             Some(Err(err)) => return Poll::Ready(Some(Err(err))),
             None => return Poll::Ready(None),
@@ -118,27 +110,11 @@ impl Stream for Subscriber {
 
         match frame {
             Frame::Message(inner_string) => Poll::Ready(Some(Ok(inner_string))),
-            _ => Poll::Ready(None)
+            _ => Poll::Ready(None),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-       self.streams.1.size_hint() 
+        self.stream.size_hint()
     }
-}
-
-pub async fn register_subscriber(
-    client: ClientBuilder<SubscriberHasCert>,
-    streams: &mut Streams,
-) -> Result<()> {
-    let (ref mut write, _) = streams;
-
-    let frame = Frame::RegisterSubscriber(SubscriberPayload {
-        topic: client.state.topic,
-        operations: client.state.operations,
-    });
-
-    write.send(frame).await?;
-
-    Ok(())
 }
