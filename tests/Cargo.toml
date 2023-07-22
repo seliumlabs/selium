@@ -1,0 +1,10 @@
+[package]
+name = "selium-tests"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+futures = "0.3"
+selium = { path = "../client" }
+selium-server = { path = "../server" }
+tokio = { version = "1.29", features = ["macros"] }
