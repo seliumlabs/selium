@@ -3,8 +3,7 @@ use crate::aliases::Streams;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, SubscriberPayload};
 use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp};
-use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
-use crate::utils::net::get_socket_addrs;
+use crate::utils::client::establish_connection;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{SinkExt, Stream, StreamExt};
@@ -80,10 +79,9 @@ impl Connect for ClientBuilder<SubscriberHasCert> {
     }
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
-        let addr = get_socket_addrs(host)?;
-        let config = configure_client(&self.state.root_store, self.state.common.keep_alive)?;
-        let connection = get_client_connection(config, addr).await?;
-        let mut streams = get_client_streams(connection).await?;
+        let mut streams =
+            establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
+                .await?;
 
         self.register(&mut streams).await?;
 
