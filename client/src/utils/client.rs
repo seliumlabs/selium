@@ -3,8 +3,8 @@ use crate::protocol::MessageCodec;
 use anyhow::Result;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::RootCertStore;
-use std::{net::SocketAddr, time::Duration};
 use std::sync::Arc;
+use std::{net::SocketAddr, time::Duration};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 pub const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];

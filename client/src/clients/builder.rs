@@ -20,7 +20,7 @@ impl ClientCommon {
             topic: topic.to_owned(),
             keep_alive: KEEP_ALIVE_DEFAULT,
             operations: Vec::new(),
-        }        
+        }
     }
 
     pub fn map(&mut self, module_path: &str) {
