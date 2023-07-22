@@ -1,7 +1,7 @@
 use crate::protocol::{Frame, MessageCodec};
 use anyhow::Result;
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use quinn::{RecvStream, SendStream, Connection};
+use quinn::{Connection, RecvStream, SendStream};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::codec::{FramedRead, FramedWrite};
