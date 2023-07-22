@@ -1,9 +1,9 @@
 use super::builder::{ClientBuilder, ClientCommon};
-use crate::aliases::Streams;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, SubscriberPayload};
 use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp};
 use crate::utils::client::establish_connection;
+use crate::BiStream;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{SinkExt, Stream, StreamExt};
@@ -65,42 +65,36 @@ impl ClientConfig for ClientBuilder<SubscriberWantsCert> {
 impl Connect for ClientBuilder<SubscriberHasCert> {
     type Output = Subscriber;
 
-    async fn register(self, streams: &mut Streams) -> Result<()> {
-        let (ref mut write, _) = streams;
-
+    async fn register(self, stream: &mut BiStream) -> Result<()> {
         let frame = Frame::RegisterSubscriber(SubscriberPayload {
             topic: self.state.common.topic,
             operations: self.state.common.operations,
         });
 
-        write.send(frame).await?;
+        stream.send(frame).await?;
 
         Ok(())
     }
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
-        let mut streams =
+        let mut stream =
             establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
                 .await?;
 
-        self.register(&mut streams).await?;
+        self.register(&mut stream).await?;
 
-        Ok(Subscriber { streams })
+        Ok(Subscriber { stream })
     }
 }
 
 pub struct Subscriber {
-    streams: Streams,
+    stream: BiStream,
 }
 
 #[async_trait]
 impl Client for Subscriber {
     async fn finish(self) -> Result<()> {
-        let (write, _) = self.streams;
-
-        write.into_inner().finish().await?;
-
-        Ok(())
+        self.stream.finish().await
     }
 }
 
@@ -108,7 +102,7 @@ impl Stream for Subscriber {
     type Item = Result<String>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let frame = match futures::ready!(self.streams.1.poll_next_unpin(cx)) {
+        let frame = match futures::ready!(self.stream.poll_next_unpin(cx)) {
             Some(Ok(frame)) => frame,
             Some(Err(err)) => return Poll::Ready(Some(Err(err))),
             None => return Poll::Ready(None),
@@ -121,6 +115,6 @@ impl Stream for Subscriber {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.streams.1.size_hint()
+        self.stream.size_hint()
     }
 }

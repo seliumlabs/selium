@@ -1,9 +1,9 @@
 use super::builder::{ClientBuilder, ClientCommon};
-use crate::aliases::Streams;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, PublisherPayload};
 use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp};
 use crate::utils::client::establish_connection;
+use crate::BiStream;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};
@@ -82,43 +82,37 @@ impl ClientConfig for ClientBuilder<PublisherWantsCert> {
 impl Connect for ClientBuilder<PublisherHasCert> {
     type Output = Publisher;
 
-    async fn register(self, streams: &mut Streams) -> Result<()> {
-        let (ref mut write, _) = streams;
-
+    async fn register(self, stream: &mut BiStream) -> Result<()> {
         let frame = Frame::RegisterPublisher(PublisherPayload {
             topic: self.state.common.topic,
             operations: self.state.common.operations,
             retention_policy: self.state.retention_policy,
         });
 
-        write.send(frame).await?;
+        stream.send(frame).await?;
 
         Ok(())
     }
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
-        let mut streams =
+        let mut stream =
             establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
                 .await?;
 
-        self.register(&mut streams).await?;
+        self.register(&mut stream).await?;
 
-        Ok(Publisher { streams })
+        Ok(Publisher { stream })
     }
 }
 
 pub struct Publisher {
-    streams: Streams,
+    stream: BiStream,
 }
 
 #[async_trait]
 impl Client for Publisher {
     async fn finish(self) -> Result<()> {
-        let (write, _) = self.streams;
-
-        write.into_inner().finish().await?;
-
-        Ok(())
+        self.stream.finish().await
     }
 }
 
@@ -126,20 +120,19 @@ impl Sink<&str> for Publisher {
     type Error = anyhow::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.streams.0.poll_ready_unpin(cx)
+        self.stream.poll_ready_unpin(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: &str) -> Result<()> {
-        self.streams
-            .0
+        self.stream
             .start_send_unpin(Frame::Message(item.to_owned()))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.streams.0.poll_flush_unpin(cx)
+        self.stream.poll_flush_unpin(cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        self.streams.0.poll_close_unpin(cx)
+        self.stream.poll_close_unpin(cx)
     }
 }

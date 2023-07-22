@@ -1,6 +1,6 @@
 use super::net::get_socket_addrs;
-use crate::aliases::Streams;
 use crate::protocol::MessageCodec;
+use crate::BiStream;
 use anyhow::Result;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::RootCertStore;
@@ -37,25 +37,25 @@ pub async fn connect_to_endpoint(config: ClientConfig, addr: SocketAddr) -> Resu
     Ok(connection)
 }
 
-pub async fn get_client_streams(connection: Connection) -> Result<Streams> {
+pub async fn get_client_stream(connection: Connection) -> Result<BiStream> {
     let (write, read) = connection.open_bi().await?;
 
     let write_stream = FramedWrite::new(write, MessageCodec::new());
     let read_stream = FramedRead::new(read, MessageCodec::new());
 
-    Ok((write_stream, read_stream))
+    Ok(BiStream(write_stream, read_stream))
 }
 
 pub async fn establish_connection(
     host: &str,
     root_store: &RootCertStore,
     keep_alive: u64,
-) -> Result<Streams> {
+) -> Result<BiStream> {
     let addr = get_socket_addrs(host)?;
 
     let config = configure_client(root_store, keep_alive)?;
     let connection = connect_to_endpoint(config, addr).await?;
-    let streams = get_client_streams(connection).await?;
+    let streams = get_client_stream(connection).await?;
 
     Ok(streams)
 }

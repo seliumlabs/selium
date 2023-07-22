@@ -1,6 +1,5 @@
-use anyhow::Result;
-
 use crate::{traits::IntoTimestamp, Operation};
+use anyhow::Result;
 
 pub const KEEP_ALIVE_DEFAULT: u64 = 5;
 
