@@ -1,3 +1,4 @@
+use super::net::get_socket_addrs;
 use crate::aliases::Streams;
 use crate::protocol::MessageCodec;
 use anyhow::Result;
@@ -27,7 +28,7 @@ pub fn configure_client(root_store: &RootCertStore, keep_alive: u64) -> Result<C
     Ok(config)
 }
 
-pub async fn get_client_connection(config: ClientConfig, addr: SocketAddr) -> Result<Connection> {
+pub async fn connect_to_endpoint(config: ClientConfig, addr: SocketAddr) -> Result<Connection> {
     let mut endpoint = Endpoint::client("[::]:0".parse()?)?;
     endpoint.set_default_client_config(config);
 
@@ -43,4 +44,18 @@ pub async fn get_client_streams(connection: Connection) -> Result<Streams> {
     let read_stream = FramedRead::new(read, MessageCodec::new());
 
     Ok((write_stream, read_stream))
+}
+
+pub async fn establish_connection(
+    host: &str,
+    root_store: &RootCertStore,
+    keep_alive: u64,
+) -> Result<Streams> {
+    let addr = get_socket_addrs(host)?;
+
+    let config = configure_client(root_store, keep_alive)?;
+    let connection = connect_to_endpoint(config, addr).await?;
+    let streams = get_client_streams(connection).await?;
+
+    Ok(streams)
 }
