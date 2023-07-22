@@ -971,7 +971,6 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "selium",
- "selium-server",
  "tokio",
 ]
 
