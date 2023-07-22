@@ -1,17 +1,9 @@
-use super::builder::ClientBuilder;
 use super::builder::{ClientBuilder, ClientCommon};
-use crate::aliases::Streams;
-use crate::crypto::cert::load_root_store;
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, PublisherPayload};
-use crate::protocol::{Frame, PublisherPayload};
-use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp};
 use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp};
 use crate::utils::client::establish_connection;
-use crate::utils::client::{configure_client, get_client_connection, get_client_streams};
-use crate::utils::net::get_socket_addrs;
 use crate::BiStream;
-use crate::Operation;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};

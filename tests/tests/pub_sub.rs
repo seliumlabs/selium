@@ -33,7 +33,7 @@ async fn run() -> Result<[Option<String>; 6], Box<dyn Error>> {
 
     let mut publisher = selium::publisher("/acmeco/stocks")
         // .map("/acmeco/forge_numbers.wasm")
-        .keep_alive(5_000)
+        .keep_alive(5_000)?
         .with_certificate_authority("certs/ca.crt")?
         .connect("127.0.0.1:7001")
         .await?;
@@ -64,7 +64,7 @@ async fn start_subscriber(topic: &str) -> Result<Subscriber, Box<dyn Error>> {
     Ok(selium::subscriber(topic)
         // .map("/selium/bonanza.wasm")
         // .filter("/selium/dodgy_stuff.wasm")
-        .keep_alive(5_000)
+        .keep_alive(5_000)?
         .with_certificate_authority("certs/ca.crt")?
         .connect(SERVER_ADDR)
         .await?)
