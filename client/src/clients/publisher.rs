@@ -37,9 +37,9 @@ pub fn publisher(topic: &str) -> ClientBuilder<PublisherWantsCert> {
 }
 
 impl ClientBuilder<PublisherWantsCert> {
-    pub fn retain<T: IntoTimestamp>(mut self, policy: T) -> Self {
-        self.state.retention_policy = policy.into_timestamp();
-        self
+    pub fn retain<T: IntoTimestamp>(mut self, policy: T) -> Result<Self> {
+        self.state.retention_policy = policy.into_timestamp()?;
+        Ok(self)
     }
 }
 
@@ -56,9 +56,9 @@ impl ClientConfig for ClientBuilder<PublisherWantsCert> {
         self
     }
 
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
-        self.state.common.keep_alive(interval);
-        self
+    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Result<Self> {
+        self.state.common.keep_alive(interval)?;
+        Ok(self)
     }
 
     fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::NextState> {

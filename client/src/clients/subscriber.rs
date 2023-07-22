@@ -44,9 +44,9 @@ impl ClientConfig for ClientBuilder<SubscriberWantsCert> {
         self
     }
 
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Self {
-        self.state.common.keep_alive(interval);
-        self
+    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Result<Self> {
+        self.state.common.keep_alive(interval)?;
+        Ok(self)
     }
 
     fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::NextState> {

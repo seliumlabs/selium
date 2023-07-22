@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 use crate::{traits::IntoTimestamp, Operation};
 
 pub const KEEP_ALIVE_DEFAULT: u64 = 5;
@@ -31,7 +33,8 @@ impl ClientCommon {
         self.operations.push(Operation::Filter(module_path.into()));
     }
 
-    pub fn keep_alive<T: IntoTimestamp>(&mut self, interval: T) {
-        self.keep_alive = interval.into_timestamp();
+    pub fn keep_alive<T: IntoTimestamp>(&mut self, interval: T) -> Result<()> {
+        self.keep_alive = interval.into_timestamp()?;
+        Ok(())
     }
 }
