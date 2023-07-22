@@ -1,7 +1,9 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{anyhow, bail, Result};
-use clap::Parser;
+use clap::{Args, Parser};
+use clap_verbosity_flag::Verbosity;
+use env_logger::Builder;
 use futures::{channel::mpsc, future, StreamExt, TryStreamExt};
 use log::{error, info};
 use pipeline::Pipeline;
@@ -15,19 +17,12 @@ mod quic;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
-struct Args {
+struct UserArgs {
     /// Address to bind this server to
     #[clap(short = 'a', long = "bind-addr")]
     bind_addr: SocketAddr,
-    /// TLS private key
-    #[clap(short = 'k', long = "key", requires = "cert")]
-    key: Option<PathBuf>,
-    /// TLS certificate
-    #[clap(short = 'c', long = "cert", requires = "key")]
-    cert: Option<PathBuf>,
-    /// Autogenerate server cert (NOTE: This should only be used for testing!)
-    #[clap(long = "self-signed", conflicts_with = "cert")]
-    self_signed: bool,
+    #[clap(flatten)]
+    cert: CertGroup,
     /// Enable stateless retries
     #[clap(long = "stateless-retry")]
     stateless_retry: bool,
@@ -37,19 +32,36 @@ struct Args {
     /// Maximum time a client can idle waiting for data - defaults to infinity
     #[clap(long = "max-idle-timeout", default_value_t = 15, value_parser = clap::value_parser!(u32).range(5..30))]
     max_idle_timeout: u32,
+    #[clap(flatten)]
+    verbose: Verbosity,
+}
+
+#[derive(Args, Debug)]
+#[group(required = true)]
+struct CertGroup {
+    /// TLS private key
+    #[clap(short = 'k', long = "key", requires = "cert")]
+    key: Option<PathBuf>,
+    /// TLS certificate
+    #[clap(short = 'c', long = "cert", requires = "key")]
+    cert: Option<PathBuf>,
+    /// Autogenerate server cert (NOTE: This should only be used for testing!)
+    #[clap(long = "self-signed", conflicts_with = "cert")]
+    self_signed: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    let args = UserArgs::parse();
 
-    let args = Args::parse();
+    let mut logger = Builder::new();
+    logger.filter_level(args.verbose.log_level_filter()).init();
 
     let pipeline = Pipeline::new();
 
-    let (certs, key) = if let (Some(cert_path), Some(key_path)) = (args.cert, args.key) {
+    let (certs, key) = if let (Some(cert_path), Some(key_path)) = (args.cert.cert, args.cert.key) {
         quic::read_certs(cert_path, key_path)?
-    } else if args.self_signed {
+    } else if args.cert.self_signed {
         quic::generate_self_signed_cert()?
     } else {
         // Clap ensures that either --cert + --key or --self-signed are present
