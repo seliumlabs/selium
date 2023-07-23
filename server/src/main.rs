@@ -166,14 +166,15 @@ async fn handle_publisher(
 ) -> Result<()> {
     pipeline.add_publisher(addr, header);
 
-    rx.map_err(anyhow::Error::from).try_for_each(move |frame| match frame {
-        Frame::Message(msg) => {
-            tokio::spawn(pipeline.traverse(addr, msg));
-            future::ok(())
-        }
-        _ => future::err(anyhow!("Non Message frame received out of context")),
-    })
-    .await?;
+    rx.map_err(anyhow::Error::from)
+        .try_for_each(move |frame| match frame {
+            Frame::Message(msg) => {
+                tokio::spawn(pipeline.traverse(addr, msg));
+                future::ok(())
+            }
+            _ => future::err(anyhow!("Non Message frame received out of context")),
+        })
+        .await?;
 
     Ok(())
 }
