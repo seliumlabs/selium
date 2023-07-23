@@ -117,22 +117,22 @@ impl Client for Publisher {
 }
 
 impl Sink<&str> for Publisher {
-    type Error = anyhow::Error;
+    type Error = std::io::Error;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         self.stream.poll_ready_unpin(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: &str) -> Result<()> {
+    fn start_send(mut self: Pin<&mut Self>, item: &str) -> std::io::Result<()> {
         self.stream
             .start_send_unpin(Frame::Message(item.to_owned()))
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         self.stream.poll_flush_unpin(cx)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         self.stream.poll_close_unpin(cx)
     }
 }

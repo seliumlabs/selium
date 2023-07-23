@@ -1,17 +1,29 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-
 use anyhow::{anyhow, bail, Result};
 use clap::Parser;
 use futures::{channel::mpsc, StreamExt, TryStreamExt};
 use log::{error, info};
 use pipeline::Pipeline;
 use quinn::{IdleTimeout, RecvStream, SendStream, VarInt};
-use selium::protocol::{Frame, MessageCodec, PublisherPayload, SubscriberPayload};
-use tokio_util::codec::{FramedRead, FramedWrite};
+use selium::protocol::{Frame, PublisherPayload, SubscriberPayload};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio_serde::formats::SymmetricalBincode;
+use tokio_serde::SymmetricallyFramed;
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 mod graph;
 mod pipeline;
 mod quic;
+
+pub type WriteStream = SymmetricallyFramed<
+    FramedWrite<SendStream, LengthDelimitedCodec>,
+    Frame,
+    SymmetricalBincode<Frame>,
+>;
+pub type ReadStream = SymmetricallyFramed<
+    FramedRead<RecvStream, LengthDelimitedCodec>,
+    Frame,
+    SymmetricalBincode<Frame>,
+>;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -102,10 +114,14 @@ async fn handle_connection(pipeline: Arc<Pipeline>, conn: quinn::Connecting) -> 
             Err(e) => {
                 bail!(e);
             }
-            Ok((tx, rx)) => (
-                FramedWrite::new(tx, MessageCodec::new()),
-                FramedRead::new(rx, MessageCodec::new()),
-            ),
+            Ok((tx, rx)) => {
+                let tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+                let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+                (
+                    SymmetricallyFramed::new(tx, SymmetricalBincode::default()),
+                    SymmetricallyFramed::new(rx, SymmetricalBincode::default()),
+                )
+            }
         };
 
         let pipe_clone = pipeline.clone();
@@ -121,8 +137,8 @@ async fn handle_connection(pipeline: Arc<Pipeline>, conn: quinn::Connecting) -> 
 async fn handle_request(
     pipeline: Arc<Pipeline>,
     addr: SocketAddr,
-    tx: FramedWrite<SendStream, MessageCodec>,
-    mut rx: FramedRead<RecvStream, MessageCodec>,
+    tx: WriteStream,
+    mut rx: ReadStream,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = rx.next().await {
@@ -146,20 +162,21 @@ async fn handle_publisher(
     header: PublisherPayload,
     pipeline: Arc<Pipeline>,
     addr: SocketAddr,
-    rx: FramedRead<RecvStream, MessageCodec>,
+    rx: ReadStream,
 ) -> Result<()> {
     pipeline.add_publisher(addr, header);
 
-    rx.try_for_each(|frame| async {
-        match frame {
-            Frame::Message(msg) => {
-                pipeline.traverse(addr, msg)?;
-                Ok(())
+    rx.map_err(anyhow::Error::from)
+        .try_for_each(|frame| async {
+            match frame {
+                Frame::Message(msg) => {
+                    pipeline.traverse(addr, msg)?;
+                    Ok(())
+                }
+                _ => Err(anyhow!("Non Message frame received out of context")),
             }
-            _ => Err(anyhow!("Non Message frame received out of context")),
-        }
-    })
-    .await?;
+        })
+        .await?;
     Ok(())
 }
 
@@ -167,7 +184,7 @@ async fn handle_subscriber(
     header: SubscriberPayload,
     pipeline: Arc<Pipeline>,
     addr: SocketAddr,
-    tx: FramedWrite<SendStream, MessageCodec>,
+    tx: WriteStream,
 ) -> Result<()> {
     let (tx_chan, rx_chan) = mpsc::unbounded();
     pipeline.add_subscriber(addr, header, tx_chan);

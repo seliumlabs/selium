@@ -1,36 +1,50 @@
-use crate::protocol::{Frame, MessageCodec};
+use crate::protocol::Frame;
 use anyhow::Result;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream};
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_serde::formats::SymmetricalBincode;
+use tokio_serde::SymmetricallyFramed;
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-pub type ReadStream = FramedRead<RecvStream, MessageCodec>;
-pub type WriteStream = FramedWrite<SendStream, MessageCodec>;
+pub type WriteStream = SymmetricallyFramed<
+    FramedWrite<SendStream, LengthDelimitedCodec>,
+    Frame,
+    SymmetricalBincode<Frame>,
+>;
+pub type ReadStream = SymmetricallyFramed<
+    FramedRead<RecvStream, LengthDelimitedCodec>,
+    Frame,
+    SymmetricalBincode<Frame>,
+>;
 
 pub struct BiStream(pub WriteStream, pub ReadStream);
 
 impl BiStream {
     pub async fn try_from_connection(connection: Connection) -> Result<Self> {
         let (send, recv) = connection.open_bi().await?;
-        let send_stream = FramedWrite::new(send, MessageCodec::new());
-        let recv_stream = FramedRead::new(recv, MessageCodec::new());
 
-        Ok(Self(send_stream, recv_stream))
+        let send_stream = FramedWrite::new(send, LengthDelimitedCodec::new());
+        let recv_stream = FramedRead::new(recv, LengthDelimitedCodec::new());
+
+        Ok(Self(
+            SymmetricallyFramed::new(send_stream, SymmetricalBincode::default()),
+            SymmetricallyFramed::new(recv_stream, SymmetricalBincode::default()),
+        ))
     }
 
     pub async fn finish(self) -> Result<()> {
-        let write_stream = self.0;
+        let write_stream = self.0.into_inner();
         write_stream.into_inner().finish().await?;
         Ok(())
     }
 }
 
 impl Sink<Frame> for BiStream {
-    type Error = anyhow::Error;
+    type Error = std::io::Error;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         self.0.poll_ready_unpin(cx)
     }
 
@@ -48,7 +62,7 @@ impl Sink<Frame> for BiStream {
 }
 
 impl Stream for BiStream {
-    type Item = Result<Frame>;
+    type Item = std::io::Result<Frame>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.1.poll_next_unpin(cx)

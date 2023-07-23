@@ -99,7 +99,7 @@ impl Client for Subscriber {
 }
 
 impl Stream for Subscriber {
-    type Item = Result<String>;
+    type Item = std::io::Result<String>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let frame = match futures::ready!(self.stream.poll_next_unpin(cx)) {
