@@ -14,8 +14,8 @@ pub struct BiStream(pub WriteStream, pub ReadStream);
 impl BiStream {
     pub async fn try_from_connection(connection: Connection) -> Result<Self> {
         let (send, recv) = connection.open_bi().await?;
-        let send_stream = FramedWrite::new(send, MessageCodec::new());
-        let recv_stream = FramedRead::new(recv, MessageCodec::new());
+        let send_stream = FramedWrite::new(send, MessageCodec);
+        let recv_stream = FramedRead::new(recv, MessageCodec);
 
         Ok(Self(send_stream, recv_stream))
     }

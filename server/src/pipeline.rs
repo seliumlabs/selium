@@ -101,13 +101,13 @@ impl Pipeline {
         );
     }
 
-    pub fn rm_publisher(&self, _addr: SocketAddr) {
-        unimplemented!();
-    }
+    // pub fn rm_publisher(&self, _addr: SocketAddr) {
+    //     unimplemented!();
+    // }
 
-    pub fn rm_subscriber(&self, _addr: SocketAddr) {
-        unimplemented!();
-    }
+    // pub fn rm_subscriber(&self, _addr: SocketAddr) {
+    //     unimplemented!();
+    // }
 
     pub fn traverse(
         &self,
@@ -124,7 +124,7 @@ impl Pipeline {
                     }
                 }
                 // @TODO - Implement WASM executor
-                PipelineNode::Wasm(w) => msg += &w,
+                PipelineNode::Wasm(w) => msg += w,
             };
 
             future::ready(msg)
