@@ -161,13 +161,13 @@ where
         hkey
     }
 
-    pub fn rm_left(_hash: SHA512) {
-        unimplemented!();
-    }
+    // pub fn rm_left(_hash: SHA512) {
+    //     unimplemented!();
+    // }
 
-    pub fn rm_right(_hash: SHA512) {
-        unimplemented!();
-    }
+    // pub fn rm_right(_hash: SHA512) {
+    //     unimplemented!();
+    // }
 
     pub fn fold_branches<T, F, Fut>(
         &self,
