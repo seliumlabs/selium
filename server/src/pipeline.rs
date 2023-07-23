@@ -1,13 +1,13 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, pin::Pin};
 
-use anyhow::Result;
-use futures::channel::mpsc::UnboundedSender;
+use futures::{channel::mpsc::UnboundedSender, future, Future};
+use log::error;
 use selium::{
     protocol::{PublisherPayload, SubscriberPayload},
     Operation,
 };
 
-use crate::graph::{hash_key, PipeGraph};
+use crate::graph::{hash_key, DoubleEndedTree};
 
 #[derive(Debug)]
 enum PipelineNode {
@@ -17,9 +17,9 @@ enum PipelineNode {
     Wasm(String),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Pipeline {
-    graph: PipeGraph<PipelineNode>,
+    graph: DoubleEndedTree<PipelineNode>,
 }
 
 impl ToString for PipelineNode {
@@ -42,7 +42,7 @@ impl PartialEq for PipelineNode {
 impl Pipeline {
     pub fn new() -> Self {
         Pipeline {
-            graph: PipeGraph::new(),
+            graph: DoubleEndedTree::new(),
         }
     }
 
@@ -109,19 +109,25 @@ impl Pipeline {
         unimplemented!();
     }
 
-    pub fn traverse(&self, publisher: SocketAddr, message: String) -> Result<String> {
+    pub fn traverse(
+        &self,
+        publisher: SocketAddr,
+        message: String,
+    ) -> Pin<Box<dyn Future<Output = String> + Send>> {
         let key = hash_key(publisher.to_string(), "left", None);
-        self.graph.fold(message, key, |mut msg, node| {
-            match node {
+        self.graph.fold_branches(message, key, |mut msg, node| {
+            match node.as_ref() {
                 PipelineNode::Publisher | PipelineNode::Topic(_) => (),
                 PipelineNode::Subscriber(_, sock) => {
-                    sock.unbounded_send(msg.clone())?;
+                    if let Err(e) = sock.unbounded_send(msg.clone()) {
+                        error!("Failed to send message to subscriber channel: {e}");
+                    }
                 }
                 // @TODO - Implement WASM executor
-                PipelineNode::Wasm(w) => msg += w,
+                PipelineNode::Wasm(w) => msg += &w,
             };
 
-            Ok(msg)
+            future::ready(msg)
         })
     }
 }
@@ -131,8 +137,8 @@ mod tests {
     use futures::channel::mpsc;
 
     use super::*;
-    use crate::graph::{hash_key, MultiHop, Node};
-    use std::str::FromStr;
+    use crate::graph::{hash_key, NextHop, Node};
+    use std::{str::FromStr, sync::Arc};
 
     #[test]
     fn test_add_publisher() {
@@ -186,70 +192,70 @@ mod tests {
 
         assert_eq!(
             *pipe.graph.get(pub1_key).unwrap(),
-            Node::LeftLeaf(PipelineNode::Publisher, map11_key)
+            Node::LeftLeaf(Arc::new(PipelineNode::Publisher), map11_key)
         );
 
         assert_eq!(
             *pipe.graph.get(pub2_key).unwrap(),
-            Node::LeftLeaf(PipelineNode::Publisher, map12_key)
+            Node::LeftLeaf(Arc::new(PipelineNode::Publisher), map12_key)
         );
 
         assert_eq!(
             *pipe.graph.get(pub3_key).unwrap(),
-            Node::LeftLeaf(PipelineNode::Publisher, map12_key)
+            Node::LeftLeaf(Arc::new(PipelineNode::Publisher), map12_key)
         );
 
         assert_eq!(
             *pipe.graph.get(map11_key).unwrap(),
             Node::Left(
-                PipelineNode::Wasm("/namespace/map1".into()),
+                Arc::new(PipelineNode::Wasm("/namespace/map1".into())),
                 filter1_key,
-                MultiHop::Hop(pub1_key),
+                NextHop::Hop(pub1_key),
             )
         );
 
         assert_eq!(
             *pipe.graph.get(map12_key).unwrap(),
             Node::Left(
-                PipelineNode::Wasm("/namespace/map1".into()),
+                Arc::new(PipelineNode::Wasm("/namespace/map1".into())),
                 filter2_key,
-                MultiHop::MultiHop(vec![pub2_key, pub3_key]),
+                NextHop::MultiHop(vec![pub2_key, pub3_key]),
             )
         );
 
         assert_eq!(
             *pipe.graph.get(filter1_key).unwrap(),
             Node::Left(
-                PipelineNode::Wasm("/namespace/filter1".into()),
+                Arc::new(PipelineNode::Wasm("/namespace/filter1".into())),
                 map2_key,
-                MultiHop::Hop(map11_key),
+                NextHop::Hop(map11_key),
             )
         );
 
         assert_eq!(
             *pipe.graph.get(filter2_key).unwrap(),
             Node::Left(
-                PipelineNode::Wasm("/namespace/filter2".into()),
+                Arc::new(PipelineNode::Wasm("/namespace/filter2".into())),
                 map2_key,
-                MultiHop::Hop(map12_key),
+                NextHop::Hop(map12_key),
             )
         );
 
         assert_eq!(
             *pipe.graph.get(map2_key).unwrap(),
             Node::Left(
-                PipelineNode::Wasm("/namespace/map2".into()),
+                Arc::new(PipelineNode::Wasm("/namespace/map2".into())),
                 topic_key,
-                MultiHop::MultiHop(vec![filter1_key, filter2_key]),
+                NextHop::MultiHop(vec![filter1_key, filter2_key]),
             )
         );
 
         assert_eq!(
             *pipe.graph.get(topic_key).unwrap(),
             Node::Root(
-                PipelineNode::Topic("/namespace/topic".into()),
-                MultiHop::None,
-                MultiHop::Hop(map2_key)
+                Arc::new(PipelineNode::Topic("/namespace/topic".into())),
+                NextHop::None,
+                NextHop::Hop(map2_key)
             )
         );
     }
@@ -307,17 +313,17 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(topic_key).unwrap(),
             Node::Root(
-                PipelineNode::Topic("/namespace/topic".into()),
-                MultiHop::Hop(map1_key),
-                MultiHop::None
+                Arc::new(PipelineNode::Topic("/namespace/topic".into())),
+                NextHop::Hop(map1_key),
+                NextHop::None
             )
         );
 
         assert_eq!(
             *pipe.graph.get(map1_key).unwrap(),
             Node::Right(
-                PipelineNode::Wasm("/namespace/map1".into()),
-                MultiHop::MultiHop(vec![filter1_key, filter2_key]),
+                Arc::new(PipelineNode::Wasm("/namespace/map1".into())),
+                NextHop::MultiHop(vec![filter1_key, filter2_key]),
                 topic_key,
             )
         );
@@ -325,8 +331,8 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(filter1_key).unwrap(),
             Node::Right(
-                PipelineNode::Wasm("/namespace/filter1".into()),
-                MultiHop::Hop(map21_key),
+                Arc::new(PipelineNode::Wasm("/namespace/filter1".into())),
+                NextHop::Hop(map21_key),
                 map1_key,
             )
         );
@@ -334,8 +340,8 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(filter2_key).unwrap(),
             Node::Right(
-                PipelineNode::Wasm("/namespace/filter2".into()),
-                MultiHop::Hop(map22_key),
+                Arc::new(PipelineNode::Wasm("/namespace/filter2".into())),
+                NextHop::Hop(map22_key),
                 map1_key,
             )
         );
@@ -343,8 +349,8 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(map21_key).unwrap(),
             Node::Right(
-                PipelineNode::Wasm("/namespace/map2".into()),
-                MultiHop::Hop(sub1_key),
+                Arc::new(PipelineNode::Wasm("/namespace/map2".into())),
+                NextHop::Hop(sub1_key),
                 filter1_key,
             )
         );
@@ -352,8 +358,8 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(map22_key).unwrap(),
             Node::Right(
-                PipelineNode::Wasm("/namespace/map2".into()),
-                MultiHop::MultiHop(vec![sub2_key, sub3_key]),
+                Arc::new(PipelineNode::Wasm("/namespace/map2".into())),
+                NextHop::MultiHop(vec![sub2_key, sub3_key]),
                 filter2_key,
             )
         );
@@ -361,7 +367,10 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(sub1_key).unwrap(),
             Node::RightLeaf(
-                PipelineNode::Subscriber(SocketAddr::from_str("127.0.0.1:40009").unwrap(), tx1),
+                Arc::new(PipelineNode::Subscriber(
+                    SocketAddr::from_str("127.0.0.1:40009").unwrap(),
+                    tx1
+                )),
                 map21_key
             ),
         );
@@ -369,7 +378,10 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(sub2_key).unwrap(),
             Node::RightLeaf(
-                PipelineNode::Subscriber(SocketAddr::from_str("127.0.0.1:40010").unwrap(), tx2),
+                Arc::new(PipelineNode::Subscriber(
+                    SocketAddr::from_str("127.0.0.1:40010").unwrap(),
+                    tx2
+                )),
                 map22_key
             ),
         );
@@ -377,7 +389,10 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(sub3_key).unwrap(),
             Node::RightLeaf(
-                PipelineNode::Subscriber(SocketAddr::from_str("127.0.0.1:40011").unwrap(), tx3),
+                Arc::new(PipelineNode::Subscriber(
+                    SocketAddr::from_str("127.0.0.1:40011").unwrap(),
+                    tx3
+                )),
                 map22_key
             ),
         );

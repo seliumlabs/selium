@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use clap::Parser;
-use futures::{channel::mpsc, StreamExt, TryStreamExt};
+use futures::{channel::mpsc, future, StreamExt, TryStreamExt};
 use log::{error, info};
 use pipeline::Pipeline;
 use quinn::{IdleTimeout, RecvStream, SendStream, VarInt};
@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let pipeline = Arc::new(Pipeline::new());
+    let pipeline = Pipeline::new();
 
     let (certs, key) = if let (Some(cert_path), Some(key_path)) = (args.cert, args.key) {
         quic::read_certs(cert_path, key_path)?
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(pipeline: Arc<Pipeline>, conn: quinn::Connecting) -> Result<()> {
+async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Result<()> {
     let connection = conn.await?;
     info!(
         "Connection {} - {}",
@@ -135,7 +135,7 @@ async fn handle_connection(pipeline: Arc<Pipeline>, conn: quinn::Connecting) -> 
 }
 
 async fn handle_request(
-    pipeline: Arc<Pipeline>,
+    pipeline: Pipeline,
     addr: SocketAddr,
     tx: WriteStream,
     mut rx: ReadStream,
@@ -160,29 +160,27 @@ async fn handle_request(
 
 async fn handle_publisher(
     header: PublisherPayload,
-    pipeline: Arc<Pipeline>,
+    pipeline: Pipeline,
     addr: SocketAddr,
     rx: ReadStream,
 ) -> Result<()> {
     pipeline.add_publisher(addr, header);
 
-    rx.map_err(anyhow::Error::from)
-        .try_for_each(|frame| async {
-            match frame {
-                Frame::Message(msg) => {
-                    pipeline.traverse(addr, msg)?;
-                    Ok(())
-                }
-                _ => Err(anyhow!("Non Message frame received out of context")),
-            }
-        })
-        .await?;
+    rx.map_err(anyhow::Error::from).try_for_each(move |frame| match frame {
+        Frame::Message(msg) => {
+            tokio::spawn(pipeline.traverse(addr, msg));
+            future::ok(())
+        }
+        _ => future::err(anyhow!("Non Message frame received out of context")),
+    })
+    .await?;
+
     Ok(())
 }
 
 async fn handle_subscriber(
     header: SubscriberPayload,
-    pipeline: Arc<Pipeline>,
+    pipeline: Pipeline,
     addr: SocketAddr,
     tx: WriteStream,
 ) -> Result<()> {
