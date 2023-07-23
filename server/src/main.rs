@@ -7,7 +7,7 @@ use log::{error, info};
 use pipeline::Pipeline;
 use quinn::{IdleTimeout, RecvStream, SendStream, VarInt};
 use selium::protocol::{Frame, PublisherPayload, SubscriberPayload};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf};
 use tokio_serde::formats::SymmetricalBincode;
 use tokio_serde::SymmetricallyFramed;
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
