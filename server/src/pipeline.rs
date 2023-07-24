@@ -101,13 +101,13 @@ impl Pipeline {
         );
     }
 
-    // pub fn rm_publisher(&self, _addr: SocketAddr) {
-    //     unimplemented!();
-    // }
+    pub fn rm_publisher(&self, addr: SocketAddr) {
+        self.graph.rm_left_leaf(addr.to_string());
+    }
 
-    // pub fn rm_subscriber(&self, _addr: SocketAddr) {
-    //     unimplemented!();
-    // }
+    pub fn rm_subscriber(&self, addr: SocketAddr) {
+        self.graph.rm_right_leaf(addr.to_string());
+    }
 
     pub fn traverse(
         &self,
@@ -396,5 +396,143 @@ mod tests {
                 map22_key
             ),
         );
+    }
+
+    #[test]
+    fn test_remove_subscriber() {
+        let pipe: Pipeline = Pipeline::new();
+
+        let addr1 = SocketAddr::from_str("127.0.0.1:40009").unwrap();
+        let (tx1, _) = mpsc::unbounded();
+        let payload1 = SubscriberPayload {
+            topic: "/namespace/topic".into(),
+            operations: vec![
+                Operation::Map("/namespace/map1".into()),
+                Operation::Filter("/namespace/filter1".into()),
+                Operation::Map("/namespace/map2".into()),
+            ],
+        };
+        pipe.add_subscriber(addr1, payload1, tx1.clone());
+
+        let topic_key = hash_key("/namespace/topic", "", None);
+        let sub1_key = hash_key("127.0.0.1:40009", "right", None);
+        let map1_key = hash_key("/namespace/map1", "right", Some(topic_key));
+        let filter1_key = hash_key("/namespace/filter1", "right", Some(map1_key));
+        let map21_key = hash_key("/namespace/map2", "right", Some(filter1_key));
+
+        assert_eq!(
+            *pipe.graph.get(topic_key).unwrap(),
+            Node::Root(
+                Arc::new(PipelineNode::Topic("/namespace/topic".into())),
+                NextHop::Hop(map1_key),
+                NextHop::None
+            )
+        );
+
+        assert_eq!(
+            *pipe.graph.get(map1_key).unwrap(),
+            Node::Right(
+                Arc::new(PipelineNode::Wasm("/namespace/map1".into())),
+                NextHop::Hop(filter1_key),
+                topic_key,
+            )
+        );
+
+        assert_eq!(
+            *pipe.graph.get(filter1_key).unwrap(),
+            Node::Right(
+                Arc::new(PipelineNode::Wasm("/namespace/filter1".into())),
+                NextHop::Hop(map21_key),
+                map1_key,
+            )
+        );
+
+        assert_eq!(
+            *pipe.graph.get(sub1_key).unwrap(),
+            Node::RightLeaf(
+                Arc::new(PipelineNode::Subscriber(
+                    SocketAddr::from_str("127.0.0.1:40009").unwrap(),
+                    tx1
+                )),
+                map21_key
+            ),
+        );
+
+        pipe.rm_subscriber(addr1);
+
+        assert_eq!(
+            *pipe.graph.get(topic_key).unwrap(),
+            Node::Root(
+                Arc::new(PipelineNode::Topic("/namespace/topic".into())),
+                NextHop::None,
+                NextHop::None
+            )
+        );
+
+        assert!(pipe.graph.get(map1_key).is_none());
+        assert!(pipe.graph.get(filter1_key).is_none());
+        assert!(pipe.graph.get(sub1_key).is_none());
+    }
+
+    #[test]
+    fn test_remove_publisher() {
+        let pipe: Pipeline = Pipeline::new();
+
+        let addr1 = SocketAddr::from_str("127.0.0.1:40009").unwrap();
+        let payload1 = PublisherPayload {
+            topic: "/namespace/topic".into(),
+            retention_policy: 0,
+            operations: vec![
+                Operation::Map("/namespace/map1".into()),
+                Operation::Filter("/namespace/filter1".into()),
+                Operation::Map("/namespace/map2".into()),
+            ],
+        };
+        pipe.add_publisher(addr1, payload1);
+
+        let topic_key = hash_key("/namespace/topic", "", None);
+        let pub1_key = hash_key("127.0.0.1:40009", "left", None);
+        let map2_key = hash_key("/namespace/map2", "left", Some(topic_key));
+        let filter1_key = hash_key("/namespace/filter1", "left", Some(map2_key));
+        let map1_key = hash_key("/namespace/map1", "left", Some(filter1_key));
+
+        assert_eq!(
+            *pipe.graph.get(pub1_key).unwrap(),
+            Node::LeftLeaf(Arc::new(PipelineNode::Publisher), map1_key)
+        );
+
+        assert_eq!(
+            *pipe.graph.get(filter1_key).unwrap(),
+            Node::Left(
+                Arc::new(PipelineNode::Wasm("/namespace/filter1".into())),
+                map2_key,
+                NextHop::Hop(map1_key),
+            )
+        );
+
+        assert_eq!(
+            *pipe.graph.get(map2_key).unwrap(),
+            Node::Left(
+                Arc::new(PipelineNode::Wasm("/namespace/map2".into())),
+                topic_key,
+                NextHop::Hop(filter1_key),
+            )
+        );
+
+        assert_eq!(
+            *pipe.graph.get(topic_key).unwrap(),
+            Node::Root(
+                Arc::new(PipelineNode::Topic("/namespace/topic".into())),
+                NextHop::None,
+                NextHop::Hop(map2_key)
+            )
+        );
+
+        pipe.rm_publisher(addr1);
+
+        assert!(pipe.graph.get(pub1_key).is_none());
+        assert!(pipe.graph.get(map1_key).is_none());
+        assert!(pipe.graph.get(filter1_key).is_none());
+        assert!(pipe.graph.get(map2_key).is_none());
     }
 }
