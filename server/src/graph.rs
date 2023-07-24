@@ -1,5 +1,5 @@
-use std::{pin::Pin, sync::Arc};
 use std::collections::HashMap;
+use std::{pin::Pin, sync::Arc};
 
 use dashmap::DashMap;
 use futures::{future, Future, FutureExt};
@@ -68,7 +68,7 @@ impl NextHop {
                 } else {
                     NextHop::MultiHop(hops)
                 }
-            },
+            }
             NextHop::None => NextHop::None,
         }
     }
@@ -179,12 +179,10 @@ where
 
     fn _rm_left_branch(&self, hashes_to_remove: HashMap<SHA512, SHA512>) {
         for (prev_hash, node_hash) in &hashes_to_remove {
-            self.inner.alter(prev_hash, |_, n| {
-                match n {
-                    Node::Left(v, n, p) => Node::Left(v, n, p.remove(*node_hash)),
-                    Node::Root(v, n, p) => Node::Root(v, n, p.remove(*node_hash)),
-                    _ => panic!("Not supported")
-                }
+            self.inner.alter(prev_hash, |_, n| match n {
+                Node::Left(v, n, p) => Node::Left(v, n, p.remove(*node_hash)),
+                Node::Root(v, n, p) => Node::Root(v, n, p.remove(*node_hash)),
+                _ => panic!("Not supported"),
             });
             self.inner.remove(node_hash);
         }
@@ -203,7 +201,7 @@ where
                 Node::LeftLeaf(_, ref n) => {
                     hashes_to_remove.insert(*n, current_hash);
                     current_hash = *n;
-                },
+                }
                 Node::Left(_, ref n, ref p) => {
                     if matches!(p, NextHop::Hop(_)) {
                         hashes_to_remove.insert(*n, current_hash);
@@ -225,12 +223,10 @@ where
 
     fn _rm_right_branch(&self, hashes_to_remove: HashMap<SHA512, SHA512>) {
         for (prev_hash, node_hash) in &hashes_to_remove {
-            self.inner.alter(prev_hash, |_, n| {
-                match n {
-                    Node::Right(v, n, p) => Node::Right(v, n.remove(*node_hash), p),
-                    Node::Root(v, n, p) => Node::Root(v, n.remove(*node_hash), p),
-                    _ => panic!("Not supported")
-                }
+            self.inner.alter(prev_hash, |_, n| match n {
+                Node::Right(v, n, p) => Node::Right(v, n.remove(*node_hash), p),
+                Node::Root(v, n, p) => Node::Root(v, n.remove(*node_hash), p),
+                _ => panic!("Not supported"),
             });
             self.inner.remove(node_hash);
         }
@@ -249,7 +245,7 @@ where
                 Node::RightLeaf(_, ref p) => {
                     hashes_to_remove.insert(*p, current_hash);
                     current_hash = *p;
-                },
+                }
                 Node::Right(_, ref n, ref p) => {
                     if matches!(n, NextHop::Hop(_)) {
                         hashes_to_remove.insert(*p, current_hash);
@@ -257,7 +253,7 @@ where
                     } else {
                         break;
                     }
-                },
+                }
                 _ => break,
             }
         }
@@ -453,8 +449,8 @@ mod tests {
         match result.unwrap().value() {
             Node::Left(_, _, p) => {
                 assert!(matches!(p, NextHop::Hop(_)))
-            },
-            _ => assert!(false)
+            }
+            _ => assert!(false),
         }
 
         let result = p.get(left1_leaf);
@@ -480,8 +476,7 @@ mod tests {
         let root_node = p.get(root).unwrap();
         match root_node.value() {
             Node::Root(_, n, _) => assert!(matches!(n, NextHop::None)),
-            _ => {}
+            _ => assert!(false),
         };
     }
-
 }
