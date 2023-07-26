@@ -16,3 +16,17 @@ rustls-pemfile = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.29", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
+
+[features]
+bincode = []
+
+[[example]]
+name = "publish"
+path = "examples/publish.rs"
+required-features = ["bincode"]
+
+[[example]]
+name = "subscribe"
+path = "examples/subscribe.rs"
+required-features = ["bincode"]
+
