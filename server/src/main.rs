@@ -168,8 +168,8 @@ async fn handle_publisher(
     let mut sequence = 1usize;
 
     rx.try_for_each(move |frame| match frame {
-        Frame::Message(msg) => {
-            tokio::spawn(pipeline.traverse(addr, msg, sequence));
+        Frame::Message(bytes) => {
+            tokio::spawn(pipeline.traverse(addr, bytes, sequence));
             sequence += 1;
             future::ok(())
         }
@@ -189,7 +189,7 @@ async fn handle_subscriber(
     pipeline.add_subscriber(addr, header, tx_chan);
 
     rx_chan
-        .map(|(seq, msg)| Ok((seq, Frame::Message(msg))))
+        .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
         .forward(tx.ordered())
         .await?;
 

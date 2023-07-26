@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, pin::Pin};
 
+use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
 use log::error;
 use selium::{
@@ -12,7 +13,7 @@ use crate::graph::{hash_key, DoubleEndedTree};
 #[derive(Debug)]
 enum PipelineNode {
     Publisher,
-    Subscriber(SocketAddr, UnboundedSender<(usize, String)>),
+    Subscriber(SocketAddr, UnboundedSender<(usize, Bytes)>),
     Topic(String),
     Wasm(String),
 }
@@ -75,7 +76,7 @@ impl Pipeline {
         &self,
         addr: SocketAddr,
         payload: SubscriberPayload,
-        sock: UnboundedSender<(usize, String)>,
+        sock: UnboundedSender<(usize, Bytes)>,
     ) {
         // First add the topic
         let mut right_of = self.graph.add_root(
@@ -114,24 +115,24 @@ impl Pipeline {
     pub fn traverse(
         &self,
         publisher: SocketAddr,
-        message: String,
+        message: Bytes,
         sequence: usize,
-    ) -> Pin<Box<dyn Future<Output = (usize, String)> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = (usize, Bytes)> + Send>> {
         let key = hash_key(publisher.to_string(), "left", None);
         self.graph
-            .fold_branches((sequence, message), key, |(seq, mut msg), node| {
+            .fold_branches((sequence, message), key, |(seq, bytes), node| {
                 match node.as_ref() {
                     PipelineNode::Topic(_) | PipelineNode::Publisher => (),
                     PipelineNode::Subscriber(_, sock) => {
-                        if let Err(e) = sock.unbounded_send((seq, msg.clone())) {
+                        if let Err(e) = sock.unbounded_send((seq, bytes.clone())) {
                             error!("Failed to send message to subscriber channel: {e}");
                         }
                     }
                     // @TODO - Implement WASM executor
-                    PipelineNode::Wasm(w) => msg += w,
+                    PipelineNode::Wasm(_) => (),
                 };
 
-                future::ready((seq, msg))
+                future::ready((seq, bytes))
             })
     }
 }
