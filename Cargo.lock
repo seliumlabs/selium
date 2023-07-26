@@ -942,6 +942,7 @@ dependencies = [
  "futures",
  "hmac-sha512",
  "log",
+ "pin-project-lite",
  "quinn",
  "rcgen",
  "rustls",
@@ -956,6 +957,7 @@ dependencies = [
 name = "selium-tests"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "futures",
  "selium",
  "tokio",
