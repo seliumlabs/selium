@@ -942,6 +942,7 @@ dependencies = [
  "futures",
  "hmac-sha512",
  "log",
+ "pin-project-lite",
  "quinn",
  "rcgen",
  "rustls",

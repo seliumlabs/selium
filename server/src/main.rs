@@ -6,12 +6,14 @@ use clap_verbosity_flag::Verbosity;
 use env_logger::Builder;
 use futures::{channel::mpsc, future, StreamExt, TryStreamExt};
 use log::{error, info};
+use ordered_sink::OrderedExt;
 use pipeline::Pipeline;
 use quinn::{IdleTimeout, RecvStream, SendStream, VarInt};
 use selium::protocol::{Frame, MessageCodec, PublisherPayload, SubscriberPayload};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 mod graph;
+mod ordered_sink;
 mod pipeline;
 mod quic;
 
@@ -32,6 +34,7 @@ struct UserArgs {
     /// Maximum time a client can idle waiting for data - defaults to infinity
     #[clap(long = "max-idle-timeout", default_value_t = 15, value_parser = clap::value_parser!(u32).range(5..30))]
     max_idle_timeout: u32,
+    /// Can be called multiple times to increase output
     #[clap(flatten)]
     verbose: Verbosity,
 }
@@ -184,8 +187,8 @@ async fn handle_subscriber(
     pipeline.add_subscriber(addr, header, tx_chan);
 
     rx_chan
-        .map(|msg| Ok(Frame::Message(msg)))
-        .forward(tx)
+        .map(|(seq, msg)| Ok((seq, Frame::Message(msg))))
+        .forward(tx.ordered())
         .await?;
 
     Ok(())

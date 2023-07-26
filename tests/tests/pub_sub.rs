@@ -18,10 +18,10 @@ async fn test_pub_sub() {
 
     let messages = result.unwrap();
     // @TODO - Message ordering isn't yet guaranteed. This is a workaround.
-    assert!(messages[0..=1].contains(&Some("foo".to_owned())));
-    assert!(messages[0..=1].contains(&Some("bar".to_owned())));
-    assert!(messages[2..=3].contains(&Some("foo".to_owned())));
-    assert!(messages[2..=3].contains(&Some("bar".to_owned())));
+    assert_eq!(messages[0], Some("foo".to_owned()));
+    assert_eq!(messages[1], Some("bar".to_owned()));
+    assert_eq!(messages[2], Some("foo".to_owned()));
+    assert_eq!(messages[3], Some("bar".to_owned()));
     assert!(messages[4].is_none());
     assert!(messages[5].is_none());
 }

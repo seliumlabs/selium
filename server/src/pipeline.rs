@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, pin::Pin};
+use std::{
+    net::SocketAddr,
+    pin::Pin,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use futures::{channel::mpsc::UnboundedSender, future, Future};
 use log::error;
@@ -12,8 +16,8 @@ use crate::graph::{hash_key, DoubleEndedTree};
 #[derive(Debug)]
 enum PipelineNode {
     Publisher,
-    Subscriber(SocketAddr, UnboundedSender<String>),
-    Topic(String),
+    Subscriber(SocketAddr, UnboundedSender<(usize, String)>),
+    Topic(AtomicUsize, String),
     Wasm(String),
 }
 
@@ -27,7 +31,7 @@ impl ToString for PipelineNode {
         match self {
             Self::Publisher => "Publisher".into(),
             Self::Subscriber(_, _) => "Subscriber".into(),
-            Self::Topic(_) => "Topic".into(),
+            Self::Topic(_, _) => "Topic".into(),
             Self::Wasm(s) => format!("WASM ({s})"),
         }
     }
@@ -48,9 +52,10 @@ impl Pipeline {
 
     pub fn add_publisher(&self, addr: SocketAddr, payload: PublisherPayload) {
         // First add the topic
-        let mut left_of = self
-            .graph
-            .add_root(payload.topic.clone(), PipelineNode::Topic(payload.topic));
+        let mut left_of = self.graph.add_root(
+            payload.topic.clone(),
+            PipelineNode::Topic(AtomicUsize::new(1), payload.topic),
+        );
 
         // Now iterate backwards up the pipe operations towards the socket.
         // We do this so that we can set the next hop.
@@ -74,12 +79,13 @@ impl Pipeline {
         &self,
         addr: SocketAddr,
         payload: SubscriberPayload,
-        sock: UnboundedSender<String>,
+        sock: UnboundedSender<(usize, String)>,
     ) {
         // First add the topic
-        let mut right_of = self
-            .graph
-            .add_root(payload.topic.clone(), PipelineNode::Topic(payload.topic));
+        let mut right_of = self.graph.add_root(
+            payload.topic.clone(),
+            PipelineNode::Topic(AtomicUsize::new(1), payload.topic),
+        );
 
         // Now iterate over the pipe operations towards the socket
         for op in payload.operations.into_iter() {
@@ -113,22 +119,26 @@ impl Pipeline {
         &self,
         publisher: SocketAddr,
         message: String,
-    ) -> Pin<Box<dyn Future<Output = String> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = (usize, String)> + Send>> {
         let key = hash_key(publisher.to_string(), "left", None);
-        self.graph.fold_branches(message, key, |mut msg, node| {
-            match node.as_ref() {
-                PipelineNode::Publisher | PipelineNode::Topic(_) => (),
-                PipelineNode::Subscriber(_, sock) => {
-                    if let Err(e) = sock.unbounded_send(msg.clone()) {
-                        error!("Failed to send message to subscriber channel: {e}");
+        self.graph
+            .fold_branches((0, message), key, |(mut seq, mut msg), node| {
+                match node.as_ref() {
+                    PipelineNode::Topic(last_seq, _) => {
+                        seq = last_seq.fetch_add(1, Ordering::SeqCst);
                     }
-                }
-                // @TODO - Implement WASM executor
-                PipelineNode::Wasm(w) => msg += w,
-            };
+                    PipelineNode::Publisher => (),
+                    PipelineNode::Subscriber(_, sock) => {
+                        if let Err(e) = sock.unbounded_send((seq, msg.clone())) {
+                            error!("Failed to send message to subscriber channel: {e}");
+                        }
+                    }
+                    // @TODO - Implement WASM executor
+                    PipelineNode::Wasm(w) => msg += w,
+                };
 
-            future::ready(msg)
-        })
+                future::ready((seq, msg))
+            })
     }
 }
 
@@ -253,7 +263,10 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(topic_key).unwrap(),
             Node::Root(
-                Arc::new(PipelineNode::Topic("/namespace/topic".into())),
+                Arc::new(PipelineNode::Topic(
+                    AtomicUsize::new(1),
+                    "/namespace/topic".into()
+                )),
                 NextHop::None,
                 NextHop::Hop(map2_key)
             )
@@ -313,7 +326,10 @@ mod tests {
         assert_eq!(
             *pipe.graph.get(topic_key).unwrap(),
             Node::Root(
-                Arc::new(PipelineNode::Topic("/namespace/topic".into())),
+                Arc::new(PipelineNode::Topic(
+                    AtomicUsize::new(1),
+                    "/namespace/topic".into()
+                )),
                 NextHop::Hop(map1_key),
                 NextHop::None
             )
