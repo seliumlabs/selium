@@ -129,7 +129,7 @@ impl Pipeline {
                         }
                     }
                     // @TODO - Implement WASM executor
-                    PipelineNode::Wasm(_) => ()
+                    PipelineNode::Wasm(_) => (),
                 };
 
                 future::ready((seq, bytes))
