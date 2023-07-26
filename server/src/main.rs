@@ -165,10 +165,12 @@ async fn handle_publisher(
     rx: FramedRead<RecvStream, MessageCodec>,
 ) -> Result<()> {
     pipeline.add_publisher(addr, header);
+    let mut sequence = 1usize;
 
     rx.try_for_each(move |frame| match frame {
         Frame::Message(msg) => {
-            tokio::spawn(pipeline.traverse(addr, msg));
+            tokio::spawn(pipeline.traverse(addr, msg, sequence));
+            sequence += 1;
             future::ok(())
         }
         _ => future::err(anyhow!("Non Message frame received out of context")),

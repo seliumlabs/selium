@@ -33,6 +33,7 @@ impl<Si: Sink<Item>, Item> Ordered<Si, Item> {
         ready!(this.sink.as_mut().poll_ready(cx))?;
         while let Some(item) = this.cache.remove(&(*this.last_sent + 1)) {
             this.sink.as_mut().start_send(item)?;
+            *this.last_sent += 1;
             if !this.cache.is_empty() {
                 ready!(this.sink.as_mut().poll_ready(cx))?;
             }

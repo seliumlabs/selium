@@ -22,11 +22,21 @@ async fn test_pub_sub() {
     assert_eq!(messages[1], Some("bar".to_owned()));
     assert_eq!(messages[2], Some("foo".to_owned()));
     assert_eq!(messages[3], Some("bar".to_owned()));
-    assert!(messages[4].is_none());
-    assert!(messages[5].is_none());
+    assert_eq!(messages[4], Some("foo".to_owned()));
+    assert_eq!(messages[5], Some("bar".to_owned()));
+    assert_eq!(messages[6], Some("foo".to_owned()));
+    assert_eq!(messages[7], Some("foo".to_owned()));
+    assert_eq!(messages[8], Some("bar".to_owned()));
+    assert_eq!(messages[9], Some("foo".to_owned()));
+    assert_eq!(messages[10], Some("bar".to_owned()));
+    assert_eq!(messages[11], Some("foo".to_owned()));
+    assert_eq!(messages[12], Some("bar".to_owned()));
+    assert_eq!(messages[13], Some("foo".to_owned()));
+    assert!(messages[14].is_none());
+    assert!(messages[15].is_none());
 }
 
-async fn run() -> Result<[Option<String>; 6], Box<dyn Error>> {
+async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
     let mut subscriber1 = start_subscriber("/acmeco/stocks").await?;
     let mut subscriber2 = start_subscriber("/acmeco/stocks").await?;
     let subscriber3 = start_subscriber("/acmeco/something_else").await?;
@@ -40,25 +50,48 @@ async fn run() -> Result<[Option<String>; 6], Box<dyn Error>> {
         .await?;
 
     publisher
-        .send_all(&mut iter(vec![Ok("foo"), Ok("bar")]))
+        .send_all(&mut iter(vec![
+            Ok("foo"),
+            Ok("bar"),
+            Ok("foo"),
+            Ok("bar"),
+            Ok("foo"),
+            Ok("bar"),
+            Ok("foo"),
+        ]))
         .await?;
     publisher.finish().await?;
 
     let message1 = subscriber1.try_next().await?;
     let message2 = subscriber1.try_next().await?;
-    let message3 = subscriber2.try_next().await?;
-    let message4 = subscriber2.try_next().await?;
-    let message5 = subscriber3
+    let message3 = subscriber1.try_next().await?;
+    let message4 = subscriber1.try_next().await?;
+    let message5 = subscriber1.try_next().await?;
+    let message6 = subscriber1.try_next().await?;
+    let message7 = subscriber1.try_next().await?;
+    let message8 = subscriber2.try_next().await?;
+    let message9 = subscriber2.try_next().await?;
+    let message10 = subscriber2.try_next().await?;
+    let message11 = subscriber2.try_next().await?;
+    let message12 = subscriber2.try_next().await?;
+    let message13 = subscriber2.try_next().await?;
+    let message14 = subscriber2.try_next().await?;
+    let message15 = subscriber3
         .into_future()
         .map(|_| String::new())
         .now_or_never();
-    let message6 = subscriber4
+    let message16 = subscriber4
         .into_future()
         .map(|_| String::new())
         .now_or_never();
-    subscriber1.finish().await?;
 
-    Ok([message1, message2, message3, message4, message5, message6])
+    subscriber1.finish().await?;
+    subscriber2.finish().await?;
+
+    Ok([
+        message1, message2, message3, message4, message5, message6, message7, message8, message9,
+        message10, message11, message12, message13, message14, message15, message16,
+    ])
 }
 
 async fn start_subscriber(topic: &str) -> Result<Subscriber, Box<dyn Error>> {
