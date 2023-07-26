@@ -43,7 +43,7 @@ mod tests {
     fn encodes_to_bincode_bytes() {
         let input = Dummy {
             foo: "foo".to_owned(),
-            bar: 42
+            bar: 42,
         };
 
         let codec = BincodeCodec::default();

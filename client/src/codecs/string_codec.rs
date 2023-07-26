@@ -1,6 +1,6 @@
 use crate::traits::{MessageDecoder, MessageEncoder};
 use anyhow::Result;
-use bytes::{BytesMut, Bytes};
+use bytes::{Bytes, BytesMut};
 
 #[derive(Default)]
 pub struct StringCodec;
