@@ -13,7 +13,7 @@ use crate::graph::{hash_key, DoubleEndedTree};
 #[derive(Debug)]
 enum PipelineNode {
     Publisher,
-    Subscriber(SocketAddr, UnboundedSender<Bytes>),
+    Subscriber(SocketAddr, UnboundedSender<(usize, Bytes)>),
     Topic(String),
     Wasm(String),
 }
@@ -49,9 +49,10 @@ impl Pipeline {
 
     pub fn add_publisher(&self, addr: SocketAddr, payload: PublisherPayload) {
         // First add the topic
-        let mut left_of = self
-            .graph
-            .add_root(payload.topic.clone(), PipelineNode::Topic(payload.topic));
+        let mut left_of = self.graph.add_root(
+            payload.topic.clone(),
+            PipelineNode::Topic(payload.topic.clone()),
+        );
 
         // Now iterate backwards up the pipe operations towards the socket.
         // We do this so that we can set the next hop.
@@ -75,12 +76,13 @@ impl Pipeline {
         &self,
         addr: SocketAddr,
         payload: SubscriberPayload,
-        sock: UnboundedSender<Bytes>,
+        sock: UnboundedSender<(usize, Bytes)>,
     ) {
         // First add the topic
-        let mut right_of = self
-            .graph
-            .add_root(payload.topic.clone(), PipelineNode::Topic(payload.topic));
+        let mut right_of = self.graph.add_root(
+            payload.topic.clone(),
+            PipelineNode::Topic(payload.topic.clone()),
+        );
 
         // Now iterate over the pipe operations towards the socket
         for op in payload.operations.into_iter() {
@@ -114,22 +116,24 @@ impl Pipeline {
         &self,
         publisher: SocketAddr,
         message: Bytes,
-    ) -> Pin<Box<dyn Future<Output = Bytes> + Send>> {
+        sequence: usize,
+    ) -> Pin<Box<dyn Future<Output = (usize, Bytes)> + Send>> {
         let key = hash_key(publisher.to_string(), "left", None);
-        self.graph.fold_branches(message, key, |msg, node| {
-            match node.as_ref() {
-                PipelineNode::Publisher | PipelineNode::Topic(_) => (),
-                PipelineNode::Subscriber(_, sock) => {
-                    if let Err(e) = sock.unbounded_send(msg.clone()) {
-                        error!("Failed to send message to subscriber channel: {e}");
+        self.graph
+            .fold_branches((sequence, message), key, |(seq, bytes), node| {
+                match node.as_ref() {
+                    PipelineNode::Topic(_) | PipelineNode::Publisher => (),
+                    PipelineNode::Subscriber(_, sock) => {
+                        if let Err(e) = sock.unbounded_send((seq, bytes.clone())) {
+                            error!("Failed to send message to subscriber channel: {e}");
+                        }
                     }
-                }
-                // @TODO - Implement WASM executor
-                PipelineNode::Wasm(_w) => (),
-            };
+                    // @TODO - Implement WASM executor
+                    PipelineNode::Wasm(_) => ()
+                };
 
-            future::ready(msg)
-        })
+                future::ready((seq, bytes))
+            })
     }
 }
 
