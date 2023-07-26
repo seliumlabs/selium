@@ -935,6 +935,7 @@ name = "selium-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "clap-verbosity-flag",
  "dashmap",
