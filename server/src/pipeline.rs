@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, pin::Pin};
 
+use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
 use log::error;
 use selium::{
@@ -12,7 +13,7 @@ use crate::graph::{hash_key, DoubleEndedTree};
 #[derive(Debug)]
 enum PipelineNode {
     Publisher,
-    Subscriber(SocketAddr, UnboundedSender<String>),
+    Subscriber(SocketAddr, UnboundedSender<Bytes>),
     Topic(String),
     Wasm(String),
 }
@@ -74,7 +75,7 @@ impl Pipeline {
         &self,
         addr: SocketAddr,
         payload: SubscriberPayload,
-        sock: UnboundedSender<String>,
+        sock: UnboundedSender<Bytes>,
     ) {
         // First add the topic
         let mut right_of = self
@@ -112,10 +113,10 @@ impl Pipeline {
     pub fn traverse(
         &self,
         publisher: SocketAddr,
-        message: String,
-    ) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        message: Bytes,
+    ) -> Pin<Box<dyn Future<Output = Bytes> + Send>> {
         let key = hash_key(publisher.to_string(), "left", None);
-        self.graph.fold_branches(message, key, |mut msg, node| {
+        self.graph.fold_branches(message, key, |msg, node| {
             match node.as_ref() {
                 PipelineNode::Publisher | PipelineNode::Topic(_) => (),
                 PipelineNode::Subscriber(_, sock) => {
@@ -124,7 +125,7 @@ impl Pipeline {
                     }
                 }
                 // @TODO - Implement WASM executor
-                PipelineNode::Wasm(w) => msg += w,
+                PipelineNode::Wasm(_w) => (),
             };
 
             future::ready(msg)

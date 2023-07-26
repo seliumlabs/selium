@@ -4,7 +4,7 @@ use std::{
 };
 
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
-use selium::{prelude::*, Subscriber};
+use selium::{prelude::*, Subscriber, codecs::StringCodec};
 
 const SERVER_ADDR: &'static str = "127.0.0.1:7001";
 
@@ -36,6 +36,7 @@ async fn run() -> Result<[Option<String>; 6], Box<dyn Error>> {
         // .map("/acmeco/forge_numbers.wasm")
         .keep_alive(5_000)?
         .with_certificate_authority("certs/ca.crt")?
+        .with_encoder(StringCodec)
         .connect("127.0.0.1:7001")
         .await?;
 
@@ -61,12 +62,13 @@ async fn run() -> Result<[Option<String>; 6], Box<dyn Error>> {
     Ok([message1, message2, message3, message4, message5, message6])
 }
 
-async fn start_subscriber(topic: &str) -> Result<Subscriber, Box<dyn Error>> {
+async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>, Box<dyn Error>> {
     Ok(selium::subscriber(topic)
         // .map("/selium/bonanza.wasm")
         // .filter("/selium/dodgy_stuff.wasm")
         .keep_alive(5_000)?
         .with_certificate_authority("certs/ca.crt")?
+        .with_decoder(StringCodec)
         .connect(SERVER_ADDR)
         .await?)
 }

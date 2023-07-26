@@ -164,8 +164,8 @@ async fn handle_publisher(
     pipeline.add_publisher(addr, header);
 
     rx.try_for_each(move |frame| match frame {
-        Frame::Message(msg) => {
-            tokio::spawn(pipeline.traverse(addr, msg));
+        Frame::Message(bytes) => {
+            tokio::spawn(pipeline.traverse(addr, bytes));
             future::ok(())
         }
         _ => future::err(anyhow!("Non Message frame received out of context")),
@@ -184,7 +184,7 @@ async fn handle_subscriber(
     pipeline.add_subscriber(addr, header, tx_chan);
 
     rx_chan
-        .map(|msg| Ok(Frame::Message(msg)))
+        .map(|bytes| Ok(Frame::Message(bytes)))
         .forward(tx)
         .await?;
 
