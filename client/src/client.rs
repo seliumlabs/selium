@@ -9,10 +9,12 @@ use std::path::PathBuf;
 
 pub const KEEP_ALIVE_DEFAULT: u64 = 5;
 
+#[derive(Debug)]
 pub struct ClientWantsCert {
     keep_alive: u64,
 }
 
+#[derive(Debug)]
 pub struct ClientWantsConnect {
     keep_alive: u64,
     root_store: RootCertStore,
