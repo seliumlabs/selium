@@ -464,7 +464,6 @@ mod tests {
         let right1 = p.add_right("right1", 1, root);
         let right_leaf = p.add_right_leaf("right2", 0, right1);
 
-        println!("rm_right_leaf");
         p.rm_right_leaf("right2");
 
         let result = p.get(right_leaf);
