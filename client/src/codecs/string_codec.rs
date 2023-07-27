@@ -2,7 +2,7 @@ use crate::traits::{MessageDecoder, MessageEncoder};
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StringCodec;
 
 impl MessageEncoder<&str> for StringCodec {
