@@ -38,10 +38,10 @@ pub async fn establish_connection(
     host: &str,
     root_store: &RootCertStore,
     keep_alive: u64,
-) -> Result<Arc<Connection>> {
+) -> Result<Connection> {
     let addr = get_socket_addrs(host)?;
     let config = configure_client(root_store, keep_alive)?;
     let connection = connect_to_endpoint(config, addr).await?;
 
-    Ok(Arc::new(connection))
+    Ok(connection)
 }

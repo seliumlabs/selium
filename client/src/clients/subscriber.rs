@@ -98,9 +98,11 @@ where
     type Output = Subscriber<D, Item>;
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
-        let mut stream =
+        let connection =
             establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
                 .await?;
+
+        let mut stream = BiStream::try_from_connection(connection.clone()).await?;
 
         let frame = Frame::RegisterSubscriber(SubscriberPayload {
             topic: self.state.common.topic,
