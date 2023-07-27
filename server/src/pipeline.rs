@@ -1,3 +1,4 @@
+use anyhow::Result;
 use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
 use log::error;
@@ -46,7 +47,7 @@ impl Pipeline {
         }
     }
 
-    pub fn add_publisher(&self, hash: &str, payload: PublisherPayload) {
+    pub fn add_publisher(&self, hash: &str, payload: PublisherPayload) -> Result<()> {
         // First add the topic
         let mut left_of = self.graph.add_root(
             payload.topic.clone(),
@@ -63,12 +64,14 @@ impl Pipeline {
 
             left_of = self
                 .graph
-                .add_left(key.clone(), PipelineNode::Wasm(key), left_of);
+                .add_left(key.clone(), PipelineNode::Wasm(key), left_of)?;
         }
 
         // Finally, add the publisher
         self.graph
-            .add_left_leaf(hash, PipelineNode::Publisher, left_of);
+            .add_left_leaf(hash, PipelineNode::Publisher, left_of)?;
+
+        Ok(())
     }
 
     pub fn add_subscriber(
@@ -76,7 +79,7 @@ impl Pipeline {
         hash: &str,
         payload: SubscriberPayload,
         sock: UnboundedSender<(usize, Bytes)>,
-    ) {
+    ) -> Result<()> {
         // First add the topic
         let mut right_of = self.graph.add_root(
             payload.topic.clone(),
@@ -92,7 +95,7 @@ impl Pipeline {
 
             right_of = self
                 .graph
-                .add_right(key.clone(), PipelineNode::Wasm(key), right_of);
+                .add_right(key.clone(), PipelineNode::Wasm(key), right_of)?;
         }
 
         // Finally, add the subscriber
@@ -100,15 +103,17 @@ impl Pipeline {
             hash,
             PipelineNode::Subscriber(hash.to_owned(), sock),
             right_of,
-        );
+        )?;
+
+        Ok(())
     }
 
-    pub fn rm_publisher(&self, addr: SocketAddr) {
-        self.graph.rm_left_leaf(addr.to_string());
+    pub fn rm_publisher(&self, key: &str) -> Result<()> {
+        self.graph.rm_left_leaf(key)
     }
 
-    pub fn rm_subscriber(&self, addr: SocketAddr) {
-        self.graph.rm_right_leaf(addr.to_string());
+    pub fn rm_subscriber(&self, key: &str) -> Result<()> {
+        self.graph.rm_right_leaf(key)
     }
 
     pub fn traverse(
@@ -159,7 +164,7 @@ mod tests {
             ],
         };
 
-        pipe.add_publisher(hash1, payload1);
+        pipe.add_publisher(hash1, payload1).unwrap();
 
         let hash2 = "127.0.0.1:40010:1";
         let payload2 = PublisherPayload {
@@ -171,7 +176,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(hash2, payload2);
+        pipe.add_publisher(hash2, payload2).unwrap();
 
         let hash3 = "127.0.0.1:40011:1";
         let payload3 = PublisherPayload {
@@ -183,7 +188,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(hash3, payload3);
+        pipe.add_publisher(hash3, payload3).unwrap();
 
         let topic_key = hash_key("/namespace/topic", "", None);
         let pub1_key = hash_key("127.0.0.1:40009:1", "left", None);
@@ -280,7 +285,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(hash1, payload1, tx1.clone());
+        pipe.add_subscriber(hash1, payload1, tx1.clone()).unwrap();
 
         let hash2 = "127.0.0.1:40010:1";
         let (tx2, _) = mpsc::unbounded();
@@ -293,7 +298,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(hash2, payload2, tx2.clone());
+        pipe.add_subscriber(hash2, payload2, tx2.clone()).unwrap();
 
         let hash3 = "127.0.0.1:40011:1";
         let (tx3, _) = mpsc::unbounded();
@@ -306,7 +311,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(hash3, payload3, tx3.clone());
+        pipe.add_subscriber(hash3, payload3, tx3.clone()).unwrap();
 
         let topic_key = hash_key("/namespace/topic", "", None);
         let sub1_key = hash_key("127.0.0.1:40009:1", "right", None);
@@ -410,20 +415,21 @@ mod tests {
     fn test_remove_subscriber() {
         let pipe: Pipeline = Pipeline::new();
 
-        let addr1 = SocketAddr::from_str("127.0.0.1:40009").unwrap();
         let (tx1, _) = mpsc::unbounded();
+        let addr1 = "127.0.0.1:40009:1";
         let payload1 = SubscriberPayload {
             topic: "/namespace/topic".into(),
+            retention_policy: 0,
             operations: vec![
                 Operation::Map("/namespace/map1".into()),
                 Operation::Filter("/namespace/filter1".into()),
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(addr1, payload1, tx1.clone());
+        pipe.add_subscriber(addr1, payload1, tx1.clone()).unwrap();
 
         let topic_key = hash_key("/namespace/topic", "", None);
-        let sub1_key = hash_key("127.0.0.1:40009", "right", None);
+        let sub1_key = hash_key(addr1, "right", None);
         let map1_key = hash_key("/namespace/map1", "right", Some(topic_key));
         let filter1_key = hash_key("/namespace/filter1", "right", Some(map1_key));
         let map21_key = hash_key("/namespace/map2", "right", Some(filter1_key));
@@ -459,14 +465,14 @@ mod tests {
             *pipe.graph.get(sub1_key).unwrap(),
             Node::RightLeaf(
                 Arc::new(PipelineNode::Subscriber(
-                    SocketAddr::from_str("127.0.0.1:40009").unwrap(),
+                    "127.0.0.1:40009:1".to_owned(),
                     tx1
                 )),
                 map21_key
             ),
         );
 
-        pipe.rm_subscriber(addr1);
+        pipe.rm_subscriber(addr1).unwrap();
 
         assert_eq!(
             *pipe.graph.get(topic_key).unwrap(),
@@ -486,7 +492,7 @@ mod tests {
     fn test_remove_publisher() {
         let pipe: Pipeline = Pipeline::new();
 
-        let addr1 = SocketAddr::from_str("127.0.0.1:40009").unwrap();
+        let addr1 = "127.0.0.1:40009:1";
         let payload1 = PublisherPayload {
             topic: "/namespace/topic".into(),
             retention_policy: 0,
@@ -496,10 +502,10 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(addr1, payload1);
+        pipe.add_publisher(addr1, payload1).unwrap();
 
         let topic_key = hash_key("/namespace/topic", "", None);
-        let pub1_key = hash_key("127.0.0.1:40009", "left", None);
+        let pub1_key = hash_key(addr1, "left", None);
         let map2_key = hash_key("/namespace/map2", "left", Some(topic_key));
         let filter1_key = hash_key("/namespace/filter1", "left", Some(map2_key));
         let map1_key = hash_key("/namespace/map1", "left", Some(filter1_key));
@@ -536,7 +542,7 @@ mod tests {
             )
         );
 
-        pipe.rm_publisher(addr1);
+        pipe.rm_publisher(addr1).unwrap();
 
         assert!(pipe.graph.get(pub1_key).is_none());
         assert!(pipe.graph.get(map1_key).is_none());
