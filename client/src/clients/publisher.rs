@@ -1,50 +1,45 @@
 use super::builder::{ClientBuilder, ClientCommon};
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, PublisherPayload};
-use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp};
+use crate::traits::{Client, ClientConfig, Connect, MessageEncoder, TryIntoU64};
 use crate::utils::client::establish_connection;
 use crate::BiStream;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};
+use quinn::Connection;
 use rustls::RootCertStore;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-pub const RETENTION_POLICY_DEFAULT: u64 = 0;
-
-#[derive(Debug)]
 pub struct PublisherWantsCert {
     common: ClientCommon,
-    retention_policy: u64,
 }
 
-#[derive(Debug)]
-pub struct PublisherHasCert {
+pub struct PublisherWantsEncoder {
     common: ClientCommon,
-    retention_policy: u64,
     root_store: RootCertStore,
+}
+
+pub struct PublisherReady<E, Item> {
+    common: ClientCommon,
+    encoder: E,
+    root_store: RootCertStore,
+    _marker: PhantomData<Item>,
 }
 
 pub fn publisher(topic: &str) -> ClientBuilder<PublisherWantsCert> {
     ClientBuilder {
         state: PublisherWantsCert {
             common: ClientCommon::new(topic),
-            retention_policy: RETENTION_POLICY_DEFAULT,
         },
     }
 }
 
-impl ClientBuilder<PublisherWantsCert> {
-    pub fn retain<T: IntoTimestamp>(mut self, policy: T) -> Result<Self> {
-        self.state.retention_policy = policy.into_timestamp()?;
-        Ok(self)
-    }
-}
-
 impl ClientConfig for ClientBuilder<PublisherWantsCert> {
-    type NextState = ClientBuilder<PublisherHasCert>;
+    type NextState = ClientBuilder<PublisherWantsEncoder>;
 
     fn map(mut self, module_path: &str) -> Self {
         self.state.common.map(module_path);
@@ -56,21 +51,21 @@ impl ClientConfig for ClientBuilder<PublisherWantsCert> {
         self
     }
 
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Result<Self> {
+    fn keep_alive<T: TryIntoU64>(mut self, interval: T) -> Result<Self> {
         self.state.common.keep_alive(interval)?;
+        Ok(self)
+    }
+
+    fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
+        self.state.common.retain(policy)?;
         Ok(self)
     }
 
     fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::NextState> {
         let root_store = load_root_store(&ca_path.into())?;
 
-        let state = PublisherHasCert {
-            common: ClientCommon {
-                topic: self.state.common.topic,
-                keep_alive: self.state.common.keep_alive,
-                operations: self.state.common.operations,
-            },
-            retention_policy: self.state.retention_policy,
+        let state = PublisherWantsEncoder {
+            common: self.state.common,
             root_store,
         };
 
@@ -78,54 +73,103 @@ impl ClientConfig for ClientBuilder<PublisherWantsCert> {
     }
 }
 
-#[async_trait]
-impl Connect for ClientBuilder<PublisherHasCert> {
-    type Output = Publisher;
+impl ClientBuilder<PublisherWantsEncoder> {
+    pub fn with_encoder<E, Item>(self, encoder: E) -> ClientBuilder<PublisherReady<E, Item>> {
+        let state = PublisherReady {
+            common: self.state.common,
+            root_store: self.state.root_store,
+            encoder,
+            _marker: PhantomData,
+        };
 
-    async fn register(self, stream: &mut BiStream) -> Result<()> {
-        let frame = Frame::RegisterPublisher(PublisherPayload {
-            topic: self.state.common.topic,
-            operations: self.state.common.operations,
-            retention_policy: self.state.retention_policy,
-        });
-
-        stream.send(frame).await?;
-
-        Ok(())
+        ClientBuilder { state }
     }
+}
+
+#[async_trait]
+impl<E, Item> Connect for ClientBuilder<PublisherReady<E, Item>>
+where
+    E: MessageEncoder<Item> + Send,
+    Item: Send,
+{
+    type Output = Publisher<E, Item>;
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
-        let mut stream =
+        let connection =
             establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
                 .await?;
 
-        self.register(&mut stream).await?;
+        let headers = PublisherPayload {
+            topic: self.state.common.topic,
+            retention_policy: self.state.common.retention_policy,
+            operations: self.state.common.operations,
+        };
 
-        Ok(Publisher { stream })
+        Ok(Publisher {
+            connection,
+            headers,
+            encoder: self.state.encoder,
+            _marker: PhantomData,
+        })
     }
 }
 
-pub struct Publisher {
+pub struct Publisher<E, Item> {
+    connection: Connection,
+    headers: PublisherPayload,
+    encoder: E,
+    _marker: PhantomData<Item>,
+}
+
+impl<E, Item> Publisher<E, Item>
+where
+    E: MessageEncoder<Item> + Clone,
+{
+    pub async fn stream(&self) -> Result<PublisherStream<E, Item>> {
+        let mut stream = BiStream::try_from_connection(self.connection.clone()).await?;
+        let frame = Frame::RegisterPublisher(self.headers.clone());
+
+        stream.send(frame).await?;
+
+        Ok(PublisherStream {
+            stream,
+            encoder: self.encoder.clone(),
+            _marker: PhantomData,
+        })
+    }
+}
+
+pub struct PublisherStream<E, Item> {
     stream: BiStream,
+    encoder: E,
+    _marker: PhantomData<Item>,
 }
 
 #[async_trait]
-impl Client for Publisher {
+impl<E, Item> Client for PublisherStream<E, Item>
+where
+    E: MessageEncoder<Item> + Send,
+    Item: Send,
+{
     async fn finish(self) -> Result<()> {
         self.stream.finish().await
     }
 }
 
-impl Sink<&str> for Publisher {
+impl<E, Item> Sink<Item> for PublisherStream<E, Item>
+where
+    E: MessageEncoder<Item> + Send + Unpin,
+    Item: Unpin,
+{
     type Error = anyhow::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         self.stream.poll_ready_unpin(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: &str) -> Result<()> {
-        self.stream
-            .start_send_unpin(Frame::Message(item.to_owned()))
+    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
+        let bytes = self.encoder.encode(item)?;
+        self.stream.start_send_unpin(Frame::Message(bytes))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {

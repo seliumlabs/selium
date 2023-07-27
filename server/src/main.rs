@@ -1,17 +1,28 @@
-use std::{net::SocketAddr, path::PathBuf};
-
 use anyhow::{anyhow, bail, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
+use dashmap::DashMap;
 use env_logger::Builder;
 use futures::{channel::mpsc, future, StreamExt, TryStreamExt};
 use log::{error, info};
+use ordered_sink::OrderedExt;
 use pipeline::Pipeline;
-use quinn::{IdleTimeout, RecvStream, SendStream, VarInt};
-use selium::protocol::{Frame, MessageCodec, PublisherPayload, SubscriberPayload};
-use tokio_util::codec::{FramedRead, FramedWrite};
+use quinn::{IdleTimeout, VarInt};
+use selium::{
+    protocol::{Frame, PublisherPayload, SubscriberPayload},
+    BiStream,
+};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 mod graph;
+mod ordered_sink;
 mod pipeline;
 mod quic;
 
@@ -32,6 +43,7 @@ struct UserArgs {
     /// Maximum time a client can idle waiting for data - defaults to infinity
     #[clap(long = "max-idle-timeout", default_value_t = 15, value_parser = clap::value_parser!(u32).range(5..30))]
     max_idle_timeout: u32,
+    /// Can be called multiple times to increase output
     #[clap(flatten)]
     verbose: Verbosity,
 }
@@ -75,11 +87,15 @@ async fn main() -> Result<()> {
     let config = quic::server_config(certs, key, opts)?;
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 
+    // Create hash to store message ordering data
+    let topic_seq = Arc::new(DashMap::new());
+
     while let Some(conn) = endpoint.accept().await {
         info!("connection incoming");
         let pipe_clone = pipeline.clone();
+        let topic_seq_clone = topic_seq.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(pipe_clone.clone(), conn).await {
+            if let Err(e) = handle_connection(pipe_clone.clone(), topic_seq_clone, conn).await {
                 error!("connection failed: {reason}", reason = e.to_string());
             }
         });
@@ -88,7 +104,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Result<()> {
+async fn handle_connection(
+    pipeline: Pipeline,
+    topic_seq: Arc<DashMap<String, AtomicUsize>>,
+    conn: quinn::Connecting,
+) -> Result<()> {
     let connection = conn.await?;
     info!(
         "Connection {} - {}",
@@ -107,7 +127,7 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
 
     loop {
         let stream = connection.accept_bi().await;
-        let (tx, rx) = match stream {
+        let stream = match stream {
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                 info!("Connection closed");
                 return Ok(());
@@ -115,16 +135,18 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
             Err(e) => {
                 bail!(e);
             }
-            Ok((tx, rx)) => (
-                FramedWrite::new(tx, MessageCodec),
-                FramedRead::new(rx, MessageCodec),
-            ),
+            Ok(stream) => BiStream::from(stream),
         };
 
         let pipe_clone = pipeline.clone();
+        let topic_seq_clone = topic_seq.clone();
         let addr = connection.remote_address();
+        let stream_id = stream.read.get_ref().id();
+        let stream_hash = format!("{addr}:{stream_id}");
+
         tokio::spawn(async move {
-            if let Err(e) = handle_request(pipe_clone, addr, tx, rx).await {
+            if let Err(e) = handle_request(pipe_clone, topic_seq_clone, &stream_hash, stream).await
+            {
                 error!("Request failed: {reason}", reason = e.to_string());
             }
         });
@@ -133,18 +155,18 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
 
 async fn handle_request(
     pipeline: Pipeline,
-    addr: SocketAddr,
-    tx: FramedWrite<SendStream, MessageCodec>,
-    mut rx: FramedRead<RecvStream, MessageCodec>,
+    topic_seq: Arc<DashMap<String, AtomicUsize>>,
+    stream_hash: &str,
+    mut stream: BiStream,
 ) -> Result<()> {
     // Receive header
-    if let Some(result) = rx.next().await {
+    if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                handle_publisher(payload, pipeline.clone(), addr, rx).await?
+                handle_publisher(payload, pipeline, topic_seq, stream_hash, stream).await?
             }
             Frame::RegisterSubscriber(payload) => {
-                handle_subscriber(payload, pipeline, addr, tx).await?
+                handle_subscriber(payload, pipeline, stream_hash, stream).await?
             }
             _ => return Err(anyhow!("Non header frame received out of context")),
         }
@@ -158,34 +180,42 @@ async fn handle_request(
 async fn handle_publisher(
     header: PublisherPayload,
     pipeline: Pipeline,
-    addr: SocketAddr,
-    rx: FramedRead<RecvStream, MessageCodec>,
+    topic_seq: Arc<DashMap<String, AtomicUsize>>,
+    stream_hash: &str,
+    stream: BiStream,
 ) -> Result<()> {
-    pipeline.add_publisher(addr, header);
+    // Get current or create new sequence number for this topic
+    let sequence = topic_seq
+        .entry(header.topic.clone())
+        .or_insert(AtomicUsize::new(1));
 
-    rx.try_for_each(move |frame| match frame {
-        Frame::Message(msg) => {
-            tokio::spawn(pipeline.traverse(addr, msg));
-            future::ok(())
-        }
-        _ => future::err(anyhow!("Non Message frame received out of context")),
-    })
-    .await?;
+    pipeline.add_publisher(stream_hash, header);
+
+    stream
+        .try_for_each(move |frame| match frame {
+            Frame::Message(bytes) => {
+                let seq = sequence.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(pipeline.traverse(stream_hash, bytes, seq));
+                future::ok(())
+            }
+            _ => future::err(anyhow!("Non Message frame received out of context")),
+        })
+        .await?;
     Ok(())
 }
 
 async fn handle_subscriber(
     header: SubscriberPayload,
     pipeline: Pipeline,
-    addr: SocketAddr,
-    tx: FramedWrite<SendStream, MessageCodec>,
+    stream_hash: &str,
+    stream: BiStream,
 ) -> Result<()> {
     let (tx_chan, rx_chan) = mpsc::unbounded();
-    pipeline.add_subscriber(addr, header, tx_chan);
+    pipeline.add_subscriber(stream_hash, header, tx_chan);
 
     rx_chan
-        .map(|msg| Ok(Frame::Message(msg)))
-        .forward(tx)
+        .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
+        .forward(stream.ordered())
         .await?;
 
     Ok(())

@@ -2,6 +2,7 @@ mod bistream;
 mod clients;
 mod operation;
 
+pub mod codecs;
 pub mod crypto;
 pub mod prelude;
 pub mod protocol;

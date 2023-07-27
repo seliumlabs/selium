@@ -4,6 +4,8 @@ use std::mem::size_of;
 use tokio_util::codec::{Decoder, Encoder};
 
 const LEN_MARKER_SIZE: usize = size_of::<u32>();
+const TYPE_MARKER_SIZE: usize = size_of::<u8>();
+const RESERVED_SIZE: usize = LEN_MARKER_SIZE + TYPE_MARKER_SIZE;
 
 #[derive(Debug, Default)]
 pub struct MessageCodec;
@@ -12,12 +14,13 @@ impl Encoder<Frame> for MessageCodec {
     type Error = anyhow::Error;
 
     fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let serialized = bincode::serialize(&item)?;
-        let len = serialized.len();
+        let length = item.get_length()?;
+        let message_type = item.get_type();
 
-        dst.reserve(LEN_MARKER_SIZE + len);
-        dst.put_u32(len as u32);
-        dst.extend_from_slice(&serialized);
+        dst.reserve(RESERVED_SIZE + length as usize);
+        dst.put_u64(length);
+        dst.put_u8(message_type);
+        item.write_to_bytes(dst)?;
 
         Ok(())
     }
@@ -28,26 +31,20 @@ impl Decoder for MessageCodec {
     type Item = Frame;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if src.len() < LEN_MARKER_SIZE {
+        if src.len() < RESERVED_SIZE {
             return Ok(None);
         }
 
-        let mut msg_len_bytes = [0u8; LEN_MARKER_SIZE];
-        msg_len_bytes.copy_from_slice(&src[..LEN_MARKER_SIZE]);
+        let length = src.get_u64();
+        let message_type = src.get_u8();
 
-        let msg_len = u32::from_be_bytes(msg_len_bytes);
-        let frame_len = LEN_MARKER_SIZE + msg_len as usize;
-
-        if src.len() < frame_len {
-            src.reserve(frame_len - src.len());
+        if src.len() < length as usize {
+            src.reserve(RESERVED_SIZE - src.len());
             return Ok(None);
         }
 
-        src.advance(LEN_MARKER_SIZE);
-
-        let frame = bincode::deserialize(src)?;
-
-        src.advance(msg_len as usize);
+        let bytes = src.split_to(length as usize);
+        let frame = Frame::try_from((message_type, bytes))?;
 
         Ok(Some(frame))
     }
@@ -56,7 +53,7 @@ impl Decoder for MessageCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::SubscriberPayload;
+    use crate::protocol::{PublisherPayload, SubscriberPayload};
     use crate::Operation;
     use bytes::Bytes;
 
@@ -64,6 +61,7 @@ mod tests {
     fn encodes_register_subscriber_frame() {
         let frame = Frame::RegisterSubscriber(SubscriberPayload {
             topic: "Some topic".into(),
+            retention_policy: 5,
             operations: vec![
                 Operation::Map("first/module.wasm".into()),
                 Operation::Map("second/module.wasm".into()),
@@ -73,7 +71,41 @@ mod tests {
 
         let mut codec = MessageCodec::default();
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0v\x01\0\0\0\n\0\0\0\0\0\0\0Some topic\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let expected = Bytes::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+
+        codec.encode(frame, &mut buffer).unwrap();
+
+        assert_eq!(buffer, expected);
+    }
+
+    #[test]
+    fn encodes_register_publisher_frame() {
+        let frame = Frame::RegisterPublisher(PublisherPayload {
+            topic: "Some topic".into(),
+            retention_policy: 5,
+            operations: vec![
+                Operation::Map("first/module.wasm".into()),
+                Operation::Map("second/module.wasm".into()),
+                Operation::Filter("third/module.wasm".into()),
+            ],
+        });
+
+        let mut codec = MessageCodec;
+        let mut buffer = BytesMut::new();
+        let expected = Bytes::from("\0\0\0\0\0\0\0z\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+
+        codec.encode(frame, &mut buffer).unwrap();
+
+        assert_eq!(buffer, expected);
+    }
+
+    #[test]
+    fn encodes_message_frame() {
+        let frame = Frame::Message(Bytes::from("Hello world"));
+
+        let mut codec = MessageCodec;
+        let mut buffer = BytesMut::new();
+        let expected = Bytes::from("\0\0\0\0\0\0\0\x0b\x02Hello world");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -83,10 +115,11 @@ mod tests {
     #[test]
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec::default();
-        let mut src = BytesMut::from("\0\0\0v\x01\0\0\0\n\0\0\0\0\0\0\0Some topic\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
             topic: "Some topic".into(),
+            retention_policy: 5,
             operations: vec![
                 Operation::Map("first/module.wasm".into()),
                 Operation::Map("second/module.wasm".into()),
@@ -94,6 +127,37 @@ mod tests {
             ],
         });
 
+        let result = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn decodes_register_publisher_frame() {
+        let mut codec = MessageCodec::default();
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0z\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+
+        let expected = Frame::RegisterPublisher(PublisherPayload {
+            topic: "Some topic".into(),
+            retention_policy: 5,
+            operations: vec![
+                Operation::Map("first/module.wasm".into()),
+                Operation::Map("second/module.wasm".into()),
+                Operation::Filter("third/module.wasm".into()),
+            ],
+        });
+
+        let result = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn decodes_message_frame() {
+        let mut codec = MessageCodec;
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0\x0b\x02Hello world");
+
+        let expected = Frame::Message(Bytes::from("Hello world"));
         let result = codec.decode(&mut src).unwrap().unwrap();
 
         assert_eq!(result, expected);
