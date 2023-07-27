@@ -59,7 +59,7 @@ impl TryFrom<(u8, BytesMut)> for Frame {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PublisherPayload {
     pub topic: String,
     pub retention_policy: u64,
