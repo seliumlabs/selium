@@ -69,5 +69,6 @@ pub struct PublisherPayload {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct SubscriberPayload {
     pub topic: String,
+    pub retention_policy: u64,
     pub operations: Vec<Operation>,
 }
