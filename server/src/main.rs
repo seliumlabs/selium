@@ -189,7 +189,7 @@ async fn handle_publisher(
         .entry(header.topic.clone())
         .or_insert(AtomicUsize::new(1));
 
-    pipeline.add_publisher(stream_hash, header);
+    pipeline.add_publisher(stream_hash, header)?;
 
     stream
         .try_for_each(move |frame| match frame {
@@ -211,7 +211,7 @@ async fn handle_subscriber(
     stream: BiStream,
 ) -> Result<()> {
     let (tx_chan, rx_chan) = mpsc::unbounded();
-    pipeline.add_subscriber(stream_hash, header, tx_chan);
+    pipeline.add_subscriber(stream_hash, header, tx_chan)?;
 
     rx_chan
         .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
