@@ -273,6 +273,7 @@ mod tests {
         let (tx1, _) = mpsc::unbounded();
         let payload1 = SubscriberPayload {
             topic: "/namespace/topic".into(),
+            retention_policy: 0,
             operations: vec![
                 Operation::Map("/namespace/map1".into()),
                 Operation::Filter("/namespace/filter1".into()),
@@ -285,6 +286,7 @@ mod tests {
         let (tx2, _) = mpsc::unbounded();
         let payload2 = SubscriberPayload {
             topic: "/namespace/topic".into(),
+            retention_policy: 0,
             operations: vec![
                 Operation::Map("/namespace/map1".into()),
                 Operation::Filter("/namespace/filter2".into()),
@@ -297,6 +299,7 @@ mod tests {
         let (tx3, _) = mpsc::unbounded();
         let payload3 = SubscriberPayload {
             topic: "/namespace/topic".into(),
+            retention_policy: 0,
             operations: vec![
                 Operation::Map("/namespace/map1".into()),
                 Operation::Filter("/namespace/filter2".into()),

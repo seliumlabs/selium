@@ -1,3 +1,4 @@
+use std::time::Duration;
 use anyhow::Result;
 use futures::StreamExt;
 use selium::codecs::BincodeCodec;
@@ -15,6 +16,7 @@ async fn main() -> Result<()> {
     let mut subscriber = selium::subscriber("/acmeco/stocks")
         .map("/selium/bonanza.wasm")
         .filter("/selium/dodgy_stuff.wasm")
+        .retain(Duration::from_secs(600))?
         .with_certificate_authority("certs/ca.crt")?
         .with_decoder(BincodeCodec::default())
         .connect("127.0.0.1:7001")
