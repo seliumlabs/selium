@@ -1,7 +1,15 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 use anyhow::{anyhow, bail, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
+use dashmap::DashMap;
 use env_logger::Builder;
 use futures::{channel::mpsc, future, StreamExt, TryStreamExt};
 use log::{error, info};
@@ -76,11 +84,15 @@ async fn main() -> Result<()> {
     let config = quic::server_config(certs, key, opts)?;
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 
+    // Create hash to store message ordering data
+    let topic_seq = Arc::new(DashMap::new());
+
     while let Some(conn) = endpoint.accept().await {
         info!("connection incoming");
         let pipe_clone = pipeline.clone();
+        let topic_seq_clone = topic_seq.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(pipe_clone.clone(), conn).await {
+            if let Err(e) = handle_connection(pipe_clone.clone(), topic_seq_clone, conn).await {
                 error!("connection failed: {reason}", reason = e.to_string());
             }
         });
@@ -89,7 +101,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Result<()> {
+async fn handle_connection(
+    pipeline: Pipeline,
+    topic_seq: Arc<DashMap<String, AtomicUsize>>,
+    conn: quinn::Connecting,
+) -> Result<()> {
     let connection = conn.await?;
     info!(
         "Connection {} - {}",
@@ -120,12 +136,13 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
         };
 
         let pipe_clone = pipeline.clone();
+        let topic_seq_clone = topic_seq.clone();
         let addr = connection.remote_address();
         let stream_id = stream.read.get_ref().id();
         let stream_hash = format!("{addr}:{stream_id}");
 
         tokio::spawn(async move {
-            if let Err(e) = handle_request(pipe_clone, &stream_hash, stream).await {
+            if let Err(e) = handle_request(pipe_clone, topic_seq_clone, &stream_hash, stream).await {
                 error!("Request failed: {reason}", reason = e.to_string());
             }
         });
@@ -134,6 +151,7 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
 
 async fn handle_request(
     pipeline: Pipeline,
+    topic_seq: Arc<DashMap<String, AtomicUsize>>,
     stream_hash: &str,
     mut stream: BiStream,
 ) -> Result<()> {
@@ -141,7 +159,7 @@ async fn handle_request(
     if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                handle_publisher(payload, pipeline.clone(), stream_hash, stream).await?
+                handle_publisher(payload, pipeline, topic_seq, stream_hash, stream).await?
             }
             Frame::RegisterSubscriber(payload) => {
                 handle_subscriber(payload, pipeline, stream_hash, stream).await?
@@ -158,16 +176,21 @@ async fn handle_request(
 async fn handle_publisher(
     header: PublisherPayload,
     pipeline: Pipeline,
+    topic_seq: Arc<DashMap<String, AtomicUsize>>,
     stream_hash: &str,
     stream: BiStream,
 ) -> Result<()> {
+    // Get current or create new sequence number for this topic
+    let sequence = topic_seq
+        .entry(header.topic.clone())
+        .or_insert(AtomicUsize::new(1));
+
     pipeline.add_publisher(stream_hash, header);
-    let mut sequence = 1usize;
 
     stream.try_for_each(move |frame| match frame {
         Frame::Message(bytes) => {
-            tokio::spawn(pipeline.traverse(stream_hash, bytes, sequence));
-            sequence += 1;
+            let seq = sequence.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(pipeline.traverse(stream_hash, bytes, seq));
             future::ok(())
         }
         _ => future::err(anyhow!("Non Message frame received out of context")),

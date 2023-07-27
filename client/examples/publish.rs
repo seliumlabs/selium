@@ -23,7 +23,7 @@ impl StockEvent {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut publisher = selium::publisher("/acmeco/stocks")
+    let publisher = selium::publisher("/acmeco/stocks")
         .map("/acmeco/forge_numbers.wasm")
         .keep_alive(Duration::from_secs(5))?
         .retain(Duration::from_secs(600))?
