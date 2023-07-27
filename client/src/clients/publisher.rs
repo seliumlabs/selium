@@ -1,7 +1,7 @@
 use super::builder::{ClientBuilder, ClientCommon};
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, PublisherPayload};
-use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp, MessageEncoder};
+use crate::traits::{Client, ClientConfig, Connect, MessageEncoder, TryIntoU64};
 use crate::utils::client::establish_connection;
 use crate::BiStream;
 use anyhow::Result;
@@ -13,23 +13,18 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-pub const RETENTION_POLICY_DEFAULT: u64 = 0;
-
 pub struct PublisherWantsCert {
     common: ClientCommon,
-    retention_policy: u64,
 }
 
 pub struct PublisherWantsEncoder {
     common: ClientCommon,
-    retention_policy: u64,
     root_store: RootCertStore,
 }
 
 pub struct PublisherReady<E, Item> {
     common: ClientCommon,
     encoder: E,
-    retention_policy: u64,
     root_store: RootCertStore,
     _marker: PhantomData<Item>,
 }
@@ -38,15 +33,7 @@ pub fn publisher(topic: &str) -> ClientBuilder<PublisherWantsCert> {
     ClientBuilder {
         state: PublisherWantsCert {
             common: ClientCommon::new(topic),
-            retention_policy: RETENTION_POLICY_DEFAULT,
         },
-    }
-}
-
-impl ClientBuilder<PublisherWantsCert> {
-    pub fn retain<T: IntoTimestamp>(mut self, policy: T) -> Result<Self> {
-        self.state.retention_policy = policy.into_timestamp()?;
-        Ok(self)
     }
 }
 
@@ -63,8 +50,13 @@ impl ClientConfig for ClientBuilder<PublisherWantsCert> {
         self
     }
 
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Result<Self> {
+    fn keep_alive<T: TryIntoU64>(mut self, interval: T) -> Result<Self> {
         self.state.common.keep_alive(interval)?;
+        Ok(self)
+    }
+
+    fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
+        self.state.common.retain(policy)?;
         Ok(self)
     }
 
@@ -73,7 +65,6 @@ impl ClientConfig for ClientBuilder<PublisherWantsCert> {
 
         let state = PublisherWantsEncoder {
             common: self.state.common,
-            retention_policy: self.state.retention_policy,
             root_store,
         };
 
@@ -85,7 +76,6 @@ impl ClientBuilder<PublisherWantsEncoder> {
     pub fn with_encoder<E, Item>(self, encoder: E) -> ClientBuilder<PublisherReady<E, Item>> {
         let state = PublisherReady {
             common: self.state.common,
-            retention_policy: self.state.retention_policy,
             root_store: self.state.root_store,
             encoder,
             _marker: PhantomData,
@@ -110,8 +100,8 @@ where
 
         let frame = Frame::RegisterPublisher(PublisherPayload {
             topic: self.state.common.topic,
+            retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
-            retention_policy: self.state.retention_policy,
         });
 
         stream.send(frame).await?;

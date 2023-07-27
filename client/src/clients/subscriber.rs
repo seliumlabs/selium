@@ -1,7 +1,7 @@
 use super::builder::{ClientBuilder, ClientCommon};
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, SubscriberPayload};
-use crate::traits::{Client, ClientConfig, Connect, IntoTimestamp, MessageDecoder};
+use crate::traits::{Client, ClientConfig, Connect, MessageDecoder, TryIntoU64};
 use crate::utils::client::establish_connection;
 use crate::BiStream;
 use anyhow::Result;
@@ -54,8 +54,13 @@ impl ClientConfig for ClientBuilder<SubscriberWantsCert> {
         self
     }
 
-    fn keep_alive<T: IntoTimestamp>(mut self, interval: T) -> Result<Self> {
+    fn keep_alive<T: TryIntoU64>(mut self, interval: T) -> Result<Self> {
         self.state.common.keep_alive(interval)?;
+        Ok(self)
+    }
+
+    fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
+        self.state.common.retain(policy)?;
         Ok(self)
     }
 
@@ -99,6 +104,7 @@ where
 
         let frame = Frame::RegisterSubscriber(SubscriberPayload {
             topic: self.state.common.topic,
+            retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
         });
 
