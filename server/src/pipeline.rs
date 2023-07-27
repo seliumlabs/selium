@@ -1,5 +1,3 @@
-use std::{net::SocketAddr, pin::Pin};
-
 use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
 use log::error;
@@ -7,13 +5,14 @@ use selium::{
     protocol::{PublisherPayload, SubscriberPayload},
     Operation,
 };
+use std::pin::Pin;
 
 use crate::graph::{hash_key, DoubleEndedTree};
 
 #[derive(Debug)]
 enum PipelineNode {
     Publisher,
-    Subscriber(SocketAddr, UnboundedSender<(usize, Bytes)>),
+    Subscriber(String, UnboundedSender<(usize, Bytes)>),
     Topic(String),
     Wasm(String),
 }
@@ -47,7 +46,7 @@ impl Pipeline {
         }
     }
 
-    pub fn add_publisher(&self, addr: SocketAddr, payload: PublisherPayload) {
+    pub fn add_publisher(&self, hash: &str, payload: PublisherPayload) {
         // First add the topic
         let mut left_of = self.graph.add_root(
             payload.topic.clone(),
@@ -69,12 +68,12 @@ impl Pipeline {
 
         // Finally, add the publisher
         self.graph
-            .add_left_leaf(addr.to_string(), PipelineNode::Publisher, left_of);
+            .add_left_leaf(hash, PipelineNode::Publisher, left_of);
     }
 
     pub fn add_subscriber(
         &self,
-        addr: SocketAddr,
+        hash: &str,
         payload: SubscriberPayload,
         sock: UnboundedSender<(usize, Bytes)>,
     ) {
@@ -98,8 +97,8 @@ impl Pipeline {
 
         // Finally, add the subscriber
         self.graph.add_right_leaf(
-            addr.to_string(),
-            PipelineNode::Subscriber(addr, sock),
+            hash,
+            PipelineNode::Subscriber(hash.to_owned(), sock),
             right_of,
         );
     }
@@ -114,11 +113,11 @@ impl Pipeline {
 
     pub fn traverse(
         &self,
-        publisher: SocketAddr,
+        publisher: &str,
         message: Bytes,
         sequence: usize,
     ) -> Pin<Box<dyn Future<Output = (usize, Bytes)> + Send>> {
-        let key = hash_key(publisher.to_string(), "left", None);
+        let key = hash_key(publisher, "left", None);
         self.graph
             .fold_branches((sequence, message), key, |(seq, bytes), node| {
                 match node.as_ref() {
@@ -143,13 +142,13 @@ mod tests {
 
     use super::*;
     use crate::graph::{hash_key, NextHop, Node};
-    use std::{str::FromStr, sync::Arc};
+    use std::sync::Arc;
 
     #[test]
     fn test_add_publisher() {
         let pipe: Pipeline = Pipeline::new();
 
-        let addr1 = SocketAddr::from_str("127.0.0.1:40009").unwrap();
+        let hash1 = "127.0.0.1:40009:1";
         let payload1 = PublisherPayload {
             topic: "/namespace/topic".into(),
             retention_policy: 0,
@@ -159,9 +158,10 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(addr1, payload1);
 
-        let addr2 = SocketAddr::from_str("127.0.0.1:40010").unwrap();
+        pipe.add_publisher(hash1, payload1);
+
+        let hash2 = "127.0.0.1:40010:1";
         let payload2 = PublisherPayload {
             topic: "/namespace/topic".into(),
             retention_policy: 0,
@@ -171,9 +171,9 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(addr2, payload2);
+        pipe.add_publisher(hash2, payload2);
 
-        let addr3 = SocketAddr::from_str("127.0.0.1:40011").unwrap();
+        let hash3 = "127.0.0.1:40011:1";
         let payload3 = PublisherPayload {
             topic: "/namespace/topic".into(),
             retention_policy: 0,
@@ -183,12 +183,12 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(addr3, payload3);
+        pipe.add_publisher(hash3, payload3);
 
         let topic_key = hash_key("/namespace/topic", "", None);
-        let pub1_key = hash_key("127.0.0.1:40009", "left", None);
-        let pub2_key = hash_key("127.0.0.1:40010", "left", None);
-        let pub3_key = hash_key("127.0.0.1:40011", "left", None);
+        let pub1_key = hash_key("127.0.0.1:40009:1", "left", None);
+        let pub2_key = hash_key("127.0.0.1:40010:1", "left", None);
+        let pub3_key = hash_key("127.0.0.1:40011:1", "left", None);
         let map2_key = hash_key("/namespace/map2", "left", Some(topic_key));
         let filter1_key = hash_key("/namespace/filter1", "left", Some(map2_key));
         let filter2_key = hash_key("/namespace/filter2", "left", Some(map2_key));
@@ -269,7 +269,7 @@ mod tests {
     fn test_add_subscriber() {
         let pipe: Pipeline = Pipeline::new();
 
-        let addr1 = SocketAddr::from_str("127.0.0.1:40009").unwrap();
+        let hash1 = "127.0.0.1:40009:1";
         let (tx1, _) = mpsc::unbounded();
         let payload1 = SubscriberPayload {
             topic: "/namespace/topic".into(),
@@ -280,9 +280,9 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(addr1, payload1, tx1.clone());
+        pipe.add_subscriber(hash1, payload1, tx1.clone());
 
-        let addr2 = SocketAddr::from_str("127.0.0.1:40010").unwrap();
+        let hash2 = "127.0.0.1:40010:1";
         let (tx2, _) = mpsc::unbounded();
         let payload2 = SubscriberPayload {
             topic: "/namespace/topic".into(),
@@ -293,9 +293,9 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(addr2, payload2, tx2.clone());
+        pipe.add_subscriber(hash2, payload2, tx2.clone());
 
-        let addr3 = SocketAddr::from_str("127.0.0.1:40011").unwrap();
+        let hash3 = "127.0.0.1:40011:1";
         let (tx3, _) = mpsc::unbounded();
         let payload3 = SubscriberPayload {
             topic: "/namespace/topic".into(),
@@ -306,12 +306,12 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(addr3, payload3, tx3.clone());
+        pipe.add_subscriber(hash3, payload3, tx3.clone());
 
         let topic_key = hash_key("/namespace/topic", "", None);
-        let sub1_key = hash_key("127.0.0.1:40009", "right", None);
-        let sub2_key = hash_key("127.0.0.1:40010", "right", None);
-        let sub3_key = hash_key("127.0.0.1:40011", "right", None);
+        let sub1_key = hash_key("127.0.0.1:40009:1", "right", None);
+        let sub2_key = hash_key("127.0.0.1:40010:1", "right", None);
+        let sub3_key = hash_key("127.0.0.1:40011:1", "right", None);
         let map1_key = hash_key("/namespace/map1", "right", Some(topic_key));
         let filter1_key = hash_key("/namespace/filter1", "right", Some(map1_key));
         let filter2_key = hash_key("/namespace/filter2", "right", Some(map1_key));
@@ -376,7 +376,7 @@ mod tests {
             *pipe.graph.get(sub1_key).unwrap(),
             Node::RightLeaf(
                 Arc::new(PipelineNode::Subscriber(
-                    SocketAddr::from_str("127.0.0.1:40009").unwrap(),
+                    "127.0.0.1:40009:1".to_owned(),
                     tx1
                 )),
                 map21_key
@@ -387,7 +387,7 @@ mod tests {
             *pipe.graph.get(sub2_key).unwrap(),
             Node::RightLeaf(
                 Arc::new(PipelineNode::Subscriber(
-                    SocketAddr::from_str("127.0.0.1:40010").unwrap(),
+                    "127.0.0.1:40010:1".to_owned(),
                     tx2
                 )),
                 map22_key
@@ -398,7 +398,7 @@ mod tests {
             *pipe.graph.get(sub3_key).unwrap(),
             Node::RightLeaf(
                 Arc::new(PipelineNode::Subscriber(
-                    SocketAddr::from_str("127.0.0.1:40011").unwrap(),
+                    "127.0.0.1:40011:1".to_owned(),
                     tx3
                 )),
                 map22_key

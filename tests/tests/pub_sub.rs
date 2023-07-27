@@ -42,7 +42,7 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
     let subscriber3 = start_subscriber("/acmeco/something_else").await?;
     let subscriber4 = start_subscriber("/bluthco/stocks").await?;
 
-    let mut publisher = selium::publisher("/acmeco/stocks")
+    let publisher = selium::publisher("/acmeco/stocks")
         // .map("/acmeco/forge_numbers.wasm")
         .keep_alive(5_000)?
         .with_certificate_authority("certs/ca.crt")?
@@ -50,7 +50,9 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
         .connect("127.0.0.1:7001")
         .await?;
 
-    publisher
+    let mut stream = publisher.stream().await?;
+
+    stream
         .send_all(&mut iter(vec![
             Ok("foo"),
             Ok("bar"),
@@ -61,7 +63,8 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
             Ok("foo"),
         ]))
         .await?;
-    publisher.finish().await?;
+
+    stream.finish().await?;
 
     let message1 = subscriber1.try_next().await?;
     let message2 = subscriber1.try_next().await?;

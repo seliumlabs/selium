@@ -1,5 +1,4 @@
 use super::net::get_socket_addrs;
-use crate::BiStream;
 use anyhow::Result;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::RootCertStore;
@@ -39,12 +38,10 @@ pub async fn establish_connection(
     host: &str,
     root_store: &RootCertStore,
     keep_alive: u64,
-) -> Result<BiStream> {
+) -> Result<Connection> {
     let addr = get_socket_addrs(host)?;
-
     let config = configure_client(root_store, keep_alive)?;
     let connection = connect_to_endpoint(config, addr).await?;
-    let stream = BiStream::try_from_connection(connection).await?;
 
-    Ok(stream)
+    Ok(connection)
 }

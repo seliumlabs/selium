@@ -10,8 +10,8 @@ pub type ReadStream = FramedRead<RecvStream, MessageCodec>;
 pub type WriteStream = FramedWrite<SendStream, MessageCodec>;
 
 pub struct BiStream {
-    write: WriteStream,
-    read: ReadStream,
+    pub write: WriteStream,
+    pub read: ReadStream,
 }
 
 impl BiStream {

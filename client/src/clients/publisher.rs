@@ -7,6 +7,7 @@ use crate::BiStream;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};
+use quinn::Connection;
 use rustls::RootCertStore;
 use std::marker::PhantomData;
 use std::path::PathBuf;
@@ -94,20 +95,19 @@ where
     type Output = Publisher<E, Item>;
 
     async fn connect(self, host: &str) -> Result<Self::Output> {
-        let mut stream =
+        let connection =
             establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
                 .await?;
 
-        let frame = Frame::RegisterPublisher(PublisherPayload {
+        let headers = PublisherPayload {
             topic: self.state.common.topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
-        });
-
-        stream.send(frame).await?;
+        };
 
         Ok(Publisher {
-            stream,
+            connection,
+            headers,
             encoder: self.state.encoder,
             _marker: PhantomData,
         })
@@ -115,13 +115,38 @@ where
 }
 
 pub struct Publisher<E, Item> {
+    connection: Connection,
+    headers: PublisherPayload,
+    encoder: E,
+    _marker: PhantomData<Item>,
+}
+
+impl<E, Item> Publisher<E, Item>
+where
+    E: MessageEncoder<Item> + Clone,
+{
+    pub async fn stream(&self) -> Result<PublisherStream<E, Item>> {
+        let mut stream = BiStream::try_from_connection(self.connection.clone()).await?;
+        let frame = Frame::RegisterPublisher(self.headers.clone());
+
+        stream.send(frame).await?;
+
+        Ok(PublisherStream {
+            stream,
+            encoder: self.encoder.clone(),
+            _marker: PhantomData,
+        })
+    }
+}
+
+pub struct PublisherStream<E, Item> {
     stream: BiStream,
     encoder: E,
     _marker: PhantomData<Item>,
 }
 
 #[async_trait]
-impl<E, Item> Client for Publisher<E, Item>
+impl<E, Item> Client for PublisherStream<E, Item>
 where
     E: MessageEncoder<Item> + Send,
     Item: Send,
@@ -131,7 +156,7 @@ where
     }
 }
 
-impl<E, Item> Sink<Item> for Publisher<E, Item>
+impl<E, Item> Sink<Item> for PublisherStream<E, Item>
 where
     E: MessageEncoder<Item> + Send + Unpin,
     Item: Unpin,

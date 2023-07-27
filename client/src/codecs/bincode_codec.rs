@@ -4,8 +4,17 @@ use bytes::{Buf, Bytes, BytesMut};
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
 
-pub struct BincodeCodec<T> {
-    _marker: PhantomData<T>,
+#[derive(Debug)]
+pub struct BincodeCodec<Item> {
+    _marker: PhantomData<Item>,
+}
+
+impl<Item> Clone for BincodeCodec<Item> {
+    fn clone(&self) -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<T> Default for BincodeCodec<T> {
