@@ -1,4 +1,3 @@
-use std::pin::Pin;
 use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
 use log::error;
@@ -6,6 +5,7 @@ use selium::{
     protocol::{PublisherPayload, SubscriberPayload},
     Operation,
 };
+use std::pin::Pin;
 
 use crate::graph::{hash_key, DoubleEndedTree};
 

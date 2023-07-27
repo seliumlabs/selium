@@ -1,11 +1,3 @@
-use std::{
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
 use anyhow::{anyhow, bail, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
@@ -16,7 +8,18 @@ use log::{error, info};
 use ordered_sink::OrderedExt;
 use pipeline::Pipeline;
 use quinn::{IdleTimeout, VarInt};
-use selium::{protocol::{Frame, PublisherPayload, SubscriberPayload}, BiStream};
+use selium::{
+    protocol::{Frame, PublisherPayload, SubscriberPayload},
+    BiStream,
+};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 mod graph;
 mod ordered_sink;
@@ -132,7 +135,7 @@ async fn handle_connection(
             Err(e) => {
                 bail!(e);
             }
-            Ok(stream) => BiStream::from(stream)
+            Ok(stream) => BiStream::from(stream),
         };
 
         let pipe_clone = pipeline.clone();
@@ -142,7 +145,8 @@ async fn handle_connection(
         let stream_hash = format!("{addr}:{stream_id}");
 
         tokio::spawn(async move {
-            if let Err(e) = handle_request(pipe_clone, topic_seq_clone, &stream_hash, stream).await {
+            if let Err(e) = handle_request(pipe_clone, topic_seq_clone, &stream_hash, stream).await
+            {
                 error!("Request failed: {reason}", reason = e.to_string());
             }
         });
@@ -187,15 +191,16 @@ async fn handle_publisher(
 
     pipeline.add_publisher(stream_hash, header);
 
-    stream.try_for_each(move |frame| match frame {
-        Frame::Message(bytes) => {
-            let seq = sequence.fetch_add(1, Ordering::SeqCst);
-            tokio::spawn(pipeline.traverse(stream_hash, bytes, seq));
-            future::ok(())
-        }
-        _ => future::err(anyhow!("Non Message frame received out of context")),
-    })
-    .await?;
+    stream
+        .try_for_each(move |frame| match frame {
+            Frame::Message(bytes) => {
+                let seq = sequence.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(pipeline.traverse(stream_hash, bytes, seq));
+                future::ok(())
+            }
+            _ => future::err(anyhow!("Non Message frame received out of context")),
+        })
+        .await?;
     Ok(())
 }
 

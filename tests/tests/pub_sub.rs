@@ -52,7 +52,8 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 
     let mut stream = publisher.stream().await?;
 
-    stream.send_all(&mut iter(vec![
+    stream
+        .send_all(&mut iter(vec![
             Ok("foo"),
             Ok("bar"),
             Ok("foo"),

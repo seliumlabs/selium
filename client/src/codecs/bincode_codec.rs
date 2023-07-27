@@ -12,7 +12,7 @@ pub struct BincodeCodec<Item> {
 impl<Item> Clone for BincodeCodec<Item> {
     fn clone(&self) -> Self {
         Self {
-            _marker: PhantomData
+            _marker: PhantomData,
         }
     }
 }

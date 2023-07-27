@@ -102,7 +102,7 @@ where
         let headers = PublisherPayload {
             topic: self.state.common.topic,
             retention_policy: self.state.common.retention_policy,
-            operations: self.state.common.operations
+            operations: self.state.common.operations,
         };
 
         Ok(Publisher {
@@ -121,9 +121,9 @@ pub struct Publisher<E, Item> {
     _marker: PhantomData<Item>,
 }
 
-impl<E, Item> Publisher<E, Item> 
+impl<E, Item> Publisher<E, Item>
 where
-    E: MessageEncoder<Item> + Clone 
+    E: MessageEncoder<Item> + Clone,
 {
     pub async fn stream(&self) -> Result<PublisherStream<E, Item>> {
         let mut stream = BiStream::try_from_connection(self.connection.clone()).await?;
@@ -135,14 +135,14 @@ where
             stream,
             encoder: self.encoder.clone(),
             _marker: PhantomData,
-        }) 
+        })
     }
 }
 
 pub struct PublisherStream<E, Item> {
     stream: BiStream,
     encoder: E,
-    _marker: PhantomData<Item>
+    _marker: PhantomData<Item>,
 }
 
 #[async_trait]

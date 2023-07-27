@@ -35,13 +35,13 @@ async fn main() -> Result<()> {
     tokio::spawn({
         let mut stream = publisher.stream().await.unwrap();
         async move {
-           stream.send(StockEvent::new("MSFT", 12.75)).await.unwrap();
-           stream.finish().await.unwrap();
+            stream.send(StockEvent::new("MSFT", 12.75)).await.unwrap();
+            stream.finish().await.unwrap();
         }
     });
 
     let mut stream = publisher.stream().await?;
-        
+
     stream.send(StockEvent::new("APPL", 3.5)).await?;
     stream.send(StockEvent::new("INTC", -9.0)).await?;
     stream.finish().await?;
