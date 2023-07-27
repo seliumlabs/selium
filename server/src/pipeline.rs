@@ -1,5 +1,4 @@
-use std::{net::SocketAddr, pin::Pin};
-
+use std::pin::Pin;
 use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
 use log::error;
@@ -13,7 +12,7 @@ use crate::graph::{hash_key, DoubleEndedTree};
 #[derive(Debug)]
 enum PipelineNode {
     Publisher,
-    Subscriber(SocketAddr, UnboundedSender<(usize, Bytes)>),
+    Subscriber(String, UnboundedSender<(usize, Bytes)>),
     Topic(String),
     Wasm(String),
 }
@@ -47,7 +46,7 @@ impl Pipeline {
         }
     }
 
-    pub fn add_publisher(&self, addr: SocketAddr, payload: PublisherPayload) {
+    pub fn add_publisher(&self, hash: &str, payload: PublisherPayload) {
         // First add the topic
         let mut left_of = self.graph.add_root(
             payload.topic.clone(),
@@ -69,12 +68,12 @@ impl Pipeline {
 
         // Finally, add the publisher
         self.graph
-            .add_left_leaf(addr.to_string(), PipelineNode::Publisher, left_of);
+            .add_left_leaf(hash.to_owned(), PipelineNode::Publisher, left_of);
     }
 
     pub fn add_subscriber(
         &self,
-        addr: SocketAddr,
+        hash: &str,
         payload: SubscriberPayload,
         sock: UnboundedSender<(usize, Bytes)>,
     ) {
@@ -98,8 +97,8 @@ impl Pipeline {
 
         // Finally, add the subscriber
         self.graph.add_right_leaf(
-            addr.to_string(),
-            PipelineNode::Subscriber(addr, sock),
+            hash.to_owned(),
+            PipelineNode::Subscriber(hash.to_owned(), sock),
             right_of,
         );
     }
@@ -114,11 +113,11 @@ impl Pipeline {
 
     pub fn traverse(
         &self,
-        publisher: SocketAddr,
+        publisher: &str,
         message: Bytes,
         sequence: usize,
     ) -> Pin<Box<dyn Future<Output = (usize, Bytes)> + Send>> {
-        let key = hash_key(publisher.to_string(), "left", None);
+        let key = hash_key(publisher.to_owned(), "left", None);
         self.graph
             .fold_branches((sequence, message), key, |(seq, bytes), node| {
                 match node.as_ref() {
@@ -159,6 +158,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
+
         pipe.add_publisher(addr1, payload1);
 
         let addr2 = SocketAddr::from_str("127.0.0.1:40010").unwrap();

@@ -1,5 +1,4 @@
 use std::{net::SocketAddr, path::PathBuf};
-
 use anyhow::{anyhow, bail, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
@@ -8,9 +7,8 @@ use futures::{channel::mpsc, future, StreamExt, TryStreamExt};
 use log::{error, info};
 use ordered_sink::OrderedExt;
 use pipeline::Pipeline;
-use quinn::{IdleTimeout, RecvStream, SendStream, VarInt};
-use selium::protocol::{Frame, MessageCodec, PublisherPayload, SubscriberPayload};
-use tokio_util::codec::{FramedRead, FramedWrite};
+use quinn::{IdleTimeout, VarInt};
+use selium::{protocol::{Frame, PublisherPayload, SubscriberPayload}, BiStream};
 
 mod graph;
 mod ordered_sink;
@@ -110,7 +108,7 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
 
     loop {
         let stream = connection.accept_bi().await;
-        let (tx, rx) = match stream {
+        let stream = match stream {
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                 info!("Connection closed");
                 return Ok(());
@@ -118,16 +116,16 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
             Err(e) => {
                 bail!(e);
             }
-            Ok((tx, rx)) => (
-                FramedWrite::new(tx, MessageCodec),
-                FramedRead::new(rx, MessageCodec),
-            ),
+            Ok(stream) => BiStream::from(stream)
         };
 
         let pipe_clone = pipeline.clone();
         let addr = connection.remote_address();
+        let stream_id = stream.read.get_ref().id();
+        let stream_hash = format!("{addr}:{stream_id}");
+
         tokio::spawn(async move {
-            if let Err(e) = handle_request(pipe_clone, addr, tx, rx).await {
+            if let Err(e) = handle_request(pipe_clone, &stream_hash, stream).await {
                 error!("Request failed: {reason}", reason = e.to_string());
             }
         });
@@ -136,18 +134,17 @@ async fn handle_connection(pipeline: Pipeline, conn: quinn::Connecting) -> Resul
 
 async fn handle_request(
     pipeline: Pipeline,
-    addr: SocketAddr,
-    tx: FramedWrite<SendStream, MessageCodec>,
-    mut rx: FramedRead<RecvStream, MessageCodec>,
+    stream_hash: &str,
+    mut stream: BiStream,
 ) -> Result<()> {
     // Receive header
-    if let Some(result) = rx.next().await {
+    if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                handle_publisher(payload, pipeline.clone(), addr, rx).await?
+                handle_publisher(payload, pipeline.clone(), stream_hash, stream).await?
             }
             Frame::RegisterSubscriber(payload) => {
-                handle_subscriber(payload, pipeline, addr, tx).await?
+                handle_subscriber(payload, pipeline, stream_hash, stream).await?
             }
             _ => return Err(anyhow!("Non header frame received out of context")),
         }
@@ -161,15 +158,15 @@ async fn handle_request(
 async fn handle_publisher(
     header: PublisherPayload,
     pipeline: Pipeline,
-    addr: SocketAddr,
-    rx: FramedRead<RecvStream, MessageCodec>,
+    stream_hash: &str,
+    stream: BiStream,
 ) -> Result<()> {
-    pipeline.add_publisher(addr, header);
+    pipeline.add_publisher(stream_hash, header);
     let mut sequence = 1usize;
 
-    rx.try_for_each(move |frame| match frame {
+    stream.try_for_each(move |frame| match frame {
         Frame::Message(bytes) => {
-            tokio::spawn(pipeline.traverse(addr, bytes, sequence));
+            tokio::spawn(pipeline.traverse(stream_hash, bytes, sequence));
             sequence += 1;
             future::ok(())
         }
@@ -182,15 +179,15 @@ async fn handle_publisher(
 async fn handle_subscriber(
     header: SubscriberPayload,
     pipeline: Pipeline,
-    addr: SocketAddr,
-    tx: FramedWrite<SendStream, MessageCodec>,
+    stream_hash: &str,
+    stream: BiStream,
 ) -> Result<()> {
     let (tx_chan, rx_chan) = mpsc::unbounded();
-    pipeline.add_subscriber(addr, header, tx_chan);
+    pipeline.add_subscriber(stream_hash, header, tx_chan);
 
     rx_chan
         .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
-        .forward(tx.ordered())
+        .forward(stream.ordered())
         .await?;
 
     Ok(())
