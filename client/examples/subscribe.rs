@@ -13,13 +13,19 @@ struct StockEvent {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut subscriber = selium::subscriber("/acmeco/stocks")
+    let connection = selium::client()
+        .keep_alive(Duration::from_secs(5))?
+        .with_certificate_authority("certs/ca.crt")?
+        .connect("127.0.0.1:7001")
+        .await?;
+
+    let mut subscriber = connection
+        .subscriber("/acmeco/stocks")
         .map("/selium/bonanza.wasm")
         .filter("/selium/dodgy_stuff.wasm")
         .retain(Duration::from_secs(600))?
-        .with_certificate_authority("certs/ca.crt")?
         .with_decoder(BincodeCodec::default())
-        .connect("127.0.0.1:7001")
+        .open()
         .await?;
 
     while let Some(Ok(StockEvent { ticker, change })) = subscriber.next().await {

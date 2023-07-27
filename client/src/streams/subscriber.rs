@@ -1,49 +1,28 @@
-use super::builder::{ClientBuilder, ClientCommon};
-use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, SubscriberPayload};
-use crate::traits::{Client, ClientConfig, Connect, MessageDecoder, TryIntoU64};
-use crate::utils::client::establish_connection;
-use crate::BiStream;
+use crate::traits::{Finish, MessageDecoder, Open, StreamConfig, TryIntoU64};
+use crate::{BiStream, StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures::{SinkExt, Stream, StreamExt};
-use rustls::RootCertStore;
+use quinn::Connection;
 use std::marker::PhantomData;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 #[derive(Debug)]
-pub struct SubscriberWantsCert {
-    common: ClientCommon,
-}
-
-#[derive(Debug)]
 pub struct SubscriberWantsDecoder {
-    common: ClientCommon,
-    root_store: RootCertStore,
+    pub(crate) common: StreamCommon,
 }
 
 #[derive(Debug)]
-pub struct SubscriberReady<E, Item> {
-    common: ClientCommon,
-    root_store: RootCertStore,
-    decoder: E,
+pub struct SubscriberWantsOpen<D, Item> {
+    common: StreamCommon,
+    decoder: D,
     _marker: PhantomData<Item>,
 }
 
-pub fn subscriber(topic: &str) -> ClientBuilder<SubscriberWantsCert> {
-    ClientBuilder {
-        state: SubscriberWantsCert {
-            common: ClientCommon::new(topic),
-        },
-    }
-}
-
-impl ClientConfig for ClientBuilder<SubscriberWantsCert> {
-    type NextState = ClientBuilder<SubscriberWantsDecoder>;
-
+impl StreamConfig for StreamBuilder<SubscriberWantsDecoder> {
     fn map(mut self, module_path: &str) -> Self {
         self.state.common.map(module_path);
         self
@@ -54,69 +33,45 @@ impl ClientConfig for ClientBuilder<SubscriberWantsCert> {
         self
     }
 
-    fn keep_alive<T: TryIntoU64>(mut self, interval: T) -> Result<Self> {
-        self.state.common.keep_alive(interval)?;
-        Ok(self)
-    }
-
     fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
         self.state.common.retain(policy)?;
         Ok(self)
     }
-
-    fn with_certificate_authority<T: Into<PathBuf>>(self, ca_path: T) -> Result<Self::NextState> {
-        let root_store = load_root_store(&ca_path.into())?;
-
-        let state = SubscriberWantsDecoder {
-            common: self.state.common,
-            root_store,
-        };
-
-        Ok(ClientBuilder { state })
-    }
 }
 
-impl ClientBuilder<SubscriberWantsDecoder> {
-    pub fn with_decoder<D, Item>(self, decoder: D) -> ClientBuilder<SubscriberReady<D, Item>> {
-        let state = SubscriberReady {
+impl StreamBuilder<SubscriberWantsDecoder> {
+    pub fn with_decoder<D, Item>(self, decoder: D) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
+        let state = SubscriberWantsOpen {
             common: self.state.common,
-            root_store: self.state.root_store,
             decoder,
             _marker: PhantomData,
         };
 
-        ClientBuilder { state }
+        StreamBuilder {
+            state,
+            connection: self.connection,
+        }
     }
 }
 
 #[async_trait]
-impl<D, Item> Connect for ClientBuilder<SubscriberReady<D, Item>>
+impl<D, Item> Open for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
     D: MessageDecoder<Item> + Send,
     Item: Send,
 {
     type Output = Subscriber<D, Item>;
 
-    async fn connect(self, host: &str) -> Result<Self::Output> {
-        let connection =
-            establish_connection(host, &self.state.root_store, self.state.common.keep_alive)
-                .await?;
-
-        let mut stream = BiStream::try_from_connection(connection.clone()).await?;
-
-        let frame = Frame::RegisterSubscriber(SubscriberPayload {
+    async fn open(self) -> Result<Self::Output> {
+        let headers = SubscriberPayload {
             topic: self.state.common.topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
-        });
+        };
 
-        stream.send(frame).await?;
+        let subscriber = Subscriber::spawn(self.connection, headers, self.state.decoder).await?;
 
-        Ok(Subscriber {
-            stream,
-            decoder: self.state.decoder,
-            _marker: PhantomData,
-        })
+        Ok(subscriber)
     }
 }
 
@@ -126,8 +81,29 @@ pub struct Subscriber<D, Item> {
     _marker: PhantomData<Item>,
 }
 
+impl<D, Item> Subscriber<D, Item>
+where
+    D: MessageDecoder<Item>,
+{
+    pub async fn spawn(
+        connection: Connection,
+        headers: SubscriberPayload,
+        decoder: D,
+    ) -> Result<Self> {
+        let mut stream = BiStream::try_from_connection(connection).await?;
+        let frame = Frame::RegisterSubscriber(headers);
+        stream.send(frame).await?;
+
+        Ok(Self {
+            stream,
+            decoder,
+            _marker: PhantomData,
+        })
+    }
+}
+
 #[async_trait]
-impl<D, Item> Client for Subscriber<D, Item>
+impl<D, Item> Finish for Subscriber<D, Item>
 where
     D: MessageDecoder<Item> + Send,
     Item: Send,

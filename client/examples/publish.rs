@@ -23,28 +23,34 @@ impl StockEvent {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let publisher = selium::publisher("/acmeco/stocks")
-        .map("/acmeco/forge_numbers.wasm")
+    let connection = selium::client()
         .keep_alive(Duration::from_secs(5))?
-        .retain(Duration::from_secs(600))?
         .with_certificate_authority("certs/ca.crt")?
-        .with_encoder(BincodeCodec::default())
         .connect("127.0.0.1:7001")
         .await?;
 
+    let mut publisher = connection
+        .publisher("/acmeco/stocks")
+        .map("/acmeco/forge_numbers.wasm")
+        .retain(Duration::from_secs(600))?
+        .with_encoder(BincodeCodec::default())
+        .open()
+        .await?;
+
     tokio::spawn({
-        let mut stream = publisher.stream().await.unwrap();
+        let mut publisher = publisher.clone().await.unwrap();
         async move {
-            stream.send(StockEvent::new("MSFT", 12.75)).await.unwrap();
-            stream.finish().await.unwrap();
+            publisher
+                .send(StockEvent::new("MSFT", 12.75))
+                .await
+                .unwrap();
+            publisher.finish().await.unwrap();
         }
     });
 
-    let mut stream = publisher.stream().await?;
-
-    stream.send(StockEvent::new("APPL", 3.5)).await?;
-    stream.send(StockEvent::new("INTC", -9.0)).await?;
-    stream.finish().await?;
+    publisher.send(StockEvent::new("APPL", 3.5)).await?;
+    publisher.send(StockEvent::new("INTC", -9.0)).await?;
+    publisher.finish().await?;
 
     Ok(())
 }

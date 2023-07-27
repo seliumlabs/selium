@@ -1,6 +1,7 @@
 mod bistream;
-mod clients;
+mod client;
 mod operation;
+mod streams;
 
 pub mod codecs;
 pub mod crypto;
@@ -10,5 +11,6 @@ pub mod traits;
 pub mod utils;
 
 pub use bistream::*;
-pub use clients::*;
+pub use client::*;
 pub use operation::*;
+pub use streams::*;
