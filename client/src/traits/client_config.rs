@@ -1,4 +1,4 @@
-use super::IntoTimestamp;
+use super::TryIntoU64;
 use anyhow::Result;
 use std::path::PathBuf;
 
@@ -8,7 +8,11 @@ pub trait ClientConfig {
     fn map(self, module_path: &str) -> Self;
     fn filter(self, module_path: &str) -> Self;
 
-    fn keep_alive<T: IntoTimestamp>(self, interval: T) -> Result<Self>
+    fn keep_alive<T: TryIntoU64>(self, interval: T) -> Result<Self>
+    where
+        Self: Sized;
+
+    fn retain<T: TryIntoU64>(self, policy: T) -> Result<Self>
     where
         Self: Sized;
 
