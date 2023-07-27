@@ -96,7 +96,7 @@ impl<V> Node<V> {
         Self::RightLeaf(Arc::new(value), prev_hop)
     }
 
-    fn as_str<'a>(&'a self) -> &'a str {
+    fn as_str(&self) -> &str {
         match self {
             Self::Root(_, _, _) => "Root",
             Self::Left(_, _, _) => "Left",
