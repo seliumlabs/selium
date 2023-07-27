@@ -188,8 +188,7 @@ where
         }
     }
 
-    fn _rm_left_leaf(&self, hash: SHA512) {
-        let mut current_hash = hash;
+    fn _rm_left_leaf(&self, mut current_hash: SHA512) {
         let mut hashes_to_remove = HashMap::new();
         loop {
             let node = self
@@ -232,8 +231,7 @@ where
         }
     }
 
-    pub fn _rm_right_leaf(&self, hash: SHA512) {
-        let mut current_hash = hash;
+    pub fn _rm_right_leaf(&self, mut current_hash: SHA512) {
         let mut hashes_to_remove = HashMap::new();
         loop {
             let node = self
