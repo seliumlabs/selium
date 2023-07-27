@@ -68,7 +68,7 @@ impl Pipeline {
 
         // Finally, add the publisher
         self.graph
-            .add_left_leaf(hash.to_owned(), PipelineNode::Publisher, left_of);
+            .add_left_leaf(hash, PipelineNode::Publisher, left_of);
     }
 
     pub fn add_subscriber(
@@ -97,7 +97,7 @@ impl Pipeline {
 
         // Finally, add the subscriber
         self.graph.add_right_leaf(
-            hash.to_owned(),
+            hash,
             PipelineNode::Subscriber(hash.to_owned(), sock),
             right_of,
         );
@@ -117,7 +117,7 @@ impl Pipeline {
         message: Bytes,
         sequence: usize,
     ) -> Pin<Box<dyn Future<Output = (usize, Bytes)> + Send>> {
-        let key = hash_key(publisher.to_owned(), "left", None);
+        let key = hash_key(publisher, "left", None);
         self.graph
             .fold_branches((sequence, message), key, |(seq, bytes), node| {
                 match node.as_ref() {
