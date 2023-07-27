@@ -16,7 +16,7 @@ impl TryIntoU64 for std::time::Duration {
     }
 }
 
-#[cfg(feature = "chrono")] 
+#[cfg(feature = "chrono")]
 impl TryIntoU64 for chrono::Duration {
     fn try_into_u64(self) -> Result<u64> {
         use anyhow::Context;
