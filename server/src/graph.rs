@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::{pin::Pin, sync::Arc};
 
+use anyhow::{anyhow, bail, Result};
 use dashmap::DashMap;
 use futures::{future, Future, FutureExt};
 use hmac_sha512::Hash;
@@ -56,6 +58,21 @@ impl NextHop {
             NextHop::None => other,
         }
     }
+
+    pub fn remove(self, key: SHA512) -> Self {
+        match self {
+            NextHop::Hop(_) => NextHop::None,
+            NextHop::MultiHop(mut hops) => {
+                hops.retain(|&x| x != key);
+                if hops.len() == 1 {
+                    NextHop::Hop(hops[0])
+                } else {
+                    NextHop::MultiHop(hops)
+                }
+            }
+            NextHop::None => NextHop::None,
+        }
+    }
 }
 
 impl<V> Node<V> {
@@ -77,6 +94,16 @@ impl<V> Node<V> {
 
     pub fn right_leaf(value: V, prev_hop: SHA512) -> Self {
         Self::RightLeaf(Arc::new(value), prev_hop)
+    }
+
+    fn as_str<'a>(&'a self) -> &'a str {
+        match self {
+            Self::Root(_, _, _) => "Root",
+            Self::Left(_, _, _) => "Left",
+            Self::Right(_, _, _) => "Right",
+            Self::LeftLeaf(_, _) => "LeftLeaf",
+            Self::RightLeaf(_, _) => "RightLeaf",
+        }
     }
 
     pub fn get_value(&self) -> Arc<V> {
@@ -133,41 +160,149 @@ where
         hkey
     }
 
-    pub fn add_left<K: AsRef<[u8]>>(&self, key: K, value: V, left_of: SHA512) -> SHA512 {
+    pub fn add_left<K: AsRef<[u8]>>(&self, key: K, value: V, left_of: SHA512) -> Result<SHA512> {
         let hkey = hash_key(key, "left", Some(left_of));
-        self._add_left(hkey, Node::left(value, left_of, NextHop::None), left_of);
+        self._add_left(hkey, Node::left(value, left_of, NextHop::None), left_of)?;
 
-        hkey
+        Ok(hkey)
     }
 
-    pub fn add_left_leaf<K: AsRef<[u8]>>(&self, key: K, value: V, left_of: SHA512) -> SHA512 {
+    pub fn add_left_leaf<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+        value: V,
+        left_of: SHA512,
+    ) -> Result<SHA512> {
         let hkey = hash_key(key, "left", None);
-        self._add_left(hkey, Node::left_leaf(value, left_of), left_of);
+        self._add_left(hkey, Node::left_leaf(value, left_of), left_of)?;
 
-        hkey
+        Ok(hkey)
     }
 
-    pub fn add_right<K: AsRef<[u8]>>(&self, key: K, value: V, right_of: SHA512) -> SHA512 {
+    pub fn add_right<K: AsRef<[u8]>>(&self, key: K, value: V, right_of: SHA512) -> Result<SHA512> {
         let hkey = hash_key(key, "right", Some(right_of));
-        self._add_right(hkey, Node::right(value, NextHop::None, right_of), right_of);
+        self._add_right(hkey, Node::right(value, NextHop::None, right_of), right_of)?;
 
-        hkey
+        Ok(hkey)
     }
 
-    pub fn add_right_leaf<K: AsRef<[u8]>>(&self, key: K, value: V, right_of: SHA512) -> SHA512 {
+    pub fn add_right_leaf<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+        value: V,
+        right_of: SHA512,
+    ) -> Result<SHA512> {
         let hkey = hash_key(key, "right", None);
-        self._add_right(hkey, Node::right_leaf(value, right_of), right_of);
+        self._add_right(hkey, Node::right_leaf(value, right_of), right_of)?;
 
-        hkey
+        Ok(hkey)
     }
 
-    // pub fn rm_left(_hash: SHA512) {
-    //     unimplemented!();
-    // }
+    fn _rm_left_branch(&self, hashes_to_remove: HashMap<SHA512, SHA512>) -> Result<()> {
+        for (prev_hash, node_hash) in &hashes_to_remove {
+            if let Some(n) = self.inner.get(prev_hash) {
+                let ns = n.as_str();
+                if ns == "Right" || ns == "LeftLeaf" || ns == "RightLeaf" {
+                    bail!("Invalid branch {ns}");
+                }
+            }
 
-    // pub fn rm_right(_hash: SHA512) {
-    //     unimplemented!();
-    // }
+            self.inner.alter(prev_hash, |_, n| match n {
+                Node::Left(v, n, p) => Node::Left(v, n, p.remove(*node_hash)),
+                Node::Root(v, n, p) => Node::Root(v, n, p.remove(*node_hash)),
+                _ => unreachable!(),
+            });
+            self.inner.remove(node_hash);
+        }
+
+        Ok(())
+    }
+
+    fn _rm_left_leaf(&self, mut current_hash: SHA512) -> Result<()> {
+        let mut hashes_to_remove = HashMap::new();
+        loop {
+            let node = self
+                .inner
+                .get(&current_hash)
+                .ok_or(anyhow!("Hash is not in the graph"))?;
+            match *node {
+                Node::Root(_, _, _) => break,
+                Node::LeftLeaf(_, ref n) => {
+                    hashes_to_remove.insert(*n, current_hash);
+                    current_hash = *n;
+                }
+                Node::Left(_, ref n, ref p) => {
+                    if matches!(p, NextHop::Hop(_)) {
+                        hashes_to_remove.insert(*n, current_hash);
+                        current_hash = *n;
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        self._rm_left_branch(hashes_to_remove)
+    }
+
+    pub fn rm_left_leaf<K: AsRef<[u8]>>(&self, key: K) -> Result<()> {
+        let hash = hash_key(key, "left", None);
+        self._rm_left_leaf(hash)
+    }
+
+    fn _rm_right_branch(&self, hashes_to_remove: HashMap<SHA512, SHA512>) -> Result<()> {
+        for (prev_hash, node_hash) in &hashes_to_remove {
+            if let Some(n) = self.inner.get(prev_hash) {
+                let ns = n.as_str();
+                if ns == "Left" || ns == "LeftLeaf" || ns == "RightLeaf" {
+                    bail!("Invalid branch {ns}");
+                }
+            }
+
+            self.inner.alter(prev_hash, |_, n| match n {
+                Node::Right(v, n, p) => Node::Right(v, n.remove(*node_hash), p),
+                Node::Root(v, n, p) => Node::Root(v, n.remove(*node_hash), p),
+                _ => unreachable!(),
+            });
+            self.inner.remove(node_hash);
+        }
+
+        Ok(())
+    }
+
+    pub fn _rm_right_leaf(&self, mut current_hash: SHA512) -> Result<()> {
+        let mut hashes_to_remove = HashMap::new();
+        loop {
+            let node = self
+                .inner
+                .get(&current_hash)
+                .ok_or(anyhow!("Hash is not in the graph"))?;
+            match *node {
+                Node::Root(_, _, _) => break,
+                Node::RightLeaf(_, ref p) => {
+                    hashes_to_remove.insert(*p, current_hash);
+                    current_hash = *p;
+                }
+                Node::Right(_, ref n, ref p) => {
+                    if matches!(n, NextHop::Hop(_)) {
+                        hashes_to_remove.insert(*p, current_hash);
+                        current_hash = *p;
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        self._rm_right_branch(hashes_to_remove)
+    }
+
+    pub fn rm_right_leaf<K: AsRef<[u8]>>(&self, key: K) -> Result<()> {
+        let hash = hash_key(key, "right", None);
+        self._rm_right_leaf(hash)
+    }
 
     pub fn fold_branches<T, F, Fut>(
         &self,
@@ -184,32 +319,46 @@ where
         _fold(inner, init, start, handler)
     }
 
-    fn _add_left(&self, key: SHA512, value: Node<V>, left_of: SHA512) {
+    fn _add_left(&self, key: SHA512, value: Node<V>, left_of: SHA512) -> Result<()> {
         if !self.inner.contains_key(&key) {
             self.inner.insert(key, value);
+
+            if let Some(n) = self.inner.get(&left_of) {
+                let ns = n.as_str();
+                if ns == "Right" || ns == "LeftLeaf" || ns == "RightLeaf" {
+                    bail!("Left nodes must be left of Node::Root or Node::Left");
+                }
+            }
 
             self.inner.alter(&left_of, |_, node| match node {
                 Node::Root(v, n, p) => Node::Root(v, n, p.merge(NextHop::Hop(key))),
                 Node::Left(v, n, p) => Node::Left(v, n, p.merge(NextHop::Hop(key))),
-                Node::Right(_, _, _) | Node::RightLeaf(_, _) | Node::LeftLeaf(_, _) => {
-                    panic!("Left nodes must be left of Node::Root or Node::Left");
-                }
+                _ => unreachable!(),
             });
         }
+
+        Ok(())
     }
 
-    fn _add_right(&self, key: SHA512, value: Node<V>, right_of: SHA512) {
+    fn _add_right(&self, key: SHA512, value: Node<V>, right_of: SHA512) -> Result<()> {
         if !self.inner.contains_key(&key) {
             self.inner.insert(key, value);
+
+            if let Some(n) = self.inner.get(&right_of) {
+                let ns = n.as_str();
+                if ns == "Left" || ns == "LeftLeaf" || ns == "RightLeaf" {
+                    bail!("Right nodes must be right of Node::Root or Node::Right");
+                }
+            }
 
             self.inner.alter(&right_of, |_, node| match node {
                 Node::Root(v, n, p) => Node::Root(v, n.merge(NextHop::Hop(key)), p),
                 Node::Right(v, n, p) => Node::Right(v, n.merge(NextHop::Hop(key)), p),
-                Node::Left(_, _, _) | Node::LeftLeaf(_, _) | Node::RightLeaf(_, _) => {
-                    panic!("Right nodes must be right of Node::Root or Node::Right");
-                }
+                _ => unreachable!(),
             });
         }
+
+        Ok(())
     }
 }
 
@@ -294,13 +443,13 @@ mod tests {
     async fn test_fold_branches() {
         let p = DoubleEndedTree::new();
         let root = p.add_root("root", 2);
-        let left1 = p.add_left("left1", 1, root);
-        let left_leaf = p.add_left_leaf("left2", 0, left1);
-        p.add_left("unrelated_left", 5, root);
-        let right1 = p.add_right("right1", 3, root);
-        p.add_right_leaf("right2", 4, right1);
-        p.add_right_leaf("right3", 5, right1);
-        p.add_right_leaf("right4", 6, right1);
+        let left1 = p.add_left("left1", 1, root).unwrap();
+        let left_leaf = p.add_left_leaf("left2", 0, left1).unwrap();
+        p.add_left("unrelated_left", 5, root).unwrap();
+        let right1 = p.add_right("right1", 3, root).unwrap();
+        p.add_right_leaf("right2", 4, right1).unwrap();
+        p.add_right_leaf("right3", 5, right1).unwrap();
+        p.add_right_leaf("right4", 6, right1).unwrap();
 
         let x = p
             .fold_branches(0, left_leaf, |base, value| {
@@ -308,5 +457,78 @@ mod tests {
             })
             .await;
         assert_eq!(x, 21);
+    }
+
+    #[tokio::test]
+    async fn test_remove_left() {
+        let p = DoubleEndedTree::new();
+        let root = p.add_root("root", ());
+        let left1 = p.add_left("left1", (), root).unwrap();
+        let left_leaf = p.add_left_leaf("left2", (), left1).unwrap();
+
+        p.rm_left_leaf("left2").unwrap();
+
+        let result = p.get(left_leaf);
+        assert!(result.is_none());
+
+        let result = p.get(left1);
+        assert!(result.is_none());
+
+        let root_node = p.get(root).unwrap();
+        match root_node.value() {
+            Node::Root(_, _, p) => assert!(matches!(p, _)),
+            _ => {}
+        };
+    }
+
+    #[tokio::test]
+    async fn test_remove_left2() {
+        let p = DoubleEndedTree::new();
+        let root = p.add_root("root", ());
+
+        let left1 = p.add_left("left1", (), root).unwrap();
+        let left1_leaf = p.add_left_leaf("left1_leaf", (), left1).unwrap();
+
+        let left2_leaf = p.add_left_leaf("left2_leaf", (), left1).unwrap();
+
+        p.rm_left_leaf("left2_leaf").unwrap();
+
+        let result = p.get(left2_leaf);
+        assert!(result.is_none());
+
+        // The left1 branch should still exist
+        let result = p.get(left1);
+        assert!(result.is_some());
+        match result.unwrap().value() {
+            Node::Left(_, _, p) => {
+                assert!(matches!(p, NextHop::Hop(_)))
+            }
+            _ => assert!(false),
+        }
+
+        let result = p.get(left1_leaf);
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_remove_right() {
+        let p = DoubleEndedTree::new();
+        let root = p.add_root("root", ());
+        let right1 = p.add_right("right1", (), root).unwrap();
+        let right_leaf = p.add_right_leaf("right2", (), right1).unwrap();
+
+        p.rm_right_leaf("right2").unwrap();
+
+        let result = p.get(right_leaf);
+        assert!(result.is_none());
+
+        let result = p.get(right1);
+        assert!(result.is_none());
+
+        let root_node = p.get(root).unwrap();
+        match root_node.value() {
+            Node::Root(_, n, _) => assert!(matches!(n, NextHop::None)),
+            _ => assert!(false),
+        };
     }
 }
