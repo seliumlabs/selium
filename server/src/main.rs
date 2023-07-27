@@ -190,17 +190,20 @@ async fn handle_publisher(
         .or_insert(AtomicUsize::new(1));
 
     pipeline.add_publisher(stream_hash, header)?;
+    let pipe_cache = pipeline.clone();
 
     stream
         .try_for_each(move |frame| match frame {
             Frame::Message(bytes) => {
                 let seq = sequence.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(pipeline.traverse(stream_hash, bytes, seq));
+                tokio::spawn(pipe_cache.traverse(stream_hash, bytes, seq));
                 future::ok(())
             }
             _ => future::err(anyhow!("Non Message frame received out of context")),
         })
         .await?;
+
+    pipeline.rm_publisher(stream_hash)?;
     Ok(())
 }
 
@@ -217,6 +220,8 @@ async fn handle_subscriber(
         .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
         .forward(stream.ordered())
         .await?;
+
+    pipeline.rm_subscriber(stream_hash)?;
 
     Ok(())
 }
