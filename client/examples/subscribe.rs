@@ -1,9 +1,9 @@
-use std::time::Duration;
 use anyhow::Result;
 use futures::StreamExt;
 use selium::codecs::BincodeCodec;
 use selium::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StockEvent {

@@ -1,7 +1,7 @@
 use super::builder::{ClientBuilder, ClientCommon};
 use crate::crypto::cert::load_root_store;
 use crate::protocol::{Frame, SubscriberPayload};
-use crate::traits::{Client, ClientConfig, Connect, TryIntoU64, MessageDecoder};
+use crate::traits::{Client, ClientConfig, Connect, MessageDecoder, TryIntoU64};
 use crate::utils::client::establish_connection;
 use crate::BiStream;
 use anyhow::Result;
