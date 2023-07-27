@@ -407,9 +407,9 @@ mod tests {
     #[tokio::test]
     async fn test_remove_left() {
         let p = DoubleEndedTree::new();
-        let root = p.add_root("root", 2);
-        let left1 = p.add_left("left1", 1, root);
-        let left_leaf = p.add_left_leaf("left2", 0, left1);
+        let root = p.add_root("root", ());
+        let left1 = p.add_left("left1", (), root);
+        let left_leaf = p.add_left_leaf("left2", (), left1);
 
         p.rm_left_leaf("left2");
 
@@ -429,12 +429,12 @@ mod tests {
     #[tokio::test]
     async fn test_remove_left2() {
         let p = DoubleEndedTree::new();
-        let root = p.add_root("root", 5);
+        let root = p.add_root("root", ());
 
-        let left1 = p.add_left("left1", 4, root);
-        let left1_leaf = p.add_left_leaf("left1_leaf", 3, left1);
+        let left1 = p.add_left("left1", (), root);
+        let left1_leaf = p.add_left_leaf("left1_leaf", (), left1);
 
-        let left2_leaf = p.add_left_leaf("left2_leaf", 2, left1);
+        let left2_leaf = p.add_left_leaf("left2_leaf", (), left1);
 
         p.rm_left_leaf("left2_leaf");
 
@@ -458,9 +458,9 @@ mod tests {
     #[tokio::test]
     async fn test_remove_right() {
         let p = DoubleEndedTree::new();
-        let root = p.add_root("root", 2);
-        let right1 = p.add_right("right1", 1, root);
-        let right_leaf = p.add_right_leaf("right2", 0, right1);
+        let root = p.add_root("root", ());
+        let right1 = p.add_right("right1", (), root);
+        let right_leaf = p.add_right_leaf("right2", (), right1);
 
         p.rm_right_leaf("right2");
 
