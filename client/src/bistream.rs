@@ -1,7 +1,7 @@
 use crate::protocol::{Frame, MessageCodec};
 use anyhow::Result;
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use quinn::{Connection, RecvStream, SendStream};
+use quinn::{Connection, RecvStream, SendStream, StreamId};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -10,14 +10,18 @@ pub type ReadStream = FramedRead<RecvStream, MessageCodec>;
 pub type WriteStream = FramedWrite<SendStream, MessageCodec>;
 
 pub struct BiStream {
-    pub write: WriteStream,
-    pub read: ReadStream,
+    write: WriteStream,
+    read: ReadStream,
 }
 
 impl BiStream {
     pub async fn try_from_connection(connection: Connection) -> Result<Self> {
         let stream = connection.open_bi().await?;
         Ok(Self::from(stream))
+    }
+
+    pub fn get_recv_stream_id(&self) -> StreamId {
+        self.read.get_ref().id()
     }
 
     pub async fn finish(self) -> Result<()> {

@@ -141,7 +141,7 @@ async fn handle_connection(
         let pipe_clone = pipeline.clone();
         let topic_seq_clone = topic_seq.clone();
         let addr = connection.remote_address();
-        let stream_id = stream.read.get_ref().id();
+        let stream_id = stream.get_recv_stream_id();
         let stream_hash = format!("{addr}:{stream_id}");
 
         tokio::spawn(async move {
