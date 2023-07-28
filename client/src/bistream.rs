@@ -24,9 +24,8 @@ impl BiStream {
         self.read.get_ref().id()
     }
 
-    pub async fn finish(self) -> Result<()> {
-        let write_stream = self.write;
-        write_stream.into_inner().finish().await?;
+    pub async fn finish(&mut self) -> Result<()> {
+        self.write.get_mut().finish().await?;
         Ok(())
     }
 }

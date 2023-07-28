@@ -92,7 +92,9 @@ where
     ) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(connection).await?;
         let frame = Frame::RegisterSubscriber(headers);
+
         stream.send(frame).await?;
+        stream.finish().await?;
 
         Ok(Self {
             stream,
@@ -108,7 +110,7 @@ where
     D: MessageDecoder<Item> + Send,
     Item: Send,
 {
-    async fn finish(self) -> Result<()> {
+    async fn finish(&mut self) -> Result<()> {
         self.stream.finish().await
     }
 }

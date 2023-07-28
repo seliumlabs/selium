@@ -123,7 +123,7 @@ where
     E: MessageEncoder<Item> + Send,
     Item: Send,
 {
-    async fn finish(self) -> Result<()> {
+    async fn finish(&mut self) -> Result<()> {
         self.stream.finish().await
     }
 }
