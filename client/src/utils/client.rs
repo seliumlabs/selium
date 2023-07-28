@@ -17,7 +17,7 @@ pub(crate) fn configure_client(root_store: &RootCertStore, keep_alive: u64) -> R
 
     let mut config = ClientConfig::new(Arc::new(crypto));
     let mut transport_config = TransportConfig::default();
-    let keep_alive = Duration::from_millis(keep_alive / 1000);
+    let keep_alive = Duration::from_millis(keep_alive);
 
     transport_config.keep_alive_interval(Some(keep_alive));
     config.transport_config(Arc::new(transport_config));

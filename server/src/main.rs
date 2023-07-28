@@ -41,7 +41,7 @@ struct UserArgs {
     #[clap(long = "keylog")]
     keylog: bool,
     /// Maximum time a client can idle waiting for data - defaults to infinity
-    #[clap(long = "max-idle-timeout", default_value_t = 15, value_parser = clap::value_parser!(u32).range(5..30))]
+    #[clap(long = "max-idle-timeout", default_value_t = 15_000, value_parser = clap::value_parser!(u32).range(5_000..30_000))]
     max_idle_timeout: u32,
     /// Can be called multiple times to increase output
     #[clap(flatten)]
