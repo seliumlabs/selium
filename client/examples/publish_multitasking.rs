@@ -1,8 +1,8 @@
-use std::time::Duration;
 use anyhow::Result;
 use futures::SinkExt;
 use selium::codecs::StringCodec;
 use selium::prelude::*;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,10 +23,7 @@ async fn main() -> Result<()> {
     tokio::spawn({
         let mut publisher = publisher.clone().await.unwrap();
         async move {
-            publisher
-                .send("Hello from spawned task!")
-                .await
-                .unwrap();
+            publisher.send("Hello from spawned task!").await.unwrap();
 
             publisher.finish().await.unwrap();
         }

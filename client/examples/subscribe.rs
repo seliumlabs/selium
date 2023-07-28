@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::StreamExt;
-use selium::{prelude::*, codecs::StringCodec};
+use selium::{codecs::StringCodec, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
