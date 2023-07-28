@@ -20,7 +20,19 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    publisher.send("Hello, world!").await?;
+    tokio::spawn({
+        let mut publisher = publisher.clone().await.unwrap();
+        async move {
+            publisher
+                .send("Hello from spawned task!")
+                .await
+                .unwrap();
+
+            publisher.finish().await.unwrap();
+        }
+    });
+
+    publisher.send("Hello from main!").await?;
     publisher.finish().await?;
 
     Ok(())

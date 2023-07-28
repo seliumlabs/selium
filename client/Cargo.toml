@@ -24,10 +24,26 @@ bincode = []
 [[example]]
 name = "publish"
 path = "examples/publish.rs"
-required-features = ["bincode"]
 
 [[example]]
 name = "subscribe"
 path = "examples/subscribe.rs"
+
+[[example]]
+name = "publish_multitasking"
+path = "examples/publish_multitasking.rs"
+
+[[example]]
+name = "publish_bincode"
+path = "examples/publish_bincode.rs"
 required-features = ["bincode"]
 
+[[example]]
+name = "subscribe_bincode"
+path = "examples/subscribe_bincode.rs"
+required-features = ["bincode"]
+
+[[example]]
+name = "publish_chrono"
+path = "examples/publish_chrono.rs"
+required-features = ["chrono"]
