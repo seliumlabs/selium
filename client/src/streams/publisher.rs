@@ -1,6 +1,6 @@
 use super::builder::{StreamBuilder, StreamCommon};
 use crate::protocol::{Frame, PublisherPayload};
-use crate::traits::{Finish, MessageEncoder, Open, StreamConfig, TryIntoU64};
+use crate::traits::{MessageEncoder, Open, StreamConfig, TryIntoU64};
 use crate::BiStream;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -115,15 +115,8 @@ where
 
         Ok(publisher)
     }
-}
 
-#[async_trait]
-impl<E, Item> Finish for Publisher<E, Item>
-where
-    E: MessageEncoder<Item> + Send,
-    Item: Send,
-{
-    async fn finish(&mut self) -> Result<()> {
+    pub async fn finish(mut self) -> Result<()> {
         self.stream.finish().await
     }
 }

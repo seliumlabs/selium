@@ -1,5 +1,5 @@
 use crate::protocol::{Frame, SubscriberPayload};
-use crate::traits::{Finish, MessageDecoder, Open, StreamConfig, TryIntoU64};
+use crate::traits::{MessageDecoder, Open, StreamConfig, TryIntoU64};
 use crate::{BiStream, StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -101,17 +101,6 @@ where
             decoder,
             _marker: PhantomData,
         })
-    }
-}
-
-#[async_trait]
-impl<D, Item> Finish for Subscriber<D, Item>
-where
-    D: MessageDecoder<Item> + Send,
-    Item: Send,
-{
-    async fn finish(&mut self) -> Result<()> {
-        self.stream.finish().await
     }
 }
 

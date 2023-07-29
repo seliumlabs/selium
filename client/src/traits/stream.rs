@@ -3,11 +3,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 #[async_trait]
-pub trait Finish {
-    async fn finish(&mut self) -> Result<()>;
-}
-
-#[async_trait]
 pub trait Open {
     type Output;
 

@@ -1,1 +1,1 @@
-pub use crate::traits::{Finish, Open, StreamConfig};
+pub use crate::traits::{Open, StreamConfig};
