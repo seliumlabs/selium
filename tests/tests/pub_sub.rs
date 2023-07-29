@@ -92,9 +92,6 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
         .map(|_| String::new())
         .now_or_never();
 
-    subscriber1.finish().await?;
-    subscriber2.finish().await?;
-
     Ok([
         message1, message2, message3, message4, message5, message6, message7, message8, message9,
         message10, message11, message12, message13, message14, message15, message16,
