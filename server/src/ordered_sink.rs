@@ -5,6 +5,7 @@ use std::{
 };
 
 use futures::{ready, Sink, Stream};
+use log::{debug, trace};
 use pin_project_lite::pin_project;
 
 pin_project! {
@@ -15,7 +16,7 @@ pin_project! {
         #[pin]
         sink: Si,
         cache: HashMap<usize, Item>,
-        last_sent: usize,
+        last_sent: Option<usize>,
     }
 }
 
@@ -24,18 +25,20 @@ impl<Si: Sink<Item>, Item> Ordered<Si, Item> {
         Self {
             sink,
             cache: HashMap::new(),
-            last_sent: 0,
+            last_sent: None,
         }
     }
 
     fn try_send_cached(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Si::Error>> {
         let mut this = self.project();
         ready!(this.sink.as_mut().poll_ready(cx))?;
-        while let Some(item) = this.cache.remove(&(*this.last_sent + 1)) {
-            this.sink.as_mut().start_send(item)?;
-            *this.last_sent += 1;
-            if !this.cache.is_empty() {
-                ready!(this.sink.as_mut().poll_ready(cx))?;
+        if let Some(last_sent) = this.last_sent.as_mut() {
+            while let Some(item) = this.cache.remove(&(*last_sent + 1)) {
+                this.sink.as_mut().start_send(item)?;
+                *last_sent += 1;
+                if !this.cache.is_empty() {
+                    ready!(this.sink.as_mut().poll_ready(cx))?;
+                }
             }
         }
         Poll::Ready(Ok(()))
@@ -71,11 +74,22 @@ impl<Si: Sink<Item>, Item> Sink<(usize, Item)> for Ordered<Si, Item> {
             last_sent,
         } = self.project();
 
-        if seq == *last_sent + 1 {
-            *last_sent = seq;
+        if last_sent.is_none() {
+            debug!("Setting last sent to {}", seq - 1);
+        }
+
+        let last = last_sent.get_or_insert(seq - 1);
+
+        if seq == *last + 1 {
+            *last = seq;
+            trace!("Sending ordered message: {seq}");
+            sink.start_send(item)
+        } else if seq < *last {
+            debug!("Sending sequence {seq} out of order (last sent={last})");
+            trace!("Sending ordered message: {seq}");
             sink.start_send(item)
         } else {
-            debug_assert!(seq > *last_sent);
+            trace!("Caching ordered message: {seq} - waiting for {}", *last + 1);
             cache.insert(seq, item);
             Ok(())
         }

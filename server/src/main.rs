@@ -1,9 +1,9 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
 use dashmap::DashMap;
 use env_logger::Builder;
-use futures::{channel::mpsc, future, StreamExt, TryStreamExt};
+use futures::{channel::mpsc, future, FutureExt, StreamExt, TryStreamExt};
 use log::{error, info};
 use ordered_sink::OrderedExt;
 use pipeline::Pipeline;
@@ -20,6 +20,7 @@ use std::{
         Arc,
     },
 };
+use tokio::{select, sync::Notify};
 
 mod graph;
 mod ordered_sink;
@@ -40,8 +41,8 @@ struct UserArgs {
     /// File to log TLS keys to for debugging
     #[clap(long = "keylog")]
     keylog: bool,
-    /// Maximum time a client can idle waiting for data - defaults to infinity
-    #[clap(long = "max-idle-timeout", default_value_t = 15, value_parser = clap::value_parser!(u32).range(5..30))]
+    /// Maximum time in ms a client can idle waiting for data - default to 15 seconds
+    #[clap(long = "max-idle-timeout", default_value_t = 15000, value_parser = clap::value_parser!(u32))]
     max_idle_timeout: u32,
     /// Can be called multiple times to increase output
     #[clap(flatten)]
@@ -125,15 +126,21 @@ async fn handle_connection(
             )
     );
 
+    let notify = Arc::new(Notify::new());
+
     loop {
         let stream = connection.accept_bi().await;
         let stream = match stream {
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                info!("Connection closed");
+                info!("Connection closed ({})", connection.remote_address());
+                // Terminate any subscriber tasks
+                notify.notify_waiters();
                 return Ok(());
             }
             Err(e) => {
-                bail!(e);
+                // Terminate any subscriber tasks
+                notify.notify_waiters();
+                bail!(e)
             }
             Ok(stream) => BiStream::from(stream),
         };
@@ -143,11 +150,13 @@ async fn handle_connection(
         let addr = connection.remote_address();
         let stream_id = stream.read.get_ref().id();
         let stream_hash = format!("{addr}:{stream_id}");
+        let notify_c = notify.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_request(pipe_clone, topic_seq_clone, &stream_hash, stream).await
+            if let Err(e) =
+                handle_request(pipe_clone, topic_seq_clone, &stream_hash, stream, notify_c).await
             {
-                error!("Request failed: {reason}", reason = e.to_string());
+                error!("Request failed: {:?}", e);
             }
         });
     }
@@ -158,20 +167,31 @@ async fn handle_request(
     topic_seq: Arc<DashMap<String, AtomicUsize>>,
     stream_hash: &str,
     mut stream: BiStream,
+    close_notify: Arc<Notify>,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                handle_publisher(payload, pipeline, topic_seq, stream_hash, stream).await?
+                // Get current or create new sequence number for this topic
+                let sequence = topic_seq
+                    .entry(payload.topic.clone())
+                    .or_insert(AtomicUsize::new(1))
+                    .downgrade();
+
+                handle_publisher(payload, pipeline, &sequence, stream_hash, stream)
+                    .await
+                    .context("Publisher error")?
             }
             Frame::RegisterSubscriber(payload) => {
-                handle_subscriber(payload, pipeline, stream_hash, stream).await?
+                handle_subscriber(payload, pipeline, stream_hash, stream, close_notify)
+                    .await
+                    .context("Subscriber error")?;
             }
-            _ => return Err(anyhow!("Non header frame received out of context")),
+            _ => return Err(anyhow!("Expected Header frame")),
         }
     } else {
-        info!("Socket closed");
+        info!("Stream closed");
     }
 
     Ok(())
@@ -180,16 +200,11 @@ async fn handle_request(
 async fn handle_publisher(
     header: PublisherPayload,
     pipeline: Pipeline,
-    topic_seq: Arc<DashMap<String, AtomicUsize>>,
+    sequence: &AtomicUsize,
     stream_hash: &str,
     stream: BiStream,
 ) -> Result<()> {
-    // Get current or create new sequence number for this topic
-    let sequence = topic_seq
-        .entry(header.topic.clone())
-        .or_insert(AtomicUsize::new(1));
-
-    pipeline.add_publisher(stream_hash, header)?;
+    pipeline.add_publisher(stream_hash, header).await?;
     let pipe_cache = pipeline.clone();
 
     stream
@@ -199,11 +214,11 @@ async fn handle_publisher(
                 tokio::spawn(pipe_cache.traverse(stream_hash, bytes, seq));
                 future::ok(())
             }
-            _ => future::err(anyhow!("Non Message frame received out of context")),
+            _ => future::err(anyhow!("Expected Message frame")),
         })
+        .then(|_| pipeline.rm_publisher(stream_hash))
         .await?;
 
-    pipeline.rm_publisher(stream_hash)?;
     Ok(())
 }
 
@@ -211,17 +226,24 @@ async fn handle_subscriber(
     header: SubscriberPayload,
     pipeline: Pipeline,
     stream_hash: &str,
-    stream: BiStream,
+    sink: BiStream,
+    terminator: Arc<Notify>,
 ) -> Result<()> {
     let (tx_chan, rx_chan) = mpsc::unbounded();
-    pipeline.add_subscriber(stream_hash, header, tx_chan)?;
-
-    rx_chan
-        .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
-        .forward(stream.ordered())
+    pipeline
+        .add_subscriber(stream_hash, header, tx_chan)
         .await?;
 
-    pipeline.rm_subscriber(stream_hash)?;
+    // The `forward` task will keep executing indefinitely, so we use a `Notify` to
+    // terminate the task once the client has disconnected.
+    select!(
+        fut = rx_chan
+        .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
+        .forward(sink.ordered()) => fut?,
+        n = terminator.notified() => n,
+    );
+
+    pipeline.rm_subscriber(stream_hash).await?;
 
     Ok(())
 }
