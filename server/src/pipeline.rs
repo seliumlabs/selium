@@ -6,7 +6,11 @@ use selium::{
     protocol::{PublisherPayload, SubscriberPayload},
     Operation,
 };
-use std::{pin::Pin, sync::Arc};
+use std::{
+    fmt::{self, Display, Formatter},
+    pin::Pin,
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 
 use crate::graph::{hash_key, DoubleEndedTree};
@@ -25,14 +29,15 @@ pub struct Pipeline {
     write_lock: Arc<Mutex<()>>,
 }
 
-impl PipelineNode {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for PipelineNode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let s = match self {
             Self::Publisher(h) => format!("Publisher({h})"),
             Self::Subscriber(h, _) => format!("Subscriber({h})"),
             Self::Topic(t) => format!("Topic({t})"),
             Self::Wasm(s) => format!("WASM({s})"),
-        }
+        };
+        write!(f, "{}", s)
     }
 }
 
