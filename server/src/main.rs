@@ -3,29 +3,20 @@ use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
 use dashmap::DashMap;
 use env_logger::Builder;
-use futures::{channel::mpsc, future, FutureExt, StreamExt, TryStreamExt};
+use futures::StreamExt;
 use log::{error, info};
-use ordered_sink::OrderedExt;
 use pipeline::Pipeline;
 use quinn::{IdleTimeout, VarInt};
-use selium::{
-    protocol::{Frame, PublisherPayload, SubscriberPayload},
-    BiStream,
-};
-use std::{
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
-use tokio::{select, sync::Notify};
+use selium::{protocol::Frame, BiStream};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio::sync::Notify;
+use topic::Topic;
 
 mod graph;
 mod ordered_sink;
 mod pipeline;
 mod quic;
+mod topic;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -68,7 +59,12 @@ async fn main() -> Result<()> {
     let args = UserArgs::parse();
 
     let mut logger = Builder::new();
-    logger.filter_level(args.verbose.log_level_filter()).init();
+    logger
+        .filter_module(
+            &env!("CARGO_PKG_NAME").replace("-", "_"),
+            args.verbose.log_level_filter(),
+        )
+        .init();
 
     let pipeline = Pipeline::new();
 
@@ -89,15 +85,15 @@ async fn main() -> Result<()> {
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 
     // Create hash to store message ordering data
-    let topic_seq = Arc::new(DashMap::new());
+    let topics = Arc::new(DashMap::new());
 
     while let Some(conn) = endpoint.accept().await {
         info!("connection incoming");
         let pipe_clone = pipeline.clone();
-        let topic_seq_clone = topic_seq.clone();
+        let topics_clone = topics.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(pipe_clone.clone(), topic_seq_clone, conn).await {
-                error!("connection failed: {reason}", reason = e.to_string());
+            if let Err(e) = handle_connection(pipe_clone.clone(), topics_clone, conn).await {
+                error!("connection failed: {:?}", e);
             }
         });
     }
@@ -107,7 +103,7 @@ async fn main() -> Result<()> {
 
 async fn handle_connection(
     pipeline: Pipeline,
-    topic_seq: Arc<DashMap<String, AtomicUsize>>,
+    topics: Arc<DashMap<String, Topic>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -146,45 +142,49 @@ async fn handle_connection(
         };
 
         let pipe_clone = pipeline.clone();
-        let topic_seq_clone = topic_seq.clone();
+        let topics_clone = topics.clone();
         let addr = connection.remote_address();
-        let stream_id = stream.read.get_ref().id();
-        let stream_hash = format!("{addr}:{stream_id}");
         let notify_c = notify.clone();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                handle_request(pipe_clone, topic_seq_clone, &stream_hash, stream, notify_c).await
-            {
+            if let Err(e) = handle_stream(addr, pipe_clone, topics_clone, stream, notify_c).await {
                 error!("Request failed: {:?}", e);
             }
         });
     }
 }
 
-async fn handle_request(
+async fn handle_stream(
+    conn_addr: SocketAddr,
     pipeline: Pipeline,
-    topic_seq: Arc<DashMap<String, AtomicUsize>>,
-    stream_hash: &str,
+    topics: Arc<DashMap<String, Topic>>,
     mut stream: BiStream,
-    close_notify: Arc<Notify>,
+    conn_notify: Arc<Notify>,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                // Get current or create new sequence number for this topic
-                let sequence = topic_seq
-                    .entry(payload.topic.clone())
-                    .or_insert(AtomicUsize::new(1))
-                    .downgrade();
+                if !topics.contains_key(&payload.topic) {
+                    topics.insert(payload.topic.clone(), Topic::new(pipeline.clone()));
+                }
 
-                handle_publisher(payload, pipeline, &sequence, stream_hash, stream)
+                let topic = topics.get(&payload.topic).unwrap();
+
+                topic
+                    .add_publisher(payload, conn_addr, conn_notify, stream)
                     .await
-                    .context("Publisher error")?
+                    .context("Publisher error")?;
             }
             Frame::RegisterSubscriber(payload) => {
-                handle_subscriber(payload, pipeline, stream_hash, stream, close_notify)
+                if !topics.contains_key(&payload.topic) {
+                    topics.insert(payload.topic.clone(), Topic::new(pipeline.clone()));
+                }
+
+                let topic = topics.get(&payload.topic).unwrap();
+
+                topic
+                    .add_subscriber(payload, conn_addr, conn_notify, stream)
                     .await
                     .context("Subscriber error")?;
             }
@@ -193,57 +193,6 @@ async fn handle_request(
     } else {
         info!("Stream closed");
     }
-
-    Ok(())
-}
-
-async fn handle_publisher(
-    header: PublisherPayload,
-    pipeline: Pipeline,
-    sequence: &AtomicUsize,
-    stream_hash: &str,
-    stream: BiStream,
-) -> Result<()> {
-    pipeline.add_publisher(stream_hash, header).await?;
-    let pipe_cache = pipeline.clone();
-
-    stream
-        .try_for_each(move |frame| match frame {
-            Frame::Message(bytes) => {
-                let seq = sequence.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(pipe_cache.traverse(stream_hash, bytes, seq));
-                future::ok(())
-            }
-            _ => future::err(anyhow!("Expected Message frame")),
-        })
-        .then(|_| pipeline.rm_publisher(stream_hash))
-        .await?;
-
-    Ok(())
-}
-
-async fn handle_subscriber(
-    header: SubscriberPayload,
-    pipeline: Pipeline,
-    stream_hash: &str,
-    sink: BiStream,
-    terminator: Arc<Notify>,
-) -> Result<()> {
-    let (tx_chan, rx_chan) = mpsc::unbounded();
-    pipeline
-        .add_subscriber(stream_hash, header, tx_chan)
-        .await?;
-
-    // The `forward` task will keep executing indefinitely, so we use a `Notify` to
-    // terminate the task once the client has disconnected.
-    select!(
-        fut = rx_chan
-        .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
-        .forward(sink.ordered()) => fut?,
-        n = terminator.notified() => n,
-    );
-
-    pipeline.rm_subscriber(stream_hash).await?;
 
     Ok(())
 }

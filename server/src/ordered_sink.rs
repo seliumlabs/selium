@@ -16,29 +16,31 @@ pin_project! {
         #[pin]
         sink: Si,
         cache: HashMap<usize, Item>,
-        last_sent: Option<usize>,
+        last_sent: usize,
     }
 }
 
 impl<Si: Sink<Item>, Item> Ordered<Si, Item> {
-    pub(super) fn new(sink: Si) -> Self {
+    pub(super) fn new(sink: Si, last_sent: usize) -> Self {
         Self {
             sink,
             cache: HashMap::new(),
-            last_sent: None,
+            last_sent,
         }
     }
 
     fn try_send_cached(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Si::Error>> {
         let mut this = self.project();
         ready!(this.sink.as_mut().poll_ready(cx))?;
-        if let Some(last_sent) = this.last_sent.as_mut() {
-            while let Some(item) = this.cache.remove(&(*last_sent + 1)) {
-                this.sink.as_mut().start_send(item)?;
-                *last_sent += 1;
-                if !this.cache.is_empty() {
-                    ready!(this.sink.as_mut().poll_ready(cx))?;
-                }
+        while let Some(item) = this.cache.remove(&(*this.last_sent + 1)) {
+            trace!(
+                "Sending ordered message from cache: {}",
+                *this.last_sent + 1
+            );
+            this.sink.as_mut().start_send(item)?;
+            *this.last_sent += 1;
+            if !this.cache.is_empty() {
+                ready!(this.sink.as_mut().poll_ready(cx))?;
             }
         }
         Poll::Ready(Ok(()))
@@ -74,22 +76,19 @@ impl<Si: Sink<Item>, Item> Sink<(usize, Item)> for Ordered<Si, Item> {
             last_sent,
         } = self.project();
 
-        if last_sent.is_none() {
-            debug!("Setting last sent to {}", seq - 1);
-        }
-
-        let last = last_sent.get_or_insert(seq - 1);
-
-        if seq == *last + 1 {
-            *last = seq;
+        if seq == *last_sent + 1 {
+            *last_sent = seq;
             trace!("Sending ordered message: {seq}");
             sink.start_send(item)
-        } else if seq < *last {
-            debug!("Sending sequence {seq} out of order (last sent={last})");
+        } else if seq < *last_sent {
+            debug!("Sending sequence {seq} out of order (last sent={last_sent})");
             trace!("Sending ordered message: {seq}");
             sink.start_send(item)
         } else {
-            trace!("Caching ordered message: {seq} - waiting for {}", *last + 1);
+            trace!(
+                "Caching ordered message: {seq} - waiting for {}",
+                *last_sent + 1
+            );
             cache.insert(seq, item);
             Ok(())
         }
@@ -109,10 +108,11 @@ impl<Si: Sink<Item>, Item> Sink<(usize, Item)> for Ordered<Si, Item> {
 impl<T: ?Sized, Item> OrderedExt<Item> for T where T: Sink<Item> {}
 
 pub trait OrderedExt<Item>: Sink<Item> {
-    fn ordered(self) -> Ordered<Self, Item>
+    fn ordered(self, last_sent: usize) -> Ordered<Self, Item>
     where
         Self: Sized,
     {
-        Ordered::new(self)
+        debug!("Ordering messages starting from {last_sent}");
+        Ordered::new(self, last_sent)
     }
 }
