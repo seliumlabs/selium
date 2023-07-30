@@ -6,11 +6,7 @@ use selium::{
     protocol::{PublisherPayload, SubscriberPayload},
     Operation,
 };
-use std::{
-    fmt::{self, Display, Formatter},
-    pin::Pin,
-    sync::Arc,
-};
+use std::{pin::Pin, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::graph::{hash_key, DoubleEndedTree};
@@ -37,12 +33,6 @@ impl PipelineNode {
             Self::Topic(t) => format!("Topic({t})"),
             Self::Wasm(s) => format!("WASM({s})"),
         }
-    }
-}
-
-impl Display for PipelineNode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
     }
 }
 
