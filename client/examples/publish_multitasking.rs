@@ -21,10 +21,9 @@ async fn main() -> Result<()> {
         .await?;
 
     tokio::spawn({
-        let mut publisher = publisher.clone().await.unwrap();
+        let mut publisher = publisher.duplicate().await.unwrap();
         async move {
             publisher.send("Hello from spawned task!").await.unwrap();
-
             publisher.finish().await.unwrap();
         }
     });

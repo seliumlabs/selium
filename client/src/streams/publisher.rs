@@ -105,7 +105,7 @@ where
         })
     }
 
-    pub async fn clone(&self) -> Result<Self> {
+    pub async fn duplicate(&self) -> Result<Self> {
         let publisher = Publisher::spawn(
             self.connection.clone(),
             self.headers.clone(),

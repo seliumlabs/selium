@@ -7,7 +7,7 @@ use quinn::Connection;
 use rustls::RootCertStore;
 use std::path::PathBuf;
 
-pub const KEEP_ALIVE_DEFAULT: u64 = 5;
+pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
 
 #[derive(Debug)]
 pub struct ClientWantsCert {
