@@ -1,5 +1,11 @@
-use std::collections::HashMap;
-use std::{pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::{self, Debug, Display, Formatter},
+    ops::Deref,
+    pin::Pin,
+    str,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, bail, Result};
 use dashmap::DashMap;
@@ -7,12 +13,13 @@ use futures::{future, Future, FutureExt};
 use hmac_sha512::Hash;
 use log::error;
 
-type SHA512 = [u8; 64];
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Sha512([u8; 64]);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NextHop {
-    Hop(SHA512),
-    MultiHop(Vec<SHA512>),
+    Hop(Sha512),
+    MultiHop(Vec<Sha512>),
     None,
 }
 
@@ -20,17 +27,38 @@ pub enum NextHop {
 pub enum Node<V> {
     // Value, Next Node, Previous Node
     Root(Arc<V>, NextHop, NextHop),
-    Left(Arc<V>, SHA512, NextHop),
-    Right(Arc<V>, NextHop, SHA512),
+    Left(Arc<V>, Sha512, NextHop),
+    Right(Arc<V>, NextHop, Sha512),
     // Value, Next Node
-    LeftLeaf(Arc<V>, SHA512),
+    LeftLeaf(Arc<V>, Sha512),
     // Value, Previous Node
-    RightLeaf(Arc<V>, SHA512),
+    RightLeaf(Arc<V>, Sha512),
 }
 
 #[derive(Debug)]
 pub struct DoubleEndedTree<V> {
-    inner: Arc<DashMap<SHA512, Node<V>>>,
+    inner: Arc<DashMap<Sha512, Node<V>>>,
+}
+
+impl Deref for Sha512 {
+    type Target = [u8; 64];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Display for Sha512 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let (prefix, _) = self.0.split_at(5);
+        write!(f, "{}", hex::encode(prefix))
+    }
+}
+
+impl From<[u8; 64]> for Sha512 {
+    fn from(value: [u8; 64]) -> Self {
+        Sha512(value)
+    }
 }
 
 impl NextHop {
@@ -59,7 +87,7 @@ impl NextHop {
         }
     }
 
-    pub fn remove(self, key: SHA512) -> Self {
+    pub fn remove(self, key: Sha512) -> Self {
         match self {
             NextHop::Hop(_) => NextHop::None,
             NextHop::MultiHop(mut hops) => {
@@ -75,28 +103,42 @@ impl NextHop {
     }
 }
 
+impl Display for NextHop {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            NextHop::Hop(key) => write!(f, "Hop({key})"),
+            NextHop::MultiHop(list) => {
+                write!(f, "Multi(")?;
+                list.iter().try_for_each(|k| write!(f, "{k}"))?;
+                write!(f, ")")
+            }
+            NextHop::None => write!(f, "None"),
+        }
+    }
+}
+
 impl<V> Node<V> {
     pub fn root(value: V, next_hop: NextHop, prev_hop: NextHop) -> Self {
         Self::Root(Arc::new(value), next_hop, prev_hop)
     }
 
-    pub fn left(value: V, next_hop: SHA512, prev_hop: NextHop) -> Self {
+    pub fn left(value: V, next_hop: Sha512, prev_hop: NextHop) -> Self {
         Self::Left(Arc::new(value), next_hop, prev_hop)
     }
 
-    pub fn left_leaf(value: V, next_hop: SHA512) -> Self {
+    pub fn left_leaf(value: V, next_hop: Sha512) -> Self {
         Self::LeftLeaf(Arc::new(value), next_hop)
     }
 
-    pub fn right(value: V, next_hop: NextHop, prev_hop: SHA512) -> Self {
+    pub fn right(value: V, next_hop: NextHop, prev_hop: Sha512) -> Self {
         Self::Right(Arc::new(value), next_hop, prev_hop)
     }
 
-    pub fn right_leaf(value: V, prev_hop: SHA512) -> Self {
+    pub fn right_leaf(value: V, prev_hop: Sha512) -> Self {
         Self::RightLeaf(Arc::new(value), prev_hop)
     }
 
-    fn as_str<'a>(&'a self) -> &'a str {
+    fn as_str(&self) -> &str {
         match self {
             Self::Root(_, _, _) => "Root",
             Self::Left(_, _, _) => "Left",
@@ -126,14 +168,37 @@ impl<V> Node<V> {
         }
     }
 
+    pub fn get_prev_hop(&self) -> NextHop {
+        match self {
+            Self::Root(_, _, p) => p.clone(),
+            Self::Left(_, _, p) => p.clone(),
+            Self::Right(_, _, p) => NextHop::Hop(*p),
+            Self::LeftLeaf(_, _) => NextHop::None,
+            Self::RightLeaf(_, p) => NextHop::Hop(*p),
+        }
+    }
+
     pub fn unpack(&self) -> (Arc<V>, NextHop) {
         (self.get_value(), self.get_next_hop())
     }
 }
 
+impl<V: Display> Display for Node<V> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}({}, Next: {}, Prev: {})",
+            self.as_str(),
+            self.get_value(),
+            self.get_next_hop(),
+            self.get_prev_hop()
+        )
+    }
+}
+
 impl<V> DoubleEndedTree<V>
 where
-    V: Send + Sync + 'static,
+    V: Debug + Send + Sync + 'static,
 {
     pub fn new() -> Self {
         DoubleEndedTree {
@@ -144,13 +209,13 @@ where
     #[cfg(test)]
     pub fn get<'a>(
         &'a self,
-        key: SHA512,
-    ) -> Option<dashmap::mapref::one::Ref<'a, SHA512, Node<V>>> {
+        key: Sha512,
+    ) -> Option<dashmap::mapref::one::Ref<'a, Sha512, Node<V>>> {
         self.inner.get(&key)
     }
 
-    pub fn add_root<K: AsRef<[u8]>>(&self, key: K, value: V) -> SHA512 {
-        let hkey = Hash::hash(key);
+    pub fn add_root<K: AsRef<[u8]>>(&self, key: K, value: V) -> Sha512 {
+        let hkey = Hash::hash(key).into();
 
         if !self.inner.contains_key(&hkey) {
             self.inner
@@ -160,7 +225,7 @@ where
         hkey
     }
 
-    pub fn add_left<K: AsRef<[u8]>>(&self, key: K, value: V, left_of: SHA512) -> Result<SHA512> {
+    pub fn add_left<K: AsRef<[u8]>>(&self, key: K, value: V, left_of: Sha512) -> Result<Sha512> {
         let hkey = hash_key(key, "left", Some(left_of));
         self._add_left(hkey, Node::left(value, left_of, NextHop::None), left_of)?;
 
@@ -171,15 +236,15 @@ where
         &self,
         key: K,
         value: V,
-        left_of: SHA512,
-    ) -> Result<SHA512> {
+        left_of: Sha512,
+    ) -> Result<Sha512> {
         let hkey = hash_key(key, "left", None);
         self._add_left(hkey, Node::left_leaf(value, left_of), left_of)?;
 
         Ok(hkey)
     }
 
-    pub fn add_right<K: AsRef<[u8]>>(&self, key: K, value: V, right_of: SHA512) -> Result<SHA512> {
+    pub fn add_right<K: AsRef<[u8]>>(&self, key: K, value: V, right_of: Sha512) -> Result<Sha512> {
         let hkey = hash_key(key, "right", Some(right_of));
         self._add_right(hkey, Node::right(value, NextHop::None, right_of), right_of)?;
 
@@ -190,15 +255,15 @@ where
         &self,
         key: K,
         value: V,
-        right_of: SHA512,
-    ) -> Result<SHA512> {
+        right_of: Sha512,
+    ) -> Result<Sha512> {
         let hkey = hash_key(key, "right", None);
         self._add_right(hkey, Node::right_leaf(value, right_of), right_of)?;
 
         Ok(hkey)
     }
 
-    fn _rm_left_branch(&self, hashes_to_remove: HashMap<SHA512, SHA512>) -> Result<()> {
+    fn _rm_left_branch(&self, hashes_to_remove: HashMap<Sha512, Sha512>) -> Result<()> {
         for (prev_hash, node_hash) in &hashes_to_remove {
             if let Some(n) = self.inner.get(prev_hash) {
                 let ns = n.as_str();
@@ -218,13 +283,13 @@ where
         Ok(())
     }
 
-    fn _rm_left_leaf(&self, mut current_hash: SHA512) -> Result<()> {
+    fn _rm_left_leaf(&self, mut current_hash: Sha512) -> Result<()> {
         let mut hashes_to_remove = HashMap::new();
         loop {
             let node = self
                 .inner
                 .get(&current_hash)
-                .ok_or(anyhow!("Hash is not in the graph"))?;
+                .ok_or(anyhow!("Left leaf hash not found in the graph"))?;
             match *node {
                 Node::Root(_, _, _) => break,
                 Node::LeftLeaf(_, ref n) => {
@@ -251,7 +316,7 @@ where
         self._rm_left_leaf(hash)
     }
 
-    fn _rm_right_branch(&self, hashes_to_remove: HashMap<SHA512, SHA512>) -> Result<()> {
+    fn _rm_right_branch(&self, hashes_to_remove: HashMap<Sha512, Sha512>) -> Result<()> {
         for (prev_hash, node_hash) in &hashes_to_remove {
             if let Some(n) = self.inner.get(prev_hash) {
                 let ns = n.as_str();
@@ -271,13 +336,13 @@ where
         Ok(())
     }
 
-    pub fn _rm_right_leaf(&self, mut current_hash: SHA512) -> Result<()> {
+    fn _rm_right_leaf(&self, mut current_hash: Sha512) -> Result<()> {
         let mut hashes_to_remove = HashMap::new();
         loop {
             let node = self
                 .inner
                 .get(&current_hash)
-                .ok_or(anyhow!("Hash is not in the graph"))?;
+                .ok_or(anyhow!("Right leaf hash not found in the graph"))?;
             match *node {
                 Node::Root(_, _, _) => break,
                 Node::RightLeaf(_, ref p) => {
@@ -307,7 +372,7 @@ where
     pub fn fold_branches<T, F, Fut>(
         &self,
         init: T,
-        start: SHA512,
+        start: Sha512,
         handler: F,
     ) -> Pin<Box<dyn Future<Output = T> + Send>>
     where
@@ -319,7 +384,7 @@ where
         _fold(inner, init, start, handler)
     }
 
-    fn _add_left(&self, key: SHA512, value: Node<V>, left_of: SHA512) -> Result<()> {
+    fn _add_left(&self, key: Sha512, value: Node<V>, left_of: Sha512) -> Result<()> {
         if !self.inner.contains_key(&key) {
             self.inner.insert(key, value);
 
@@ -340,7 +405,7 @@ where
         Ok(())
     }
 
-    fn _add_right(&self, key: SHA512, value: Node<V>, right_of: SHA512) -> Result<()> {
+    fn _add_right(&self, key: Sha512, value: Node<V>, right_of: Sha512) -> Result<()> {
         if !self.inner.contains_key(&key) {
             self.inner.insert(key, value);
 
@@ -370,24 +435,36 @@ impl<V> Clone for DoubleEndedTree<V> {
     }
 }
 
+impl<V: Display> Display for DoubleEndedTree<V> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{{")?;
+        for r in self.inner.iter() {
+            writeln!(f, "    {}: {}", r.key(), r.value())?;
+        }
+        writeln!(f, "}}")?;
+        Ok(())
+    }
+}
+
 fn _fold<V, T, F, Fut>(
-    inner: Arc<DashMap<SHA512, Node<V>>>,
+    inner: Arc<DashMap<Sha512, Node<V>>>,
     init: T,
-    mut start: SHA512,
+    mut start: Sha512,
     handler: F,
 ) -> Pin<Box<dyn Future<Output = T> + Send>>
 where
     F: Fn(T, Arc<V>) -> Fut + Copy + Send + Sync + 'static,
     Fut: Future<Output = T> + Send + 'static,
     T: Clone + Send + Sync + 'static,
-    V: Send + Sync + 'static,
+    V: Debug + Send + Sync + 'static,
 {
     let mut fut = future::ready(init).boxed();
     loop {
         let node = match inner.get(&start) {
             Some(n) => n,
             None => {
-                error!("Invalid next hop: {:?}", start);
+                error!("Invalid next hop: {}", start);
+                error!("{:?}", inner);
                 return fut;
             }
         };
@@ -411,7 +488,7 @@ where
     }
 }
 
-pub fn hash_key<K: AsRef<[u8]>>(key: K, suffix: &str, concat: Option<SHA512>) -> SHA512 {
+pub fn hash_key<K: AsRef<[u8]>>(key: K, suffix: &str, concat: Option<Sha512>) -> Sha512 {
     let mut k = match concat {
         Some(c) => {
             let mut v = c.to_vec();
@@ -421,7 +498,7 @@ pub fn hash_key<K: AsRef<[u8]>>(key: K, suffix: &str, concat: Option<SHA512>) ->
         None => key.as_ref().to_vec(),
     };
     k.extend_from_slice(suffix.as_bytes());
-    Hash::hash(k)
+    Hash::hash(k).into()
 }
 
 #[cfg(test)]

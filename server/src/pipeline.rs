@@ -1,18 +1,23 @@
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
-use log::error;
+use log::{error, info};
 use selium::{
     protocol::{PublisherPayload, SubscriberPayload},
     Operation,
 };
-use std::pin::Pin;
+use std::{
+    fmt::{self, Display, Formatter},
+    pin::Pin,
+    sync::Arc,
+};
+use tokio::sync::Mutex;
 
 use crate::graph::{hash_key, DoubleEndedTree};
 
 #[derive(Debug)]
 enum PipelineNode {
-    Publisher,
+    Publisher(String),
     Subscriber(String, UnboundedSender<(usize, Bytes)>),
     Topic(String),
     Wasm(String),
@@ -21,16 +26,18 @@ enum PipelineNode {
 #[derive(Clone, Debug)]
 pub struct Pipeline {
     graph: DoubleEndedTree<PipelineNode>,
+    write_lock: Arc<Mutex<()>>,
 }
 
-impl ToString for PipelineNode {
-    fn to_string(&self) -> String {
-        match self {
-            Self::Publisher => "Publisher".into(),
-            Self::Subscriber(_, _) => "Subscriber".into(),
-            Self::Topic(_) => "Topic".into(),
-            Self::Wasm(s) => format!("WASM ({s})"),
-        }
+impl Display for PipelineNode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Publisher(h) => format!("Publisher({h})"),
+            Self::Subscriber(h, _) => format!("Subscriber({h})"),
+            Self::Topic(t) => format!("Topic({t})"),
+            Self::Wasm(s) => format!("WASM({s})"),
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -44,10 +51,15 @@ impl Pipeline {
     pub fn new() -> Self {
         Pipeline {
             graph: DoubleEndedTree::new(),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
-    pub fn add_publisher(&self, hash: &str, payload: PublisherPayload) -> Result<()> {
+    pub async fn add_publisher(&self, hash: &str, payload: PublisherPayload) -> Result<()> {
+        info!("Adding publisher {hash} to pipeline");
+
+        let _handle = self.write_lock.lock().await;
+
         // First add the topic
         let mut left_of = self.graph.add_root(
             payload.topic.clone(),
@@ -69,17 +81,21 @@ impl Pipeline {
 
         // Finally, add the publisher
         self.graph
-            .add_left_leaf(hash, PipelineNode::Publisher, left_of)?;
+            .add_left_leaf(hash, PipelineNode::Publisher(hash.to_owned()), left_of)?;
 
         Ok(())
     }
 
-    pub fn add_subscriber(
+    pub async fn add_subscriber(
         &self,
         hash: &str,
         payload: SubscriberPayload,
         sock: UnboundedSender<(usize, Bytes)>,
     ) -> Result<()> {
+        info!("Adding subscriber {hash} to pipeline");
+
+        let _handle = self.write_lock.lock().await;
+
         // First add the topic
         let mut right_of = self.graph.add_root(
             payload.topic.clone(),
@@ -108,11 +124,17 @@ impl Pipeline {
         Ok(())
     }
 
-    pub fn rm_publisher(&self, key: &str) -> Result<()> {
+    pub async fn rm_publisher(&self, key: &str) -> Result<()> {
+        info!("Removing publisher {key} from pipeline");
+
+        let _handle = self.write_lock.lock().await;
         self.graph.rm_left_leaf(key)
     }
 
-    pub fn rm_subscriber(&self, key: &str) -> Result<()> {
+    pub async fn rm_subscriber(&self, key: &str) -> Result<()> {
+        info!("Removing subscriber {key} from pipeline");
+
+        let _handle = self.write_lock.lock().await;
         self.graph.rm_right_leaf(key)
     }
 
@@ -126,7 +148,7 @@ impl Pipeline {
         self.graph
             .fold_branches((sequence, message), key, |(seq, bytes), node| {
                 match node.as_ref() {
-                    PipelineNode::Topic(_) | PipelineNode::Publisher => (),
+                    PipelineNode::Topic(_) | PipelineNode::Publisher(_) => (),
                     PipelineNode::Subscriber(_, sock) => {
                         if let Err(e) = sock.unbounded_send((seq, bytes.clone())) {
                             error!("Failed to send message to subscriber channel: {e}");
@@ -149,8 +171,8 @@ mod tests {
     use crate::graph::{hash_key, NextHop, Node};
     use std::sync::Arc;
 
-    #[test]
-    fn test_add_publisher() {
+    #[tokio::test]
+    async fn test_add_publisher() {
         let pipe: Pipeline = Pipeline::new();
 
         let hash1 = "127.0.0.1:40009:1";
@@ -164,7 +186,7 @@ mod tests {
             ],
         };
 
-        pipe.add_publisher(hash1, payload1).unwrap();
+        pipe.add_publisher(hash1, payload1).await.unwrap();
 
         let hash2 = "127.0.0.1:40010:1";
         let payload2 = PublisherPayload {
@@ -176,7 +198,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(hash2, payload2).unwrap();
+        pipe.add_publisher(hash2, payload2).await.unwrap();
 
         let hash3 = "127.0.0.1:40011:1";
         let payload3 = PublisherPayload {
@@ -188,7 +210,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(hash3, payload3).unwrap();
+        pipe.add_publisher(hash3, payload3).await.unwrap();
 
         let topic_key = hash_key("/namespace/topic", "", None);
         let pub1_key = hash_key("127.0.0.1:40009:1", "left", None);
@@ -202,17 +224,26 @@ mod tests {
 
         assert_eq!(
             *pipe.graph.get(pub1_key).unwrap(),
-            Node::LeftLeaf(Arc::new(PipelineNode::Publisher), map11_key)
+            Node::LeftLeaf(
+                Arc::new(PipelineNode::Publisher("127.0.0.1:40009:1".to_owned())),
+                map11_key
+            )
         );
 
         assert_eq!(
             *pipe.graph.get(pub2_key).unwrap(),
-            Node::LeftLeaf(Arc::new(PipelineNode::Publisher), map12_key)
+            Node::LeftLeaf(
+                Arc::new(PipelineNode::Publisher("127.0.0.1:40010:1".to_owned())),
+                map12_key
+            )
         );
 
         assert_eq!(
             *pipe.graph.get(pub3_key).unwrap(),
-            Node::LeftLeaf(Arc::new(PipelineNode::Publisher), map12_key)
+            Node::LeftLeaf(
+                Arc::new(PipelineNode::Publisher("127.0.0.1:40011:1".to_owned())),
+                map12_key
+            )
         );
 
         assert_eq!(
@@ -270,8 +301,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_add_subscriber() {
+    #[tokio::test]
+    async fn test_add_subscriber() {
         let pipe: Pipeline = Pipeline::new();
 
         let hash1 = "127.0.0.1:40009:1";
@@ -285,7 +316,9 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(hash1, payload1, tx1.clone()).unwrap();
+        pipe.add_subscriber(hash1, payload1, tx1.clone())
+            .await
+            .unwrap();
 
         let hash2 = "127.0.0.1:40010:1";
         let (tx2, _) = mpsc::unbounded();
@@ -298,7 +331,9 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(hash2, payload2, tx2.clone()).unwrap();
+        pipe.add_subscriber(hash2, payload2, tx2.clone())
+            .await
+            .unwrap();
 
         let hash3 = "127.0.0.1:40011:1";
         let (tx3, _) = mpsc::unbounded();
@@ -311,7 +346,9 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(hash3, payload3, tx3.clone()).unwrap();
+        pipe.add_subscriber(hash3, payload3, tx3.clone())
+            .await
+            .unwrap();
 
         let topic_key = hash_key("/namespace/topic", "", None);
         let sub1_key = hash_key("127.0.0.1:40009:1", "right", None);
@@ -411,8 +448,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_remove_subscriber() {
+    #[tokio::test]
+    async fn test_remove_subscriber() {
         let pipe: Pipeline = Pipeline::new();
 
         let (tx1, _) = mpsc::unbounded();
@@ -426,7 +463,9 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_subscriber(addr1, payload1, tx1.clone()).unwrap();
+        pipe.add_subscriber(addr1, payload1, tx1.clone())
+            .await
+            .unwrap();
 
         let topic_key = hash_key("/namespace/topic", "", None);
         let sub1_key = hash_key(addr1, "right", None);
@@ -472,7 +511,7 @@ mod tests {
             ),
         );
 
-        pipe.rm_subscriber(addr1).unwrap();
+        pipe.rm_subscriber(addr1).await.unwrap();
 
         assert_eq!(
             *pipe.graph.get(topic_key).unwrap(),
@@ -488,8 +527,8 @@ mod tests {
         assert!(pipe.graph.get(sub1_key).is_none());
     }
 
-    #[test]
-    fn test_remove_publisher() {
+    #[tokio::test]
+    async fn test_remove_publisher() {
         let pipe: Pipeline = Pipeline::new();
 
         let addr1 = "127.0.0.1:40009:1";
@@ -502,7 +541,7 @@ mod tests {
                 Operation::Map("/namespace/map2".into()),
             ],
         };
-        pipe.add_publisher(addr1, payload1).unwrap();
+        pipe.add_publisher(addr1, payload1).await.unwrap();
 
         let topic_key = hash_key("/namespace/topic", "", None);
         let pub1_key = hash_key(addr1, "left", None);
@@ -512,7 +551,10 @@ mod tests {
 
         assert_eq!(
             *pipe.graph.get(pub1_key).unwrap(),
-            Node::LeftLeaf(Arc::new(PipelineNode::Publisher), map1_key)
+            Node::LeftLeaf(
+                Arc::new(PipelineNode::Publisher(addr1.to_owned())),
+                map1_key
+            )
         );
 
         assert_eq!(
@@ -542,7 +584,7 @@ mod tests {
             )
         );
 
-        pipe.rm_publisher(addr1).unwrap();
+        pipe.rm_publisher(addr1).await.unwrap();
 
         assert!(pipe.graph.get(pub1_key).is_none());
         assert!(pipe.graph.get(map1_key).is_none());

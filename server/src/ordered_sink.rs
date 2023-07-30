@@ -5,6 +5,7 @@ use std::{
 };
 
 use futures::{ready, Sink, Stream};
+use log::{debug, trace};
 use pin_project_lite::pin_project;
 
 pin_project! {
@@ -20,11 +21,11 @@ pin_project! {
 }
 
 impl<Si: Sink<Item>, Item> Ordered<Si, Item> {
-    pub(super) fn new(sink: Si) -> Self {
+    pub(super) fn new(sink: Si, last_sent: usize) -> Self {
         Self {
             sink,
             cache: HashMap::new(),
-            last_sent: 0,
+            last_sent,
         }
     }
 
@@ -32,6 +33,10 @@ impl<Si: Sink<Item>, Item> Ordered<Si, Item> {
         let mut this = self.project();
         ready!(this.sink.as_mut().poll_ready(cx))?;
         while let Some(item) = this.cache.remove(&(*this.last_sent + 1)) {
+            trace!(
+                "Sending ordered message from cache: {}",
+                *this.last_sent + 1
+            );
             this.sink.as_mut().start_send(item)?;
             *this.last_sent += 1;
             if !this.cache.is_empty() {
@@ -73,9 +78,17 @@ impl<Si: Sink<Item>, Item> Sink<(usize, Item)> for Ordered<Si, Item> {
 
         if seq == *last_sent + 1 {
             *last_sent = seq;
+            trace!("Sending ordered message: {seq}");
+            sink.start_send(item)
+        } else if seq < *last_sent {
+            debug!("Sending sequence {seq} out of order (last sent={last_sent})");
+            trace!("Sending ordered message: {seq}");
             sink.start_send(item)
         } else {
-            debug_assert!(seq > *last_sent);
+            trace!(
+                "Caching ordered message: {seq} - waiting for {}",
+                *last_sent + 1
+            );
             cache.insert(seq, item);
             Ok(())
         }
@@ -95,10 +108,11 @@ impl<Si: Sink<Item>, Item> Sink<(usize, Item)> for Ordered<Si, Item> {
 impl<T: ?Sized, Item> OrderedExt<Item> for T where T: Sink<Item> {}
 
 pub trait OrderedExt<Item>: Sink<Item> {
-    fn ordered(self) -> Ordered<Self, Item>
+    fn ordered(self, last_sent: usize) -> Ordered<Self, Item>
     where
         Self: Sized,
     {
-        Ordered::new(self)
+        debug!("Ordering messages starting from {last_sent}");
+        Ordered::new(self, last_sent)
     }
 }
