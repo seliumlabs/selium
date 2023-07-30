@@ -1,30 +1,22 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
 use dashmap::DashMap;
 use env_logger::Builder;
-use futures::{channel::mpsc, future, StreamExt, TryStreamExt};
+use futures::StreamExt;
 use log::{error, info};
-use ordered_sink::OrderedExt;
 use pipeline::Pipeline;
 use quinn::{IdleTimeout, VarInt};
-use selium::{
-    protocol::{Frame, PublisherPayload, SubscriberPayload},
-    BiStream,
-};
-use std::{
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+use selium::{protocol::Frame, BiStream};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio::sync::Notify;
+use topic::Topic;
 
 mod graph;
 mod ordered_sink;
 mod pipeline;
 mod quic;
+mod topic;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -40,8 +32,8 @@ struct UserArgs {
     /// File to log TLS keys to for debugging
     #[clap(long = "keylog")]
     keylog: bool,
-    /// Maximum time a client can idle waiting for data - defaults to infinity
-    #[clap(long = "max-idle-timeout", default_value_t = 15_000, value_parser = clap::value_parser!(u32).range(5_000..30_000))]
+    /// Maximum time in ms a client can idle waiting for data - default to 15 seconds
+    #[clap(long = "max-idle-timeout", default_value_t = 15000, value_parser = clap::value_parser!(u32))]
     max_idle_timeout: u32,
     /// Can be called multiple times to increase output
     #[clap(flatten)]
@@ -67,7 +59,12 @@ async fn main() -> Result<()> {
     let args = UserArgs::parse();
 
     let mut logger = Builder::new();
-    logger.filter_level(args.verbose.log_level_filter()).init();
+    logger
+        .filter_module(
+            &env!("CARGO_PKG_NAME").replace('-', "_"),
+            args.verbose.log_level_filter(),
+        )
+        .init();
 
     let pipeline = Pipeline::new();
 
@@ -88,15 +85,15 @@ async fn main() -> Result<()> {
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 
     // Create hash to store message ordering data
-    let topic_seq = Arc::new(DashMap::new());
+    let topics = Arc::new(DashMap::new());
 
     while let Some(conn) = endpoint.accept().await {
         info!("connection incoming");
         let pipe_clone = pipeline.clone();
-        let topic_seq_clone = topic_seq.clone();
+        let topics_clone = topics.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(pipe_clone.clone(), topic_seq_clone, conn).await {
-                error!("connection failed: {reason}", reason = e.to_string());
+            if let Err(e) = handle_connection(pipe_clone.clone(), topics_clone, conn).await {
+                error!("connection failed: {:?}", e);
             }
         });
     }
@@ -106,7 +103,7 @@ async fn main() -> Result<()> {
 
 async fn handle_connection(
     pipeline: Pipeline,
-    topic_seq: Arc<DashMap<String, AtomicUsize>>,
+    topics: Arc<DashMap<String, Topic>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -125,98 +122,77 @@ async fn handle_connection(
             )
     );
 
+    let notify = Arc::new(Notify::new());
+
     loop {
         let stream = connection.accept_bi().await;
         let stream = match stream {
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                info!("Connection closed");
+                info!("Connection closed ({})", connection.remote_address());
+                // Terminate any subscriber tasks
+                notify.notify_waiters();
                 return Ok(());
             }
             Err(e) => {
-                bail!(e);
+                // Terminate any subscriber tasks
+                notify.notify_waiters();
+                bail!(e)
             }
             Ok(stream) => BiStream::from(stream),
         };
 
         let pipe_clone = pipeline.clone();
-        let topic_seq_clone = topic_seq.clone();
+        let topics_clone = topics.clone();
         let addr = connection.remote_address();
-        let stream_id = stream.get_recv_stream_id();
-        let stream_hash = format!("{addr}:{stream_id}");
+        let notify_c = notify.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_request(pipe_clone, topic_seq_clone, &stream_hash, stream).await
-            {
-                error!("Request failed: {reason}", reason = e.to_string());
+            if let Err(e) = handle_stream(addr, pipe_clone, topics_clone, stream, notify_c).await {
+                error!("Request failed: {:?}", e);
             }
         });
     }
 }
 
-async fn handle_request(
+async fn handle_stream(
+    conn_addr: SocketAddr,
     pipeline: Pipeline,
-    topic_seq: Arc<DashMap<String, AtomicUsize>>,
-    stream_hash: &str,
+    topics: Arc<DashMap<String, Topic>>,
     mut stream: BiStream,
+    conn_notify: Arc<Notify>,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                handle_publisher(payload, pipeline, topic_seq, stream_hash, stream).await?
+                if !topics.contains_key(&payload.topic) {
+                    topics.insert(payload.topic.clone(), Topic::new(pipeline.clone()));
+                }
+
+                let topic = topics.get(&payload.topic).unwrap();
+
+                topic
+                    .add_publisher(payload, conn_addr, conn_notify, stream)
+                    .await
+                    .context("Publisher error")?;
             }
             Frame::RegisterSubscriber(payload) => {
-                handle_subscriber(payload, pipeline, stream_hash, stream).await?
+                if !topics.contains_key(&payload.topic) {
+                    topics.insert(payload.topic.clone(), Topic::new(pipeline.clone()));
+                }
+
+                let topic = topics.get(&payload.topic).unwrap();
+
+                topic
+                    .add_subscriber(payload, conn_addr, conn_notify, stream)
+                    .await
+                    .context("Subscriber error")?;
             }
-            _ => return Err(anyhow!("Non header frame received out of context")),
+            _ => return Err(anyhow!("Expected Header frame")),
         }
     } else {
-        info!("Socket closed");
+        info!("Stream closed");
     }
-
-    Ok(())
-}
-
-async fn handle_publisher(
-    header: PublisherPayload,
-    pipeline: Pipeline,
-    topic_seq: Arc<DashMap<String, AtomicUsize>>,
-    stream_hash: &str,
-    stream: BiStream,
-) -> Result<()> {
-    // Get current or create new sequence number for this topic
-    let sequence = topic_seq
-        .entry(header.topic.clone())
-        .or_insert(AtomicUsize::new(1));
-
-    pipeline.add_publisher(stream_hash, header)?;
-
-    stream
-        .try_for_each(move |frame| match frame {
-            Frame::Message(bytes) => {
-                let seq = sequence.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(pipeline.traverse(stream_hash, bytes, seq));
-                future::ok(())
-            }
-            _ => future::err(anyhow!("Non Message frame received out of context")),
-        })
-        .await?;
-    Ok(())
-}
-
-async fn handle_subscriber(
-    header: SubscriberPayload,
-    pipeline: Pipeline,
-    stream_hash: &str,
-    stream: BiStream,
-) -> Result<()> {
-    let (tx_chan, rx_chan) = mpsc::unbounded();
-    pipeline.add_subscriber(stream_hash, header, tx_chan)?;
-
-    rx_chan
-        .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
-        .forward(stream.ordered())
-        .await?;
 
     Ok(())
 }

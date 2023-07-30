@@ -24,6 +24,10 @@ impl BiStream {
         self.read.get_ref().id()
     }
 
+    pub fn get_send_stream_id(&self) -> StreamId {
+        self.write.get_ref().id()
+    }
+
     pub async fn finish(&mut self) -> Result<()> {
         self.write.get_mut().finish().await?;
         Ok(())
