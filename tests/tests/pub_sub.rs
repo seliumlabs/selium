@@ -120,6 +120,7 @@ fn start_server() -> Child {
             "tests/certs/ca.crt",
             "--key",
             "tests/certs/ca.key",
+            "-vvv",
         ])
         .current_dir("..")
         .spawn()
