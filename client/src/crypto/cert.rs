@@ -19,7 +19,7 @@ fn load_certs(cert_file: &PathBuf) -> Result<Vec<Certificate>> {
 ///
 /// * `ca_file` - The filepath to the CA file.
 ///
-pub fn load_root_store(ca_file: &PathBuf) -> Result<RootCertStore> {
+pub(crate) fn load_root_store(ca_file: &PathBuf) -> Result<RootCertStore> {
     let mut store = RootCertStore::empty();
     let certs = load_certs(ca_file)?;
     store.add_parsable_certificates(&certs);

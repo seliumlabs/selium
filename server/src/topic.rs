@@ -41,7 +41,7 @@ impl Topic {
         conn_notify: Arc<Notify>,
         stream: BiStream,
     ) -> Result<()> {
-        let stream_hash = sock_key(conn_addr, stream.read.get_ref().id());
+        let stream_hash = sock_key(conn_addr, stream.get_recv_stream_id());
 
         self.pipeline.add_publisher(&stream_hash, header).await?;
 
@@ -70,7 +70,7 @@ impl Topic {
         conn_notify: Arc<Notify>,
         sink: BiStream,
     ) -> Result<()> {
-        let stream_hash = sock_key(conn_addr, sink.write.get_ref().id());
+        let stream_hash = sock_key(conn_addr, sink.get_send_stream_id());
 
         let (tx_chan, rx_chan) = mpsc::unbounded();
         self.pipeline

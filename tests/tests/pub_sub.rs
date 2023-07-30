@@ -42,17 +42,20 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
     let subscriber3 = start_subscriber("/acmeco/something_else").await?;
     let subscriber4 = start_subscriber("/bluthco/stocks").await?;
 
-    let publisher = selium::publisher("/acmeco/stocks")
-        // .map("/acmeco/forge_numbers.wasm")
+    let connection = selium::client()
         .keep_alive(5_000)?
         .with_certificate_authority("certs/ca.crt")?
-        .with_encoder(StringCodec)
         .connect("127.0.0.1:7001")
         .await?;
 
-    let mut stream = publisher.stream().await?;
+    let mut publisher = connection
+        .publisher("/acmeco/stocks")
+        // .map("/acmeco/forge_numbers.wasm")
+        .with_encoder(StringCodec)
+        .open()
+        .await?;
 
-    stream
+    publisher
         .send_all(&mut iter(vec![
             Ok("foo"),
             Ok("bar"),
@@ -64,7 +67,7 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
         ]))
         .await?;
 
-    stream.finish().await?;
+    publisher.finish().await?;
 
     let message1 = subscriber1.try_next().await?;
     let message2 = subscriber1.try_next().await?;
@@ -89,9 +92,6 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
         .map(|_| String::new())
         .now_or_never();
 
-    subscriber1.finish().await?;
-    subscriber2.finish().await?;
-
     Ok([
         message1, message2, message3, message4, message5, message6, message7, message8, message9,
         message10, message11, message12, message13, message14, message15, message16,
@@ -99,13 +99,18 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 }
 
 async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>, Box<dyn Error>> {
-    Ok(selium::subscriber(topic)
-        // .map("/selium/bonanza.wasm")
-        // .filter("/selium/dodgy_stuff.wasm")
+    let connection = selium::client()
         .keep_alive(5_000)?
         .with_certificate_authority("certs/ca.crt")?
-        .with_decoder(StringCodec)
         .connect(SERVER_ADDR)
+        .await?;
+
+    Ok(connection
+        .subscriber(topic)
+        // .map("/selium/bonanza.wasm")
+        // .filter("/selium/dodgy_stuff.wasm")
+        .with_decoder(StringCodec)
+        .open()
         .await?)
 }
 

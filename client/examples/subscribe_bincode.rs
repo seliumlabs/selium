@@ -1,6 +1,7 @@
 use anyhow::Result;
 use futures::StreamExt;
-use selium::{codecs::StringCodec, prelude::*};
+use selium::codecs::BincodeCodec;
+use selium::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -23,12 +24,12 @@ async fn main() -> Result<()> {
         .map("/selium/bonanza.wasm")
         .filter("/selium/dodgy_stuff.wasm")
         .retain(Duration::from_secs(600))?
-        .with_decoder(StringCodec)
+        .with_decoder(BincodeCodec::<StockEvent>::default())
         .open()
         .await?;
 
-    while let Some(Ok(message)) = subscriber.next().await {
-        println!("NEW MESSAGE: \"{message}\"");
+    while let Some(Ok(event)) = subscriber.next().await {
+        println!("NEW STOCK EVENT: {event:#?}");
     }
 
     Ok(())

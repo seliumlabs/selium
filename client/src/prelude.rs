@@ -1,1 +1,1 @@
-pub use crate::traits::{Client, ClientConfig, Connect};
+pub use crate::traits::{Open, StreamConfig};
