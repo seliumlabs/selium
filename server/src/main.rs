@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     let mut logger = Builder::new();
     logger
         .filter_module(
-            &env!("CARGO_PKG_NAME").replace("-", "_"),
+            &env!("CARGO_PKG_NAME").replace('-', "_"),
             args.verbose.log_level_filter(),
         )
         .init();
