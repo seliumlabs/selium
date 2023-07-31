@@ -2,9 +2,9 @@ use anyhow::Result;
 use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
 use log::{error, info};
-use selium::{
+use selium_common::{
     protocol::{PublisherPayload, SubscriberPayload},
-    Operation,
+    types::Operation,
 };
 use std::{
     fmt::{self, Display, Formatter},

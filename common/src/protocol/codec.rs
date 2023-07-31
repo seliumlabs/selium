@@ -54,7 +54,7 @@ impl Decoder for MessageCodec {
 mod tests {
     use super::*;
     use crate::protocol::{PublisherPayload, SubscriberPayload};
-    use crate::Operation;
+    use crate::types::Operation;
     use bytes::Bytes;
 
     #[test]

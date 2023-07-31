@@ -1,9 +1,9 @@
 use crate::traits::TryIntoU64;
-use crate::Operation;
 use anyhow::Result;
 use quinn::Connection;
+use selium_common::types::Operation;
 
-pub const RETENTION_POLICY_DEFAULT: u64 = 0;
+pub(crate) const RETENTION_POLICY_DEFAULT: u64 = 0;
 
 #[derive(Debug)]
 pub struct StreamBuilder<T> {

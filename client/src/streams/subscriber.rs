@@ -1,11 +1,12 @@
-use crate::protocol::{Frame, SubscriberPayload};
 use crate::traits::{MessageDecoder, Open, StreamConfig, TryIntoU64};
-use crate::{BiStream, StreamBuilder, StreamCommon};
+use crate::{StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures::{SinkExt, Stream, StreamExt};
 use quinn::Connection;
+use selium_common::protocol::{Frame, SubscriberPayload};
+use selium_common::types::BiStream;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};

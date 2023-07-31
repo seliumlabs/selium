@@ -1,14 +1,7 @@
 use anyhow::Result;
 use futures::StreamExt;
 use selium::{codecs::StringCodec, prelude::*};
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct StockEvent {
-    ticker: String,
-    change: f64,
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
