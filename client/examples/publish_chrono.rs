@@ -13,8 +13,9 @@ async fn main() -> Result<()> {
 
     let mut publisher = connection
         .publisher("/acmeco/stocks")
-        .map("/acmeco/forge_numbers.wasm")
-        .retain(chrono::Duration::minutes(25))?
+        // Coming soon...
+        // .map("/acmeco/forge_numbers.wasm")
+        // .retain(chrono::Duration::minutes(25))?
         .with_encoder(StringCodec)
         .open()
         .await?;

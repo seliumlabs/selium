@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::StreamExt;
 use selium::{codecs::StringCodec, prelude::*};
-use std::time::Duration;
+// use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -13,9 +13,10 @@ async fn main() -> Result<()> {
 
     let mut subscriber = connection
         .subscriber("/acmeco/stocks")
-        .map("/selium/bonanza.wasm")
-        .filter("/selium/dodgy_stuff.wasm")
-        .retain(Duration::from_secs(600))?
+        // Coming soon...
+        // .map("/selium/bonanza.wasm")
+        // .filter("/selium/dodgy_stuff.wasm")
+        // .retain(Duration::from_secs(600))?
         .with_decoder(StringCodec)
         .open()
         .await?;

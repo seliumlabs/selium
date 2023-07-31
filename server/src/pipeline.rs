@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{channel::mpsc::UnboundedSender, future, Future};
-use log::{error, info};
+use log::{error, info, warn};
 use selium_common::{
     protocol::{PublisherPayload, SubscriberPayload},
     types::Operation,
@@ -154,8 +154,9 @@ impl Pipeline {
                             error!("Failed to send message to subscriber channel: {e}");
                         }
                     }
-                    // @TODO - Implement WASM executor
-                    PipelineNode::Wasm(_) => (),
+                    PipelineNode::Wasm(_) => {
+                        warn!("WASM frames are not yet implemented and do nothing!")
+                    }
                 };
 
                 future::ready((seq, bytes))
