@@ -11,6 +11,7 @@ pub struct StreamBuilder<T> {
     pub(crate) connection: Connection,
 }
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct StreamCommon {
     pub(crate) topic: String,

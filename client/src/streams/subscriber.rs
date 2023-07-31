@@ -11,11 +11,13 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct SubscriberWantsDecoder {
     pub(crate) common: StreamCommon,
 }
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct SubscriberWantsOpen<D, Item> {
     common: StreamCommon,

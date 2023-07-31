@@ -77,10 +77,11 @@
 //! ```
 //! # #[derive(Default, Clone)]
 //! # pub struct ColorCodec;
-//! # type Color = (u8, u8, u8);
 //! use anyhow::Result;
 //! use selium::traits::{MessageEncoder, MessageDecoder};
 //! use bytes::{Bytes, BytesMut};
+//!
+//! type Color = (u8, u8, u8);
 //!
 //! impl MessageEncoder<Color> for ColorCodec {
 //!     fn encode(&self, item: Color) -> Result<Bytes> {
