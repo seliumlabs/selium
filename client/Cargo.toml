@@ -18,6 +18,7 @@ serde = { version = "1.0", optional = true, features = ["derive"] }
 tokio = { version = "1.29", features = ["full"] }
 
 [features]
+default = ["bincode", "chrono"]
 chrono = ["dep:chrono"]
 bincode = ["dep:bincode", "dep:serde"]
 
