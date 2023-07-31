@@ -7,7 +7,7 @@ use futures::StreamExt;
 use log::{error, info};
 use pipeline::Pipeline;
 use quinn::{IdleTimeout, VarInt};
-use selium::{protocol::Frame, BiStream};
+use selium_common::{protocol::Frame, types::BiStream};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Notify;
 use topic::Topic;

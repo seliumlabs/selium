@@ -13,9 +13,9 @@ use futures::{
     FutureExt, StreamExt, TryStreamExt,
 };
 use quinn::StreamId;
-use selium::{
+use selium_common::{
     protocol::{Frame, PublisherPayload, SubscriberPayload},
-    BiStream,
+    types::BiStream,
 };
 use tokio::sync::Notify;
 
