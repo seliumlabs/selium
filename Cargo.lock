@@ -934,7 +934,6 @@ dependencies = [
  "selium-common",
  "serde",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
