@@ -91,7 +91,7 @@ where
         headers: SubscriberPayload,
         decoder: D,
     ) -> Result<Self> {
-        let mut stream = BiStream::try_from_connection(connection).await?;
+        let mut stream = BiStream::try_from_connection(&connection).await?;
         let frame = Frame::RegisterSubscriber(headers);
 
         stream.send(frame).await?;

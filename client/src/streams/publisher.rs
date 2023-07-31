@@ -92,7 +92,7 @@ where
         headers: PublisherPayload,
         encoder: E,
     ) -> Result<Self> {
-        let mut stream = BiStream::try_from_connection(connection.clone()).await?;
+        let mut stream = BiStream::try_from_connection(&connection).await?;
         let frame = Frame::RegisterPublisher(headers.clone());
         stream.send(frame).await?;
 
