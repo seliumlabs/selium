@@ -3,7 +3,7 @@ use futures::StreamExt;
 use selium::codecs::BincodeCodec;
 use selium::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+// use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StockEvent {
@@ -21,9 +21,10 @@ async fn main() -> Result<()> {
 
     let mut subscriber = connection
         .subscriber("/acmeco/stocks")
-        .map("/selium/bonanza.wasm")
-        .filter("/selium/dodgy_stuff.wasm")
-        .retain(Duration::from_secs(600))?
+        // Coming soon...
+        // .map("/selium/bonanza.wasm")
+        // .filter("/selium/dodgy_stuff.wasm")
+        // .retain(Duration::from_secs(600))?
         .with_decoder(BincodeCodec::<StockEvent>::default())
         .open()
         .await?;

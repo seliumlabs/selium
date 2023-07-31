@@ -2,7 +2,7 @@ use anyhow::Result;
 use futures::SinkExt;
 use selium::codecs::StringCodec;
 use selium::prelude::*;
-use std::time::Duration;
+// use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -14,8 +14,9 @@ async fn main() -> Result<()> {
 
     let mut publisher = connection
         .publisher("/acmeco/stocks")
-        .map("/acmeco/forge_numbers.wasm")
-        .retain(Duration::from_secs(600))?
+        // Coming soon...
+        // .map("/acmeco/forge_numbers.wasm")
+        // .retain(Duration::from_secs(600))?
         .with_encoder(StringCodec)
         .open()
         .await?;

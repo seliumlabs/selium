@@ -9,6 +9,7 @@ pub trait Open {
     async fn open(self) -> Result<Self::Output>;
 }
 
+#[doc(hidden)]
 pub trait StreamConfig {
     fn map(self, module_path: &str) -> Self;
     fn filter(self, module_path: &str) -> Self;

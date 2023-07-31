@@ -27,14 +27,17 @@ impl StreamCommon {
         }
     }
 
+    #[doc(hidden)]
     pub fn map(&mut self, module_path: &str) {
         self.operations.push(Operation::Map(module_path.into()));
     }
 
+    #[doc(hidden)]
     pub fn filter(&mut self, module_path: &str) {
         self.operations.push(Operation::Filter(module_path.into()));
     }
 
+    #[doc(hidden)]
     pub fn retain<T: TryIntoU64>(&mut self, policy: T) -> Result<()> {
         self.retention_policy = policy.try_into_u64()?;
         Ok(())
