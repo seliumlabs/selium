@@ -17,7 +17,7 @@ impl MessageEncoder<&str> for StringCodec {
 ///
 /// # Errors
 ///
-/// Returns [Err] if a valid UTF-8 [String] cannot be constructed from the 
+/// Returns [Err] if a valid UTF-8 [String] cannot be constructed from the
 /// [BytesMut](bytes::BytesMut) slice.
 impl MessageDecoder<String> for StringCodec {
     fn decode(&self, buffer: &mut BytesMut) -> Result<String> {

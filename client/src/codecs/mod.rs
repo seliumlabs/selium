@@ -2,31 +2,31 @@
 //!
 //! In `Selium`, messages are sent over the wire in a binary format, and thus, the server has no
 //! indication of, or any desire to make sense of the data. This is perfectly suitable for the
-//! server, but not very convenient for client users. 
+//! server, but not very convenient for client users.
 //!
-//! To alleviate this issue, the `Selium` library makes use of codecs to encode produced messages 
-//! into bytes that the server can work with, and decode messages into a format that is useful to 
+//! To alleviate this issue, the `Selium` library makes use of codecs to encode produced messages
+//! into bytes that the server can work with, and decode messages into a format that is useful to
 //! consumers.
 //!
 //! Codecs are almost never used directly, but are provided as a configuration option while
-//! constructing a [Subscriber](crate::Subscriber) or [Publisher](crate::Publisher) stream. The 
-//! [Subscriber](crate::Subscriber) or [Publisher](crate::Publisher) will then call the underlying 
-//! [encode](crate::traits::MessageEncoder::encode) or [decode](crate::traits::MessageDecoder::decode) 
-//! method in their respective [Sink](futures::Sink) or [Stream](futures::Stream) implementations when 
+//! constructing a [Subscriber](crate::Subscriber) or [Publisher](crate::Publisher) stream. The
+//! [Subscriber](crate::Subscriber) or [Publisher](crate::Publisher) will then call the underlying
+//! [encode](crate::traits::MessageEncoder::encode) or [decode](crate::traits::MessageDecoder::decode)
+//! method in their respective [Sink](futures::Sink) or [Stream](futures::Stream) implementations when
 //! producing or consuming messages.
 //!
 //! # Encoder
 //!
 //! An `Encoder` is used to encode an input into a sequence of bytes before being transmitted
-//! over the wire. 
+//! over the wire.
 //!
 //! ### The MessageEncoder Trait
 //!
-//! The [MessageEncoder](crate::traits::MessageEncoder) trait is responsible for specifying the process of 
-//! receiving a generic input of type `Item`, and condensing it down into a [BytesMut](bytes::BytesMut) 
+//! The [MessageEncoder](crate::traits::MessageEncoder) trait is responsible for specifying the process of
+//! receiving a generic input of type `Item`, and condensing it down into a [BytesMut](bytes::BytesMut)
 //! value.
 //!
-//! [MessageEncoder](crate::traits::MessageEncoder) exposes a single method to implementors, 
+//! [MessageEncoder](crate::traits::MessageEncoder) exposes a single method to implementors,
 //! [encode](crate::traits::MessageEncoder::encode).
 
 //!
@@ -34,13 +34,13 @@
 //!
 //! A `Decoder` is used to decode a sequence of bytes received over the wire into the target `Item`
 //! type.
-//! 
+//!
 //! ### The MessageDecoder Trait
 //!
 //! The [MessageDecoder](crate::traits::MessageDecoder) trait is responsible for specifying the
 //! process of converting a [BytesMut](bytes::BytesMut) value into the target `Item` type.
 //!
-//! [MessageDecoder](crate::traits::MessageDecoder) exposes a single method to implementors, 
+//! [MessageDecoder](crate::traits::MessageDecoder) exposes a single method to implementors,
 //! [decode](crate::traits::MessageDecoder::decode).
 //!
 //! # Custom Codecs
@@ -50,7 +50,7 @@
 //! as [bincode], and many others.
 //!
 //! However, when the provided codecs are either not suitable for your needs, or lack support for
-//! a specific serialization format, it is trivial to create a custom codec via the 
+//! a specific serialization format, it is trivial to create a custom codec via the
 //! [MessageEncoder](crate::traits::MessageEncoder) and
 //! [MessageDecoder](crate::traits::MessageDecoder) traits.
 //!
@@ -68,7 +68,7 @@
 //! ```
 //!
 //! Next, we will implement the [MessageEncoder](crate::traits::MessageEncoder) and
-//! [MessageDecoder](crate::traits::MessageDecoder) traits for our `ColorCodec` struct, 
+//! [MessageDecoder](crate::traits::MessageDecoder) traits for our `ColorCodec` struct,
 //! Let's leave them unimplemented for now.
 //!
 //! For the sake of convenience, a type alias `Color` has been defined to give meaning to the
@@ -96,10 +96,10 @@
 //! }
 //! ```
 //!
-//! Now we can finish the implementations of the [encode](crate::traits::MessageEncoder::encode) and 
+//! Now we can finish the implementations of the [encode](crate::traits::MessageEncoder::encode) and
 //! [decode](crate::traits::MessageEncoder::encode) methods.
 //!
-//! Starting with the [encode](crate::traits::MessageEncoder::encode) method, we can push each element in 
+//! Starting with the [encode](crate::traits::MessageEncoder::encode) method, we can push each element in
 //! the tuple onto a [BytesMut](bytes::BytesMut) buffer. Be sure to reserve enough space prior to this operation.
 //!
 //! ```
@@ -122,7 +122,7 @@
 //! }
 //! ```
 //!
-//! Finally, we can complete the [decode](crate::traits::MessageDecoder::decode) method by popping three 
+//! Finally, we can complete the [decode](crate::traits::MessageDecoder::decode) method by popping three
 //! [u8] values from the [BytesMut](bytes::BytesMut) buffer, and reconstructing the tuple.
 //!
 //! ```
@@ -179,11 +179,11 @@
 //! }
 //! ```
 
-// #[cfg(feature = "bincode")]
+#[cfg(feature = "bincode")]
 mod bincode_codec;
 mod string_codec;
 
-// #[cfg(feature = "bincode")]
+#[cfg(feature = "bincode")]
 pub use bincode_codec::*;
 
 pub use string_codec::*;

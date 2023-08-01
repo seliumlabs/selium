@@ -31,7 +31,7 @@ impl<T> Default for BincodeCodec<T> {
 /// [bincode].
 ///
 /// # Errors
-/// 
+///
 /// Returns [Err] if `item` fails to serialize.
 impl<Item: Serialize> MessageEncoder<Item> for BincodeCodec<Item> {
     fn encode(&self, item: Item) -> Result<Bytes> {
@@ -39,7 +39,7 @@ impl<Item: Serialize> MessageEncoder<Item> for BincodeCodec<Item> {
     }
 }
 
-/// Decodes a [BytesMut](bytes::BytesMut) payload into any `Item` implementing 
+/// Decodes a [BytesMut](bytes::BytesMut) payload into any `Item` implementing
 /// [DeserializeOwned](serde::de::DeserializeOwned).
 ///
 /// # Errors
