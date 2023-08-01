@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 /// Provides an `open` method for [StreamBuilder](crate::StreamBuilder) implementations to
-/// construct and spawn a new stream. 
+/// construct and spawn a new stream.
 #[async_trait]
 pub trait Open {
     type Output;

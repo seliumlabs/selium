@@ -42,11 +42,11 @@ impl StreamConfig for StreamBuilder<PublisherWantsEncoder> {
 }
 
 impl StreamBuilder<PublisherWantsEncoder> {
-    /// Specifies the encoder a [Publisher](crate::Publisher) uses for encoding produced messages prior 
+    /// Specifies the encoder a [Publisher](crate::Publisher) uses for encoding produced messages prior
     /// to being sent over the wire.
     ///
     /// An encoder can be any type implementing
-    /// [MessageEncoder](crate::traits::MessageEncoder). See [codecs](crate::codecs) for a list of 
+    /// [MessageEncoder](crate::traits::MessageEncoder). See [codecs](crate::codecs) for a list of
     /// codecs available in `Selium`, along with tutorials for creating your own encoders.
     pub fn with_encoder<E, Item>(self, encoder: E) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
         let state = PublisherWantsOpen {
@@ -93,7 +93,7 @@ where
 /// contexts as a [Sink](futures::Sink). Any messages sent to the sink will be encoded with the
 /// provided encoder, before being sent over the wire.
 ///
-/// **Note:** The Publisher struct is never constructed directly, but rather, via a 
+/// **Note:** The Publisher struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
 pub struct Publisher<E, Item> {
     connection: Connection,
@@ -107,11 +107,7 @@ impl<E, Item> Publisher<E, Item>
 where
     E: MessageEncoder<Item> + Clone,
 {
-    async fn spawn(
-        connection: Connection,
-        headers: PublisherPayload,
-        encoder: E,
-    ) -> Result<Self> {
+    async fn spawn(connection: Connection, headers: PublisherPayload, encoder: E) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(&connection).await?;
         let frame = Frame::RegisterPublisher(headers.clone());
         stream.send(frame).await?;
@@ -129,9 +125,9 @@ where
     /// having to specify the same configuration options again.
     ///  
     /// This method is especially convenient in cases where multiple streams will be concurrently
-    /// publishing messages to the same topic, via cooperative-multitasking, e.g. within [tokio] tasks 
+    /// publishing messages to the same topic, via cooperative-multitasking, e.g. within [tokio] tasks
     /// spawned by [tokio::spawn].
-    /// 
+    ///
     /// See the included examples in the repository for more information.
     ///
     /// # Errors
@@ -154,7 +150,7 @@ where
     /// published to this stream. This is to assure that the `Selium` server has acknowledged all
     /// sent data prior to closing the connection.
     ///
-    /// Under the hood, `finish` calls the [finish](quinn::SendStream::finish) on the underlying 
+    /// Under the hood, `finish` calls the [finish](quinn::SendStream::finish) on the underlying
     /// [SendStream](quinn::SendStream).
     ///
     /// # Errors

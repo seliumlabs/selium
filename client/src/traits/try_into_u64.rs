@@ -15,12 +15,12 @@ impl TryIntoU64 for u64 {
 
 impl TryIntoU64 for std::time::Duration {
     /// Converts a std [Duration](std::time::Duration) value into a [u64] by representing the
-    /// duration in milliseconds. 
+    /// duration in milliseconds.
     ///
     /// # Errors
     ///
     /// Because the [as_millis](std::time::Duration::as_millis) method
-    /// returns a [u128], this conversion may fail due to potential data loss in the demotion of 
+    /// returns a [u128], this conversion may fail due to potential data loss in the demotion of
     /// the integer.
     fn try_into_u64(self) -> Result<u64> {
         Ok(self.as_millis().try_into()?)
@@ -30,7 +30,7 @@ impl TryIntoU64 for std::time::Duration {
 #[cfg(feature = "chrono")]
 impl TryIntoU64 for chrono::Duration {
     /// Converts a [chrono::Duration] value into a [u64] by representing the duration in
-    /// milliseconds. 
+    /// milliseconds.
     ///
     /// # Errors
     ///
