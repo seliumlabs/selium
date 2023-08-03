@@ -2,15 +2,23 @@ use crate::traits::{MessageDecoder, MessageEncoder};
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
 
+/// A basic codec for encoding/decoding UTF-8 [String] message payloads.
 #[derive(Default, Clone)]
 pub struct StringCodec;
 
+/// Encodes a [&str] slice into [Bytes](bytes::Bytes).
 impl MessageEncoder<&str> for StringCodec {
     fn encode(&self, item: &str) -> Result<Bytes> {
         Ok(item.to_owned().into())
     }
 }
 
+/// Decodes a [BytesMut](bytes::BytesMut) payload into an owned [String]
+///
+/// # Errors
+///
+/// Returns [Err] if a valid UTF-8 [String] cannot be constructed from the
+/// [BytesMut](bytes::BytesMut) slice.
 impl MessageDecoder<String> for StringCodec {
     fn decode(&self, buffer: &mut BytesMut) -> Result<String> {
         Ok(String::from_utf8(buffer[..].into())?)
