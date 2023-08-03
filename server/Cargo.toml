@@ -1,7 +1,19 @@
 [package]
 name = "selium-server"
 version = "0.1.0"
-edition = "2021"
+description = """
+selium-server is the server-side bin for Selium, an extremely developer friendly, composable
+messaging platform with zero build time configuration.
+"""
+include = ["src/**/*"]
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 anyhow = "1.0"

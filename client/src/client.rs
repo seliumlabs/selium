@@ -144,6 +144,7 @@ impl ClientBuilder<ClientWantsConnect> {
 ///
 /// **NOTE:** The [Client] struct should never be used directly, and is intended to be constructed by a
 /// [ClientBuilder], following a successfully established connection to the `Selium` server.
+#[derive(Clone)]
 pub struct Client {
     connection: Connection,
 }
