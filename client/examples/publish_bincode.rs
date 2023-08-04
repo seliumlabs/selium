@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
         .await?;
 
     tokio::spawn({
-        let mut publisher = publisher.clone().await.unwrap();
+        let mut publisher = publisher.duplicate().await.unwrap();
         async move {
             publisher
                 .send(StockEvent::new("MSFT", 12.75))

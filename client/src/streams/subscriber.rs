@@ -11,11 +11,13 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct SubscriberWantsDecoder {
     pub(crate) common: StreamCommon,
 }
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct SubscriberWantsOpen<D, Item> {
     common: StreamCommon,
@@ -41,6 +43,12 @@ impl StreamConfig for StreamBuilder<SubscriberWantsDecoder> {
 }
 
 impl StreamBuilder<SubscriberWantsDecoder> {
+    /// Specifies the decoder a [Subscriber](crate::Subscriber) uses for decoding messages
+    /// received over the wire.
+    ///
+    /// A decoder can be any type implementing
+    /// [MessageDecoder](crate::traits::MessageDecoder). See [codecs](crate::codecs) for a list of
+    /// codecs available in `Selium`, along with tutorials for creating your own decoders.
     pub fn with_decoder<D, Item>(self, decoder: D) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
         let state = SubscriberWantsOpen {
             common: self.state.common,
@@ -76,6 +84,14 @@ where
     }
 }
 
+/// A traditional subscriber stream that consumes messages produced by a topic.
+///
+/// The Subscriber struct implements the [futures::Stream] trait, and can thus be used in the same
+/// contexts as a [Stream](futures::Stream). Any messages polled on the stream will be decoded
+/// using the provided decoder.
+///
+/// **Note:** The Subscriber struct is never constructed directly, but rather, via a
+/// [StreamBuilder](crate::StreamBuilder).
 pub struct Subscriber<D, Item> {
     stream: BiStream,
     decoder: D,
@@ -86,12 +102,8 @@ impl<D, Item> Subscriber<D, Item>
 where
     D: MessageDecoder<Item>,
 {
-    pub async fn spawn(
-        connection: Connection,
-        headers: SubscriberPayload,
-        decoder: D,
-    ) -> Result<Self> {
-        let mut stream = BiStream::try_from_connection(connection).await?;
+    async fn spawn(connection: Connection, headers: SubscriberPayload, decoder: D) -> Result<Self> {
+        let mut stream = BiStream::try_from_connection(&connection).await?;
         let frame = Frame::RegisterSubscriber(headers);
 
         stream.send(frame).await?;
