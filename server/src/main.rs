@@ -6,7 +6,7 @@ use env_logger::Builder;
 use futures::StreamExt;
 use log::{error, info};
 use pipeline::Pipeline;
-use quinn::{IdleTimeout, VarInt, Connection};
+use quinn::{Connection, IdleTimeout, VarInt};
 use selium_common::{protocol::Frame, types::BiStream};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use topic::Topic;
@@ -140,7 +140,8 @@ async fn handle_connection(
         let addr = connection.remote_address();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(addr, pipe_clone, topics_clone, stream, connection).await {
+            if let Err(e) = handle_stream(addr, pipe_clone, topics_clone, stream, connection).await
+            {
                 error!("Request failed: {:?}", e);
             }
         });

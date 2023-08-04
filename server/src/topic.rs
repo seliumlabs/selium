@@ -1,3 +1,15 @@
+use crate::{ordered_sink::OrderedExt, pipeline::Pipeline};
+use anyhow::{anyhow, Result};
+use futures::{
+    channel::mpsc,
+    future::{self, select, Either},
+    FutureExt, StreamExt, TryStreamExt,
+};
+use quinn::{Connection, StreamId};
+use selium_common::{
+    protocol::{Frame, PublisherPayload, SubscriberPayload},
+    types::BiStream,
+};
 use std::{
     net::SocketAddr,
     sync::{
@@ -5,18 +17,6 @@ use std::{
         Arc,
     },
 };
-use anyhow::{anyhow, Result};
-use futures::{
-    channel::mpsc,
-    future::{self, select, Either},
-    FutureExt, StreamExt, TryStreamExt,
-};
-use quinn::{StreamId, Connection};
-use selium_common::{
-    protocol::{Frame, PublisherPayload, SubscriberPayload},
-    types::BiStream,
-};
-use crate::{ordered_sink::OrderedExt, pipeline::Pipeline};
 
 pub struct Topic {
     pipeline: Pipeline,
