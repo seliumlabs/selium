@@ -94,9 +94,3 @@ impl Client {
         }
     }
 }
-
-impl Drop for Client {
-    fn drop(&mut self) {
-        self.connection.close(VarInt::from_u32(0), &[]);
-    }
-}
