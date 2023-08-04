@@ -5,20 +5,17 @@ use std::{
         Arc,
     },
 };
-
 use anyhow::{anyhow, Result};
 use futures::{
     channel::mpsc,
     future::{self, select, Either},
     FutureExt, StreamExt, TryStreamExt,
 };
-use quinn::StreamId;
+use quinn::{StreamId, Connection};
 use selium_common::{
     protocol::{Frame, PublisherPayload, SubscriberPayload},
     types::BiStream,
 };
-use tokio::sync::Notify;
-
 use crate::{ordered_sink::OrderedExt, pipeline::Pipeline};
 
 pub struct Topic {
@@ -38,7 +35,7 @@ impl Topic {
         &self,
         header: PublisherPayload,
         conn_addr: SocketAddr,
-        conn_notify: Arc<Notify>,
+        connection: Connection,
         stream: BiStream,
     ) -> Result<()> {
         let stream_hash = sock_key(conn_addr, stream.get_recv_stream_id());
@@ -54,7 +51,7 @@ impl Topic {
             _ => future::err(anyhow!("Expected Message frame")),
         });
 
-        if let Either::Left((r, _)) = select(messages, conn_notify.notified().boxed()).await {
+        if let Either::Left((r, _)) = select(messages, connection.closed().boxed()).await {
             r?;
         }
 
@@ -67,7 +64,7 @@ impl Topic {
         &self,
         header: SubscriberPayload,
         conn_addr: SocketAddr,
-        conn_notify: Arc<Notify>,
+        connection: Connection,
         sink: BiStream,
     ) -> Result<()> {
         let stream_hash = sock_key(conn_addr, sink.get_send_stream_id());
@@ -81,7 +78,7 @@ impl Topic {
             .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
             .forward(sink.ordered(self.sequence.load(Ordering::SeqCst) - 1));
 
-        if let Either::Left((r, _)) = select(forward, conn_notify.notified().boxed()).await {
+        if let Either::Left((r, _)) = select(forward, connection.closed().boxed()).await {
             r?;
         }
 

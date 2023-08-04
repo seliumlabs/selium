@@ -6,10 +6,9 @@ use env_logger::Builder;
 use futures::StreamExt;
 use log::{error, info};
 use pipeline::Pipeline;
-use quinn::{IdleTimeout, VarInt};
+use quinn::{IdleTimeout, VarInt, Connection};
 use selium_common::{protocol::Frame, types::BiStream};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-use tokio::sync::Notify;
 use topic::Topic;
 
 mod graph;
@@ -122,20 +121,15 @@ async fn handle_connection(
             )
     );
 
-    let notify = Arc::new(Notify::new());
-
     loop {
+        let connection = connection.clone();
         let stream = connection.accept_bi().await;
         let stream = match stream {
             Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                 info!("Connection closed ({})", connection.remote_address());
-                // Terminate any subscriber tasks
-                notify.notify_waiters();
                 return Ok(());
             }
             Err(e) => {
-                // Terminate any subscriber tasks
-                notify.notify_waiters();
                 bail!(e)
             }
             Ok(stream) => BiStream::from(stream),
@@ -144,10 +138,9 @@ async fn handle_connection(
         let pipe_clone = pipeline.clone();
         let topics_clone = topics.clone();
         let addr = connection.remote_address();
-        let notify_c = notify.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(addr, pipe_clone, topics_clone, stream, notify_c).await {
+            if let Err(e) = handle_stream(addr, pipe_clone, topics_clone, stream, connection).await {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -159,7 +152,7 @@ async fn handle_stream(
     pipeline: Pipeline,
     topics: Arc<DashMap<String, Topic>>,
     mut stream: BiStream,
-    conn_notify: Arc<Notify>,
+    connection: Connection,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
@@ -172,7 +165,7 @@ async fn handle_stream(
                 let topic = topics.get(&payload.topic).unwrap();
 
                 topic
-                    .add_publisher(payload, conn_addr, conn_notify, stream)
+                    .add_publisher(payload, conn_addr, connection, stream)
                     .await
                     .context("Publisher error")?;
             }
@@ -184,7 +177,7 @@ async fn handle_stream(
                 let topic = topics.get(&payload.topic).unwrap();
 
                 topic
-                    .add_subscriber(payload, conn_addr, conn_notify, stream)
+                    .add_subscriber(payload, conn_addr, connection, stream)
                     .await
                     .context("Subscriber error")?;
             }
