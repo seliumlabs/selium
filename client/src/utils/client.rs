@@ -7,10 +7,7 @@ use std::{net::SocketAddr, time::Duration};
 
 pub(crate) const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
-pub(crate) fn configure_client(
-    root_store: &RootCertStore,
-    keep_alive: u64,
-) -> Result<ClientConfig> {
+pub(crate) fn configure_client(root_store: &RootCertStore, keep_alive: u64) -> ClientConfig {
     let mut crypto = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_store.to_owned())
@@ -25,7 +22,7 @@ pub(crate) fn configure_client(
     transport_config.keep_alive_interval(Some(keep_alive));
     config.transport_config(Arc::new(transport_config));
 
-    Ok(config)
+    config
 }
 
 pub(crate) async fn connect_to_endpoint(
@@ -46,7 +43,7 @@ pub(crate) async fn establish_connection(
     keep_alive: u64,
 ) -> Result<Connection> {
     let addr = get_socket_addrs(host)?;
-    let config = configure_client(root_store, keep_alive)?;
+    let config = configure_client(root_store, keep_alive);
     let connection = connect_to_endpoint(config, addr).await?;
 
     Ok(connection)

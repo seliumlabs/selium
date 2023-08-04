@@ -15,7 +15,7 @@ pub struct BiStream {
 }
 
 impl BiStream {
-    pub async fn try_from_connection(connection: Connection) -> Result<Self> {
+    pub async fn try_from_connection(connection: &Connection) -> Result<Self> {
         let stream = connection.open_bi().await?;
         Ok(Self::from(stream))
     }
