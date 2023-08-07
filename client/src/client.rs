@@ -3,7 +3,7 @@ use crate::traits::TryIntoU64;
 use crate::utils::client::establish_connection;
 use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsDecoder};
 use anyhow::Result;
-use quinn::Connection;
+use quinn::{Connection, VarInt};
 use rustls::RootCertStore;
 use std::path::PathBuf;
 
@@ -129,6 +129,14 @@ impl ClientBuilder<ClientWantsConnect> {
     pub async fn connect(self, addr: &str) -> Result<Client> {
         let connection =
             establish_connection(addr, &self.state.root_store, self.state.keep_alive).await?;
+
+        tokio::spawn({
+            let connection = connection.clone();
+            async move {
+                tokio::signal::ctrl_c().await.unwrap();
+                connection.close(VarInt::from_u32(0), b"Client forcefully closed connection");
+            }
+        });
 
         Ok(Client { connection })
     }
