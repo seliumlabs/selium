@@ -11,10 +11,10 @@ use selium_common::{protocol::Frame, types::BiStream};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use topic::Topic;
 
-mod graph;
-mod ordered_sink;
-mod pipeline;
+mod node;
 mod quic;
+mod sink;
+mod stream;
 mod topic;
 
 #[derive(Parser, Debug)]
@@ -65,8 +65,6 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let pipeline = Pipeline::new();
-
     let (certs, key) = if let (Some(cert_path), Some(key_path)) = (args.cert.cert, args.cert.key) {
         quic::read_certs(cert_path, key_path)?
     } else if args.cert.self_signed {
@@ -88,10 +86,9 @@ async fn main() -> Result<()> {
 
     while let Some(conn) = endpoint.accept().await {
         info!("connection incoming");
-        let pipe_clone = pipeline.clone();
         let topics_clone = topics.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(pipe_clone.clone(), topics_clone, conn).await {
+            if let Err(e) = handle_connection(topics_clone, conn).await {
                 error!("connection failed: {:?}", e);
             }
         });
@@ -101,7 +98,6 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_connection(
-    pipeline: Pipeline,
     topics: Arc<DashMap<String, Topic>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
@@ -135,13 +131,11 @@ async fn handle_connection(
             Ok(stream) => BiStream::from(stream),
         };
 
-        let pipe_clone = pipeline.clone();
         let topics_clone = topics.clone();
         let addr = connection.remote_address();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(addr, pipe_clone, topics_clone, stream, connection).await
-            {
+            if let Err(e) = handle_stream(addr, topics_clone, stream).await {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -150,35 +144,33 @@ async fn handle_connection(
 
 async fn handle_stream(
     conn_addr: SocketAddr,
-    pipeline: Pipeline,
     topics: Arc<DashMap<String, Topic>>,
     mut stream: BiStream,
-    connection: Connection,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
                 if !topics.contains_key(&payload.topic) {
-                    topics.insert(payload.topic.clone(), Topic::new(pipeline.clone()));
+                    topics.insert(payload.topic.clone(), Topic::default());
                 }
 
-                let topic = topics.get(&payload.topic).unwrap();
+                let mut topic = topics.get_mut(&payload.topic).unwrap();
 
                 topic
-                    .add_publisher(payload, conn_addr, connection, stream)
+                    .add_publisher(payload, conn_addr, stream)
                     .await
                     .context("Publisher error")?;
             }
             Frame::RegisterSubscriber(payload) => {
                 if !topics.contains_key(&payload.topic) {
-                    topics.insert(payload.topic.clone(), Topic::new(pipeline.clone()));
+                    topics.insert(payload.topic.clone(), Topic::default());
                 }
 
-                let topic = topics.get(&payload.topic).unwrap();
+                let mut topic = topics.get_mut(&payload.topic).unwrap();
 
                 topic
-                    .add_subscriber(payload, conn_addr, connection, stream)
+                    .add_subscriber(payload, conn_addr, stream)
                     .await
                     .context("Subscriber error")?;
             }
