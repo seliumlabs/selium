@@ -98,8 +98,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection<St, Si>(
-    topics: Arc<DashMap<String, Topic<St, Si>>>,
+async fn handle_connection(
+    topics: Arc<DashMap<String, Topic>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -143,9 +143,9 @@ async fn handle_connection<St, Si>(
     }
 }
 
-async fn handle_stream<St, Si>(
+async fn handle_stream(
     conn_addr: SocketAddr,
-    topics: Arc<DashMap<String, Topic<St, Si>>>,
+    topics: Arc<DashMap<String, Topic>>,
     mut stream: BiStream,
 ) -> Result<()> {
     // Receive header

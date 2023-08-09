@@ -2,18 +2,21 @@ use crate::sink::{FanoutChannel, FanoutChannelHandle};
 use crate::stream::{MergeChannel, MergeChannelHandle};
 use anyhow::Result;
 use futures::StreamExt;
+use selium_common::types::BiStream;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_stream::StreamNotifyClose;
+use super::lockable::Lockable;
 
-pub struct Channels<St, Si> {
+pub struct Channels {
     spawned: AtomicBool,
-    fanout: Option<FanoutChannel<Si>>,
-    merge: Option<MergeChannel<St>>,
-    fanout_handle: FanoutChannelHandle<Si>,
-    merge_handle: MergeChannelHandle<St>,
+    fanout: Option<FanoutChannel<BiStream>>,
+    merge: Option<MergeChannel<BiStream>>,
+    fanout_handle: FanoutChannelHandle<BiStream>,
+    merge_handle: MergeChannelHandle<BiStream>,
 }
 
-impl<St, Si> Channels<St, Si> {
+impl Channels {
     pub fn new() -> Self {
         let (fanout, fanout_handle) = FanoutChannel::pair();
         let (merge, merge_handle) = MergeChannel::pair();
@@ -36,18 +39,19 @@ impl<St, Si> Channels<St, Si> {
         }
     }
 
-    pub async fn add_stream(&self, stream: St) -> Result<()> {
-        let stream = StreamNotifyClose::new(stream);
+    pub async fn add_stream(&self, stream: Lockable<'_, BiStream>) -> Result<()> {
+        let stream = StreamNotifyClose::new(stream.deref());
 
         if self.spawned.load(Ordering::Acquire) {
             self.merge_handle.add_stream(stream).await
         } else {
-            self.merge.add_stream(stream);
+            // self.merge.add_stream(stream);
             Ok(())
         }
     }
 
-    pub async fn add_sink(&self, sink: Si) -> Result<()> {
+    pub async fn add_sink(&self, sink: Lockable<'_, BiStream>) -> Result<()> {
+        let sink = sink.deref();
         self.fanout_handle.add_sink(sink).await
     }
 }

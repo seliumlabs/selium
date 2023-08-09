@@ -1,6 +1,6 @@
 use std::{
-    error::Error,
     pin::Pin,
+    fmt::{Debug, Display},
     task::{Context, Poll},
 };
 
@@ -24,7 +24,6 @@ pin_project! {
 }
 
 pub struct FanoutChannelHandle<Si>(Sender<Si>);
-
 impl<Si> FanoutChannel<Si> {
     pub fn pair() -> (Self, FanoutChannelHandle<Si>) {
         let (tx, rx) = channel(10);
@@ -47,7 +46,7 @@ impl<Si> FanoutChannel<Si> {
 impl<Item, Si> Sink<Item> for FanoutChannel<Si>
 where
     Si: Sink<Item> + Unpin,
-    Si::Error: Error + Send + Sync + 'static,
+    Si::Error: Debug + Display + Send + Sync + 'static,
     Item: Clone + Unpin,
 {
     type Error = Si::Error;
@@ -93,7 +92,7 @@ impl<Si> FanoutChannelHandle<Si> {
         Self(handle)
     }
 
-    pub async fn add_sink(&self, sink: Si) -> Result<()> {
+    pub async fn add_sink(&self, sink: &Si) -> Result<()> {
         self.0.send(sink).await.map_err(|e| anyhow!(e.to_string()))
     }
 }
@@ -110,7 +109,7 @@ mod tests {
         let (edge, handle) = FanoutChannel::pair();
         pin!(edge);
 
-        handle.add_sink(tx).await.unwrap();
+        handle.add_sink(&tx).await.unwrap();
         edge.send("hello!").await.unwrap();
 
         assert_eq!(rx.try_next().unwrap(), Some("hello!"));

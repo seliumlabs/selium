@@ -1,7 +1,8 @@
 use std::{
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::Arc,
 };
+use tokio::sync::{Mutex, MutexGuard};
 
 pub(super) struct Lockable<'a, T> {
     inner: Arc<Mutex<T>>,
@@ -20,12 +21,12 @@ impl<'a, T> Deref for Lockable<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        &self.guard.deref()
     }
 }
 
 impl<'a, T> DerefMut for Lockable<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+        &mut self.guard.deref_mut()
     }
 }

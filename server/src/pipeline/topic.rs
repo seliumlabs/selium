@@ -1,15 +1,14 @@
 use super::channels::Channels;
 use super::lockable::Lockable;
 use anyhow::Result;
-use futures::{Sink, Stream};
 use quinn::StreamId;
 use selium_common::protocol::{PublisherPayload, SubscriberPayload};
 use selium_common::types::BiStream;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex};
-use tokio::sync::RwLock;
+use std::sync::Arc;
+use tokio::sync::{RwLock, Mutex};
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct SockHash(String);
@@ -22,16 +21,15 @@ impl Deref for SockHash {
     }
 }
 
-pub type StreamPeerMap<T> = Arc<RwLock<HashMap<SockHash, Box<dyn Stream<Item = T>>>>>;
-pub type SinkPeerMap<T, E> = Arc<RwLock<HashMap<SockHash, Box<dyn Sink<T, Error = E>>>>>;
+pub type PeerMap = Arc<RwLock<HashMap<SockHash, Arc<Mutex<BiStream>>>>>;
 
-pub struct Topic<Item> {
-    publishers: StreamPeerMap<Item>,
-    subscribers: SinkPeerMap<Item>,
+pub struct Topic {
+    publishers: PeerMap,
+    subscribers: PeerMap,
     channels: Channels,
 }
 
-impl<Item> Default for Topic<Item> {
+impl Default for Topic {
     fn default() -> Self {
         Topic {
             publishers: Arc::new(RwLock::new(HashMap::new())),
@@ -41,21 +39,23 @@ impl<Item> Default for Topic<Item> {
     }
 }
 
-impl<Item> Topic<Item> {
+impl Topic {
     pub async fn add_publisher(
         &mut self,
         header: PublisherPayload,
         conn_addr: SocketAddr,
         stream: BiStream,
     ) -> Result<()> {
-        let mut publishers = self.publishers.write().await;
-        let hash = sock_key(conn_addr, stream.get_recv_stream_id());
+        {
+            let mut publishers = self.publishers.write().await;
+            let hash = sock_key(conn_addr, stream.get_recv_stream_id());
 
-        // @TODO - Support Operations struct
-        let stream = Arc::new(Mutex::new(Box::new(stream)));
-        publishers.insert(hash, stream.clone());
+            // @TODO - Support Operations struct
+            let stream = Arc::new(Mutex::new(stream));
+            publishers.insert(hash, stream.clone());
 
-        self.channels.add_stream(Lockable::new(stream)).await?;
+            self.channels.add_stream(Lockable::new(stream)).await?;
+        }
 
         if self.has_peers().await {
             self.channels.spawn();
@@ -70,14 +70,16 @@ impl<Item> Topic<Item> {
         conn_addr: SocketAddr,
         sink: BiStream,
     ) -> Result<()> {
-        let mut subscribers = self.subscribers.write().await;
-        let hash = sock_key(conn_addr, sink.get_send_stream_id());
+        {
+            let mut subscribers = self.subscribers.write().await;
+            let hash = sock_key(conn_addr, sink.get_send_stream_id());
 
-        // @TODO - Support Operations struct
-        let sink = Arc::new(Mutex::new(sink));
-        subscribers.insert(hash, sink.clone());
+            // @TODO - Support Operations struct
+            let sink = Arc::new(Mutex::new(sink));
+            subscribers.insert(hash, sink.clone());
 
-        self.channels.add_sink(Lockable::new(sink)).await?;
+            self.channels.add_sink(Lockable::new(sink)).await?;
+        }
 
         if self.has_peers().await {
             self.channels.spawn();
