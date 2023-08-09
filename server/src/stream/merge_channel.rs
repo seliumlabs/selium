@@ -35,6 +35,11 @@ impl<St> MergeChannel<St> {
             MergeChannelHandle::new(tx),
         )
     }
+
+    pub fn add_stream(&mut self, stream: StreamNotifyClose<St>) {
+        self.streams.insert(self.next_stream_id, stream);
+        self.next_stream_id += 1;
+    }
 }
 
 impl<St> Stream for MergeChannel<St>
@@ -59,8 +64,8 @@ where
             match ready!(this.streams.as_mut().poll_next(cx)) {
                 Some((_, Some(item))) => {
                     println!("Got message");
-                    return Poll::Ready(Some(item))
-                },
+                    return Poll::Ready(Some(item));
+                }
                 // This stream has died (gets removed by StreamMap)
                 Some((_, None)) => (),
                 // All streams have died

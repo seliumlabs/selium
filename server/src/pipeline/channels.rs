@@ -1,20 +1,19 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::sink::{FanoutChannel, FanoutChannelHandle};
+use crate::stream::{MergeChannel, MergeChannelHandle};
 use anyhow::Result;
 use futures::StreamExt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_stream::StreamNotifyClose;
-use crate::sink::{FanoutChannelHandle, FanoutChannel};
-use crate::stream::{MergeChannel, MergeChannelHandle};
-use super::{publisher::Publisher, subscriber::Subscriber};
 
-pub struct Channels {
+pub struct Channels<St, Si> {
     spawned: AtomicBool,
-    fanout: Option<FanoutChannel<Subscriber>>,
-    merge: Option<MergeChannel<Publisher>>,
-    fanout_handle: FanoutChannelHandle<Subscriber>,
-    merge_handle: MergeChannelHandle<Publisher>,
+    fanout: Option<FanoutChannel<Si>>,
+    merge: Option<MergeChannel<St>>,
+    fanout_handle: FanoutChannelHandle<Si>,
+    merge_handle: MergeChannelHandle<St>,
 }
 
-impl Channels {
+impl<St, Si> Channels<St, Si> {
     pub fn new() -> Self {
         let (fanout, fanout_handle) = FanoutChannel::pair();
         let (merge, merge_handle) = MergeChannel::pair();
@@ -24,7 +23,7 @@ impl Channels {
             fanout: Some(fanout),
             merge: Some(merge),
             fanout_handle,
-            merge_handle
+            merge_handle,
         }
     }
 
@@ -37,11 +36,18 @@ impl Channels {
         }
     }
 
-    pub async fn add_stream(&self, stream: Publisher) -> Result<()> {
-        self.merge_handle.add_stream(StreamNotifyClose::new(stream)).await
+    pub async fn add_stream(&self, stream: St) -> Result<()> {
+        let stream = StreamNotifyClose::new(stream);
+
+        if self.spawned.load(Ordering::Acquire) {
+            self.merge_handle.add_stream(stream).await
+        } else {
+            self.merge.add_stream(stream);
+            Ok(())
+        }
     }
 
-    pub async fn add_sink(&self, sink: Subscriber) -> Result<()> {
+    pub async fn add_sink(&self, sink: Si) -> Result<()> {
         self.fanout_handle.add_sink(sink).await
     }
 }

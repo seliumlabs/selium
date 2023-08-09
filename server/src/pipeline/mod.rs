@@ -1,5 +1,3 @@
 mod channels;
-mod publisher;
-mod subscriber;
+mod lockable;
 pub mod topic;
-

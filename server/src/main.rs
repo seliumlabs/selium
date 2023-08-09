@@ -1,3 +1,4 @@
+use crate::pipeline::topic::Topic;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
@@ -97,8 +98,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(
-    topics: Arc<DashMap<String, Topic>>,
+async fn handle_connection<St, Si>(
+    topics: Arc<DashMap<String, Topic<St, Si>>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -142,9 +143,9 @@ async fn handle_connection(
     }
 }
 
-async fn handle_stream(
+async fn handle_stream<St, Si>(
     conn_addr: SocketAddr,
-    topics: Arc<DashMap<String, Topic>>,
+    topics: Arc<DashMap<String, Topic<St, Si>>>,
     mut stream: BiStream,
 ) -> Result<()> {
     // Receive header

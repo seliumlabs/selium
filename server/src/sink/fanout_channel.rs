@@ -37,6 +37,11 @@ impl<Si> FanoutChannel<Si> {
             FanoutChannelHandle::new(tx),
         )
     }
+
+    pub fn add_sink(&mut self, sink: Si) {
+        self.sinks.insert(self.next_sink_id, sink);
+        self.next_sink_id += 1;
+    }
 }
 
 impl<Item, Si> Sink<Item> for FanoutChannel<Si>
