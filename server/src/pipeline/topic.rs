@@ -26,7 +26,7 @@ pub type StreamPeerMap<T> = Arc<RwLock<HashMap<SockHash, Box<dyn Stream<Item = T
 pub type SinkPeerMap<T, E> = Arc<RwLock<HashMap<SockHash, Box<dyn Sink<T, Error = E>>>>>;
 
 pub struct Topic<Item> {
-    publishers: StreamPeerMap,
+    publishers: StreamPeerMap<Item>,
     subscribers: SinkPeerMap<Item>,
     channels: Channels,
 }
