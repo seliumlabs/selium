@@ -80,7 +80,7 @@ impl<St> MergeChannelHandle<St> {
         Self(handle)
     }
 
-    pub async fn add_stream(&self, stream: StreamNotifyClose<&St>) -> Result<()> {
+    pub async fn add_stream(&self, stream: StreamNotifyClose<St>) -> Result<()> {
         self.0
             .send(stream)
             .await

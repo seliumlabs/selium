@@ -92,7 +92,7 @@ impl<Si> FanoutChannelHandle<Si> {
         Self(handle)
     }
 
-    pub async fn add_sink(&self, sink: &Si) -> Result<()> {
+    pub async fn add_sink(&self, sink: Si) -> Result<()> {
         self.0.send(sink).await.map_err(|e| anyhow!(e.to_string()))
     }
 }

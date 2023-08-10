@@ -1,3 +1,3 @@
 mod channels;
-mod lockable;
+mod exclusive;
 pub mod topic;
