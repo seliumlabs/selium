@@ -1,5 +1,5 @@
 use super::channels::Channels;
-use super::lockable::Lockable;
+use super::exclusive::Exclusive;
 use anyhow::Result;
 use quinn::StreamId;
 use selium_common::protocol::{PublisherPayload, SubscriberPayload};
@@ -54,7 +54,7 @@ impl Topic {
             let stream = Arc::new(Mutex::new(stream));
             publishers.insert(hash, stream.clone());
 
-            self.channels.add_stream(Lockable::new(stream)).await?;
+            self.channels.add_stream(Exclusive::new(stream)).await?;
         }
 
         if self.has_peers().await {
@@ -78,7 +78,7 @@ impl Topic {
             let sink = Arc::new(Mutex::new(sink));
             subscribers.insert(hash, sink.clone());
 
-            self.channels.add_sink(Lockable::new(sink)).await?;
+            self.channels.add_sink(Exclusive::new(sink)).await?;
         }
 
         if self.has_peers().await {
