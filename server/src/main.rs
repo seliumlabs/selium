@@ -6,11 +6,9 @@ use dashmap::DashMap;
 use env_logger::Builder;
 use futures::StreamExt;
 use log::{error, info};
-use pipeline::Pipeline;
 use quinn::{Connection, IdleTimeout, VarInt};
 use selium_common::{protocol::Frame, types::BiStream};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-use topic::Topic;
 
 mod node;
 mod quic;
@@ -133,10 +131,9 @@ async fn handle_connection(
         };
 
         let topics_clone = topics.clone();
-        let addr = connection.remote_address();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(addr, topics_clone, stream).await {
+            if let Err(e) = handle_stream(connection, topics_clone, stream).await {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -144,7 +141,7 @@ async fn handle_connection(
 }
 
 async fn handle_stream(
-    conn_addr: SocketAddr,
+    connection: Connection,
     topics: Arc<DashMap<String, Topic>>,
     mut stream: BiStream,
 ) -> Result<()> {
@@ -159,7 +156,7 @@ async fn handle_stream(
                 let mut topic = topics.get_mut(&payload.topic).unwrap();
 
                 topic
-                    .add_publisher(payload, conn_addr, stream)
+                    .add_publisher(payload, connection, stream)
                     .await
                     .context("Publisher error")?;
             }
@@ -171,7 +168,7 @@ async fn handle_stream(
                 let mut topic = topics.get_mut(&payload.topic).unwrap();
 
                 topic
-                    .add_subscriber(payload, conn_addr, stream)
+                    .add_subscriber(payload, connection, stream)
                     .await
                     .context("Subscriber error")?;
             }

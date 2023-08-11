@@ -1,14 +1,12 @@
-use super::channels::Channels;
-use super::exclusive::Exclusive;
 use anyhow::Result;
-use quinn::StreamId;
+use quinn::Connection;
 use selium_common::protocol::{PublisherPayload, SubscriberPayload};
 use selium_common::types::BiStream;
-use std::collections::HashMap;
-use std::net::SocketAddr;
+use tokio_stream::StreamNotifyClose;
 use std::ops::Deref;
-use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use crate::sink::{FanoutChannel, FanoutChannelHandle};
+use crate::stream::{MergeChannel, MergeChannelHandle};
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct SockHash(String);
@@ -21,20 +19,25 @@ impl Deref for SockHash {
     }
 }
 
-pub type PeerMap = Arc<RwLock<HashMap<SockHash, Arc<Mutex<BiStream>>>>>;
-
 pub struct Topic {
-    publishers: PeerMap,
-    subscribers: PeerMap,
-    channels: Channels,
+    spawned: AtomicBool,
+    fanout: FanoutChannel<BiStream>,
+    merge: Option<MergeChannel<BiStream>>,
+    fanout_handle: FanoutChannelHandle<BiStream>,
+    merge_handle: MergeChannelHandle<BiStream>,
 }
 
 impl Default for Topic {
     fn default() -> Self {
+        let (fanout, fanout_handle) = FanoutChannel::pair();
+        let (merge, merge_handle) = MergeChannel::pair();
+
         Topic {
-            publishers: Arc::new(RwLock::new(HashMap::new())),
-            subscribers: Arc::new(RwLock::new(HashMap::new())),
-            channels: Channels::new(),
+            spawned: AtomicBool::new(false),
+            fanout,
+            merge: Some(merge),
+            fanout_handle,
+            merge_handle,
         }
     }
 }
@@ -42,72 +45,53 @@ impl Default for Topic {
 impl Topic {
     pub async fn add_publisher(
         &mut self,
-        header: PublisherPayload,
-        conn_addr: SocketAddr,
+        _header: PublisherPayload,
+        conn_handle: Connection,
         stream: BiStream,
     ) -> Result<()> {
-        {
-            let mut publishers = self.publishers.write().await;
-            let hash = sock_key(conn_addr, stream.get_recv_stream_id());
+        // @TODO - Support Operations struct, compose stream.
+        let stream = stream;
 
-            // @TODO - Support Operations struct
-            let stream = Arc::new(Mutex::new(stream));
-            publishers.insert(hash, stream.clone());
+        self.merge_handle.add_stream(StreamNotifyClose::new(stream)).await.unwrap();
 
-            self.channels.add_stream(Exclusive::new(stream)).await?;
+        if !self.spawned.swap(true, Ordering::Acquire) {
+            self.spawn_pipeline();
         }
 
-        if self.has_peers().await {
-            self.channels.spawn();
-        }
+        let _ = conn_handle.closed().await;
 
         Ok(())
     }
 
     pub async fn add_subscriber(
         &mut self,
-        header: SubscriberPayload,
-        conn_addr: SocketAddr,
+        _header: SubscriberPayload,
+        conn_handle: Connection,
         sink: BiStream,
     ) -> Result<()> {
-        {
-            let mut subscribers = self.subscribers.write().await;
-            let hash = sock_key(conn_addr, sink.get_send_stream_id());
+        // @TODO - Support Operations struct, compose sink.
+        let sink = sink;
 
-            // @TODO - Support Operations struct
-            let sink = Arc::new(Mutex::new(sink));
-            subscribers.insert(hash, sink.clone());
+        self.fanout_handle.add_sink(sink).await.unwrap();
 
-            self.channels.add_sink(Exclusive::new(sink)).await?;
+        if !self.spawned.swap(true, Ordering::Acquire) {
+            self.spawn_pipeline();
         }
 
-        if self.has_peers().await {
-            self.channels.spawn();
-        }
+        let _ = conn_handle.closed().await;
 
         Ok(())
     }
 
-    pub async fn rm_publisher(&self, sock_hash: &SockHash) -> Result<()> {
-        self.publishers.write().await.remove(sock_hash);
-
-        Ok(())
+    fn spawn_pipeline(&mut self) {
+        // tokio::spawn({
+        //     let merge = self.merge.take().unwrap();
+        //
+        //     async move {
+        //         if let Err(e) = merge.forward(&mut self.fanout).await {
+        //             //
+        //         }
+        //     }
+        // });
     }
-
-    pub async fn rm_subscriber(&self, sock_hash: &SockHash) -> Result<()> {
-        self.subscribers.write().await.remove(sock_hash);
-
-        Ok(())
-    }
-
-    async fn has_peers(&self) -> bool {
-        let publishers = self.publishers.read().await;
-        let subscribers = self.subscribers.read().await;
-
-        !publishers.is_empty() && !subscribers.is_empty()
-    }
-}
-
-fn sock_key(conn_addr: SocketAddr, stream_id: StreamId) -> SockHash {
-    SockHash(format!("{conn_addr}:{stream_id}"))
 }
