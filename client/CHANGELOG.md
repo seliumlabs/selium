@@ -1,5 +1,5 @@
 # CHANGELOG
 
-## v0.0.0
+## v0.1.0
 
-- Notes about release
+- Initial release of Selium
