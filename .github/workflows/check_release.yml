@@ -22,7 +22,7 @@ jobs:
 
       - name: Get crate version
         id: version
-        run: echo ::set-output name=value::$(sed -ne 's/^version = "\(.*\)"/\1/p' < ${{ matrix.name }}/Cargo.toml)
+        run: echo value=$(sed -ne 's/^version = "\(.*\)"/\1/p' < ${{ matrix.name }}/Cargo.toml) >> $GITHUB_OUTPUT
 
       - name: Check changelog
         run: python ci/changelog.py ${{ matrix.name }} ${{ steps.version.outputs.value }}
