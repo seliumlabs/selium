@@ -1,4 +1,4 @@
-use crate::traits::{MessageDecoder, Open, StreamConfig, TryIntoU64};
+use crate::traits::{MessageDecoder, Open, Operations, Retain, SeliumCodec, TryIntoU64};
 use crate::{StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -25,23 +25,6 @@ pub struct SubscriberWantsOpen<D, Item> {
     _marker: PhantomData<Item>,
 }
 
-impl StreamConfig for StreamBuilder<SubscriberWantsDecoder> {
-    fn map(mut self, module_path: &str) -> Self {
-        self.state.common.map(module_path);
-        self
-    }
-
-    fn filter(mut self, module_path: &str) -> Self {
-        self.state.common.map(module_path);
-        self
-    }
-
-    fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
-        self.state.common.retain(policy)?;
-        Ok(self)
-    }
-}
-
 impl StreamBuilder<SubscriberWantsDecoder> {
     /// Specifies the decoder a [Subscriber](crate::Subscriber) uses for decoding messages
     /// received over the wire.
@@ -60,6 +43,31 @@ impl StreamBuilder<SubscriberWantsDecoder> {
             state,
             connection: self.connection,
         }
+    }
+}
+
+impl<D, Item> Retain for StreamBuilder<SubscriberWantsOpen<D, Item>>
+where
+    D: MessageDecoder<Item>,
+{
+    fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
+        self.state.common.retain(policy)?;
+        Ok(self)
+    }
+}
+
+impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>>
+where
+    D: MessageDecoder<Item> + SeliumCodec,
+{
+    fn map(mut self, module_path: &str) -> Self {
+        self.state.common.map(module_path);
+        self
+    }
+
+    fn filter(mut self, module_path: &str) -> Self {
+        self.state.common.filter(module_path);
+        self
     }
 }
 

@@ -14,10 +14,10 @@ async fn main() -> Result<()> {
 
     let mut publisher = connection
         .publisher("/acmeco/stocks")
+        .with_encoder(StringCodec)
         // Coming soon...
         // .map("/acmeco/forge_numbers.wasm")
         // .retain(Duration::from_secs(600))?
-        .with_encoder(StringCodec)
         .open()
         .await?;
 

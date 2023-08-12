@@ -22,10 +22,14 @@ pub trait Open {
 }
 
 #[doc(hidden)]
-pub trait StreamConfig {
-    fn map(self, module_path: &str) -> Self;
-    fn filter(self, module_path: &str) -> Self;
+pub trait Retain {
     fn retain<T: TryIntoU64>(self, policy: T) -> Result<Self>
     where
         Self: Sized;
+}
+
+#[doc(hidden)]
+pub trait Operations {
+    fn map(self, module_path: &str) -> Self;
+    fn filter(self, module_path: &str) -> Self;
 }

@@ -13,11 +13,11 @@ async fn main() -> Result<()> {
 
     let mut subscriber = connection
         .subscriber("/acmeco/stocks")
+        .with_decoder(StringCodec)
         // Coming soon...
         // .map("/selium/bonanza.wasm")
         // .filter("/selium/dodgy_stuff.wasm")
         // .retain(Duration::from_secs(600))?
-        .with_decoder(StringCodec)
         .open()
         .await?;
 

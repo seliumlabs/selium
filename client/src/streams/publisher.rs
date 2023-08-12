@@ -1,5 +1,5 @@
 use super::builder::{StreamBuilder, StreamCommon};
-use crate::traits::{MessageEncoder, Open, StreamConfig, TryIntoU64};
+use crate::traits::{MessageEncoder, Open, Operations, Retain, SeliumCodec, TryIntoU64};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};
@@ -24,23 +24,6 @@ pub struct PublisherWantsOpen<E, Item> {
     _marker: PhantomData<Item>,
 }
 
-impl StreamConfig for StreamBuilder<PublisherWantsEncoder> {
-    fn map(mut self, module_path: &str) -> Self {
-        self.state.common.map(module_path);
-        self
-    }
-
-    fn filter(mut self, module_path: &str) -> Self {
-        self.state.common.filter(module_path);
-        self
-    }
-
-    fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
-        self.state.common.retain(policy)?;
-        Ok(self)
-    }
-}
-
 impl StreamBuilder<PublisherWantsEncoder> {
     /// Specifies the encoder a [Publisher](crate::Publisher) uses for encoding produced messages prior
     /// to being sent over the wire.
@@ -59,6 +42,31 @@ impl StreamBuilder<PublisherWantsEncoder> {
             state,
             connection: self.connection,
         }
+    }
+}
+
+impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>>
+where
+    E: MessageEncoder<Item>,
+{
+    fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
+        self.state.common.retain(policy)?;
+        Ok(self)
+    }
+}
+
+impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>>
+where
+    E: MessageEncoder<Item> + SeliumCodec,
+{
+    fn map(mut self, module_path: &str) -> Self {
+        self.state.common.map(module_path);
+        self
+    }
+
+    fn filter(mut self, module_path: &str) -> Self {
+        self.state.common.filter(module_path);
+        self
     }
 }
 

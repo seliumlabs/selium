@@ -1,4 +1,4 @@
-use crate::traits::{MessageDecoder, MessageEncoder};
+use crate::traits::{MessageDecoder, MessageEncoder, SeliumCodec};
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
 
@@ -24,6 +24,8 @@ impl MessageDecoder<String> for StringCodec {
         Ok(String::from_utf8(buffer[..].into())?)
     }
 }
+
+impl SeliumCodec for StringCodec {}
 
 #[cfg(test)]
 mod tests {
