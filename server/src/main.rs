@@ -12,7 +12,6 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio_stream::StreamNotifyClose;
 use topic::Socket;
 
-mod ordered_sink;
 mod quic;
 mod sink;
 mod topic;

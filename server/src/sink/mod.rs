@@ -6,6 +6,11 @@ pub use fanout_many::*;
 mod filter;
 pub use filter::Filter;
 
+mod ordered;
+pub use ordered::Ordered;
+
+impl<T: ?Sized, Item> SinkExt<Item> for T where T: Sink<Item> {}
+
 pub trait SinkExt<Item>: Sink<Item> {
     // This is a wrapper around `with` for conceptual symmetry with `StreamExt::map`
     fn map<U, Fut, F, E>(self, f: F) -> With<Self, Item, U, Fut, F>
@@ -25,5 +30,12 @@ pub trait SinkExt<Item>: Sink<Item> {
         Self: Sized,
     {
         Filter::new(self, f)
+    }
+
+    fn ordered(self, last_sent: usize) -> Ordered<Self, Item>
+    where
+        Self: Sized,
+    {
+        Ordered::new(self, last_sent)
     }
 }
