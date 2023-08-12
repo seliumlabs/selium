@@ -1,8 +1,8 @@
 use crate::topic::Topic;
-use anyhow::{anyhow, bail, Error, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
-use dashmap::DashMap;
+use dashmap::{mapref::one::RefMut, DashMap};
 use env_logger::Builder;
 use futures::{channel::mpsc::Sender, StreamExt};
 use log::{error, info};
@@ -10,7 +10,7 @@ use quinn::{IdleTimeout, VarInt};
 use selium_common::{protocol::Frame, types::BiStream};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio_stream::StreamNotifyClose;
-use topic::{BoxedSink, BoxedStream, Socket};
+use topic::Socket;
 
 mod ordered_sink;
 mod quic;
@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_connection(
-    topics: Arc<DashMap<String, Sender<Socket<Option<Result<Frame>>, Frame, Error>>>>,
+    topics: Arc<DashMap<String, Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -142,22 +142,20 @@ async fn handle_connection(
 }
 
 async fn handle_stream(
-    topics: Arc<DashMap<String, Sender<Socket<Option<Result<Frame>>, Frame, Error>>>>,
+    topics: Arc<DashMap<String, Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>>>,
     mut stream: BiStream,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                let mut tx = create_topic(&payload.topic, topics);
-                tx.try_send(Socket::Stream(BoxedStream(Box::pin(
-                    StreamNotifyClose::new(stream),
-                ))))?;
+                let mut tx = create_topic(&payload.topic, &topics);
+                tx.try_send(Socket::Stream(StreamNotifyClose::new(stream)))?;
             }
             Frame::RegisterSubscriber(payload) => {
-                let mut tx = create_topic(&payload.topic, topics);
+                let mut tx = create_topic(&payload.topic, &topics);
 
-                tx.try_send(Socket::Sink(BoxedSink(Box::pin(stream))))?;
+                tx.try_send(Socket::Sink(stream))?;
             }
             _ => return Err(anyhow!("Expected Header frame")),
         }
@@ -168,10 +166,10 @@ async fn handle_stream(
     Ok(())
 }
 
-fn create_topic(
+fn create_topic<'a>(
     name: &str,
-    topics: Arc<DashMap<String, Sender<Socket<Option<Result<Frame>>, Frame, Error>>>>,
-) -> Sender<Socket<Option<Result<Frame>>, Frame, Error>> {
+    topics: &'a DashMap<String, Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>>,
+) -> RefMut<'a, String, Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>> {
     if !topics.contains_key(name) {
         let (topic, tx) = Topic::pair();
         tokio::spawn(topic);
@@ -179,5 +177,5 @@ fn create_topic(
         topics.insert(name.to_owned(), tx);
     }
 
-    *topics.get_mut(name).unwrap()
+    topics.get_mut(name).unwrap()
 }

@@ -143,7 +143,7 @@ where
             };
             sink.start_send(item.clone())?;
         }
-        println!("Finished send");
+
         Ok(())
     }
 
@@ -152,32 +152,24 @@ where
             let (_, sink) = self.entries[idx].borrow_mut();
             pin!(sink);
             match sink.poll_flush(cx) {
-                Poll::Pending => {
-                    println!("Fanout many pending");
-                    return Poll::Pending;
-                }
+                Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(_)) => {
-                    println!("Removing dead sink on flush");
                     self.entries.swap_remove(idx);
                 }
-                Poll::Ready(Ok(())) => {
-                    println!("Fanout many done");
-                }
+                Poll::Ready(Ok(())) => (),
             }
         }
-        println!("Done Flushing");
+
         Poll::Ready(Ok(()))
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        println!("Close");
         for idx in 0..self.entries.len() {
             let (_, sink) = self.entries[idx].borrow_mut();
             pin!(sink);
             match sink.poll_close(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(_)) => {
-                    println!("Removing dead sink on close");
                     self.entries.swap_remove(idx);
                 }
                 Poll::Ready(Ok(())) => (),
