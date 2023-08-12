@@ -3,11 +3,13 @@ use futures::{sink::With, Future, Sink, SinkExt as _};
 mod fanout_many;
 pub use fanout_many::*;
 
-mod filter;
-pub use filter::Filter;
+// @TODO - awaiting selium#22
+// mod filter;
+// pub use filter::Filter;
 
-mod ordered;
-pub use ordered::Ordered;
+// @TODO - awaiting selium#69
+// mod ordered;
+// pub use ordered::Ordered;
 
 impl<T: ?Sized, Item> SinkExt<Item> for T where T: Sink<Item> {}
 
@@ -23,19 +25,21 @@ pub trait SinkExt<Item>: Sink<Item> {
         self.with(f)
     }
 
-    fn filter<Fut, F>(self, f: F) -> Filter<Self, Fut, F, Item>
-    where
-        F: FnMut(&Item) -> Fut,
-        Fut: Future<Output = bool>,
-        Self: Sized,
-    {
-        Filter::new(self, f)
-    }
+    // @TODO - awaiting selium#22
+    // fn filter<Fut, F>(self, f: F) -> Filter<Self, Fut, F, Item>
+    // where
+    //     F: FnMut(&Item) -> Fut,
+    //     Fut: Future<Output = bool>,
+    //     Self: Sized,
+    // {
+    //     Filter::new(self, f)
+    // }
 
-    fn ordered(self, last_sent: usize) -> Ordered<Self, Item>
-    where
-        Self: Sized,
-    {
-        Ordered::new(self, last_sent)
-    }
+    // @TODO - awaiting selium#69
+    // fn ordered(self, last_sent: usize) -> Ordered<Self, Item>
+    // where
+    //     Self: Sized,
+    // {
+    //     Ordered::new(self, last_sent)
+    // }
 }
