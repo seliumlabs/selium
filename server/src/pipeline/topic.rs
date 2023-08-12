@@ -1,12 +1,12 @@
+use crate::sink::{FanoutChannel, FanoutChannelHandle};
+use crate::stream::{MergeChannel, MergeChannelHandle};
 use anyhow::Result;
+use futures::StreamExt;
 use quinn::Connection;
 use selium_common::protocol::{PublisherPayload, SubscriberPayload};
 use selium_common::types::BiStream;
-use tokio_stream::StreamNotifyClose;
 use std::ops::Deref;
-use std::sync::atomic::{AtomicBool, Ordering};
-use crate::sink::{FanoutChannel, FanoutChannelHandle};
-use crate::stream::{MergeChannel, MergeChannelHandle};
+use tokio_stream::StreamNotifyClose;
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct SockHash(String);
@@ -20,11 +20,8 @@ impl Deref for SockHash {
 }
 
 pub struct Topic {
-    spawned: AtomicBool,
-    fanout: FanoutChannel<BiStream>,
-    merge: Option<MergeChannel<BiStream>>,
-    fanout_handle: FanoutChannelHandle<BiStream>,
-    merge_handle: MergeChannelHandle<BiStream>,
+    fanout: Option<FanoutChannelHandle<BiStream>>,
+    merge: Option<MergeChannelHandle<BiStream>>,
 }
 
 impl Default for Topic {
@@ -32,12 +29,13 @@ impl Default for Topic {
         let (fanout, fanout_handle) = FanoutChannel::pair();
         let (merge, merge_handle) = MergeChannel::pair();
 
+        // Spawn the topic stream, which will remain paused until at least one stream and
+        // sink are added.
+        tokio::spawn(merge.forward(fanout));
+
         Topic {
-            spawned: AtomicBool::new(false),
-            fanout,
-            merge: Some(merge),
-            fanout_handle,
-            merge_handle,
+            fanout: Some(fanout_handle),
+            merge: Some(merge_handle),
         }
     }
 }
@@ -52,13 +50,16 @@ impl Topic {
         // @TODO - Support Operations struct, compose stream.
         let stream = stream;
 
-        self.merge_handle.add_stream(StreamNotifyClose::new(stream)).await.unwrap();
+        self.merge
+            .as_ref()
+            .unwrap()
+            .add_stream(StreamNotifyClose::new(stream))
+            .await
+            .unwrap();
 
-        if !self.spawned.swap(true, Ordering::Acquire) {
-            self.spawn_pipeline();
-        }
+        println!("Add Pub");
 
-        let _ = conn_handle.closed().await;
+        // let _ = conn_handle.closed().await;
 
         Ok(())
     }
@@ -72,26 +73,12 @@ impl Topic {
         // @TODO - Support Operations struct, compose sink.
         let sink = sink;
 
-        self.fanout_handle.add_sink(sink).await.unwrap();
+        self.fanout.as_ref().unwrap().add_sink(sink).await.unwrap();
 
-        if !self.spawned.swap(true, Ordering::Acquire) {
-            self.spawn_pipeline();
-        }
+        println!("Add Sub");
 
-        let _ = conn_handle.closed().await;
+        // let _ = conn_handle.closed().await;
 
         Ok(())
-    }
-
-    fn spawn_pipeline(&mut self) {
-        // tokio::spawn({
-        //     let merge = self.merge.take().unwrap();
-        //
-        //     async move {
-        //         if let Err(e) = merge.forward(&mut self.fanout).await {
-        //             //
-        //         }
-        //     }
-        // });
     }
 }

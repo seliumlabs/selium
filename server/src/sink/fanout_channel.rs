@@ -1,6 +1,6 @@
 use std::{
-    pin::Pin,
     fmt::{Debug, Display},
+    pin::Pin,
     task::{Context, Poll},
 };
 
@@ -36,11 +36,6 @@ impl<Si> FanoutChannel<Si> {
             FanoutChannelHandle::new(tx),
         )
     }
-
-    pub fn add_sink(&mut self, sink: Si) {
-        self.sinks.insert(self.next_sink_id, sink);
-        self.next_sink_id += 1;
-    }
 }
 
 impl<Item, Si> Sink<Item> for FanoutChannel<Si>
@@ -56,33 +51,41 @@ where
 
         match this.handle.poll_recv(cx) {
             Poll::Ready(Some(si)) => {
+                println!("Sink added to fanout channel");
                 this.sinks.insert(*this.next_sink_id, si);
                 *this.next_sink_id += 1;
             }
             // If handle is terminated, the stream is dead
             Poll::Ready(None) => {
+                println!("Fanout channel dropped");
                 return Poll::Ready(Err(anyhow!("Handle terminated")
                     .downcast::<Self::Error>()
-                    .unwrap()))
+                    .unwrap()));
             }
-            Poll::Pending => (),
+            Poll::Pending => {
+                println!("Fanout handle pending");
+            }
         }
 
+        println!("Sink poll ready");
         this.sinks.poll_ready(cx)
     }
 
     fn start_send(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         let this = self.project();
+        println!("Got sub message");
         this.sinks.start_send(item)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
+        println!("Poll flush channel");
         this.sinks.poll_flush(cx)
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
+        println!("Poll close channel");
         this.sinks.poll_close(cx)
     }
 }
@@ -109,7 +112,7 @@ mod tests {
         let (edge, handle) = FanoutChannel::pair();
         pin!(edge);
 
-        handle.add_sink(&tx).await.unwrap();
+        handle.add_sink(tx).await.unwrap();
         edge.send("hello!").await.unwrap();
 
         assert_eq!(rx.try_next().unwrap(), Some("hello!"));

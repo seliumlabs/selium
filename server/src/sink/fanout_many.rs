@@ -27,41 +27,41 @@ impl<K, V> FanoutMany<K, V> {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &(K, V)> {
-        self.entries.iter()
-    }
+    // pub fn iter(&self) -> impl Iterator<Item = &(K, V)> {
+    //     self.entries.iter()
+    // }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut (K, V)> {
-        self.entries.iter_mut()
-    }
+    // pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut (K, V)> {
+    //     self.entries.iter_mut()
+    // }
 
-    pub fn keys(&self) -> impl Iterator<Item = &K> {
-        self.iter().map(|(k, _)| k)
-    }
+    // pub fn keys(&self) -> impl Iterator<Item = &K> {
+    //     self.iter().map(|(k, _)| k)
+    // }
 
-    pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.iter().map(|(_, v)| v)
-    }
+    // pub fn values(&self) -> impl Iterator<Item = &V> {
+    //     self.iter().map(|(_, v)| v)
+    // }
 
-    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
-        self.iter_mut().map(|(_, v)| v)
-    }
+    // pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+    //     self.iter_mut().map(|(_, v)| v)
+    // }
 
-    pub fn capacity(&self) -> usize {
-        self.entries.capacity()
-    }
+    // pub fn capacity(&self) -> usize {
+    //     self.entries.capacity()
+    // }
 
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
+    // pub fn len(&self) -> usize {
+    //     self.entries.len()
+    // }
 
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
+    // pub fn is_empty(&self) -> bool {
+    //     self.entries.is_empty()
+    // }
 
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
+    // pub fn clear(&mut self) {
+    //     self.entries.clear();
+    // }
 
     pub fn insert(&mut self, k: K, sink: V) -> Option<V>
     where
@@ -87,19 +87,19 @@ impl<K, V> FanoutMany<K, V> {
         None
     }
 
-    pub fn contains_key<Q: ?Sized>(&self, k: &Q) -> bool
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq,
-    {
-        for i in 0..self.entries.len() {
-            if self.entries[i].0.borrow() == k {
-                return true;
-            }
-        }
+    // pub fn contains_key<Q: ?Sized>(&self, k: &Q) -> bool
+    // where
+    //     K: Borrow<Q>,
+    //     Q: Hash + Eq,
+    // {
+    //     for i in 0..self.entries.len() {
+    //         if self.entries[i].0.borrow() == k {
+    //             return true;
+    //         }
+    //     }
 
-        false
-    }
+    //     false
+    // }
 }
 
 impl<K, V> Default for FanoutMany<K, V> {
@@ -143,7 +143,7 @@ where
             };
             sink.start_send(item.clone())?;
         }
-
+        println!("Finished send");
         Ok(())
     }
 
@@ -152,24 +152,32 @@ where
             let (_, sink) = self.entries[idx].borrow_mut();
             pin!(sink);
             match sink.poll_flush(cx) {
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    println!("Fanout many pending");
+                    return Poll::Pending;
+                }
                 Poll::Ready(Err(_)) => {
+                    println!("Removing dead sink on flush");
                     self.entries.swap_remove(idx);
                 }
-                Poll::Ready(Ok(())) => (),
+                Poll::Ready(Ok(())) => {
+                    println!("Fanout many done");
+                }
             }
         }
-
+        println!("Done Flushing");
         Poll::Ready(Ok(()))
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        println!("Close");
         for idx in 0..self.entries.len() {
             let (_, sink) = self.entries[idx].borrow_mut();
             pin!(sink);
             match sink.poll_close(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Err(_)) => {
+                    println!("Removing dead sink on close");
                     self.entries.swap_remove(idx);
                 }
                 Poll::Ready(Ok(())) => (),

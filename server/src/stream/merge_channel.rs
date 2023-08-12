@@ -35,11 +35,6 @@ impl<St> MergeChannel<St> {
             MergeChannelHandle::new(tx),
         )
     }
-
-    pub fn add_stream(&mut self, stream: StreamNotifyClose<St>) {
-        self.streams.insert(self.next_stream_id, stream);
-        self.next_stream_id += 1;
-    }
 }
 
 impl<St> Stream for MergeChannel<St>
@@ -53,23 +48,37 @@ where
         loop {
             match this.handle.poll_recv(cx) {
                 Poll::Ready(Some(st)) => {
+                    println!("Stream added to merge channel");
                     this.streams.insert(*this.next_stream_id, st);
                     *this.next_stream_id += 1;
                     println!("{}", this.next_stream_id);
                 }
-                Poll::Ready(None) => return Poll::Ready(None), // if handle is terminated, the stream is dead
-                Poll::Pending => (),
+                Poll::Ready(None) => {
+                    println!("Merge handle dropped");
+                    return Poll::Ready(None);
+                } // if handle is terminated, the stream is dead
+                Poll::Pending => {
+                    println!("Merge handle pending");
+                }
             }
 
             match ready!(this.streams.as_mut().poll_next(cx)) {
                 Some((_, Some(item))) => {
-                    println!("Got message");
+                    println!("Got pub message");
                     return Poll::Ready(Some(item));
                 }
                 // This stream has died (gets removed by StreamMap)
-                Some((_, None)) => (),
+                Some((_, None)) => {
+                    println!("Stream has died");
+                }
                 // All streams have died
-                None => return Poll::Ready(None),
+                // Note that this stream is immortal, so instead of returning Ready(None),
+                // which would kill the stream, we return Pending. New streams will be
+                // added at some point in the future via the channel.
+                None => {
+                    println!("StreamMap dead");
+                    return Poll::Pending;
+                }
             }
         }
     }
@@ -105,6 +114,7 @@ mod tests {
         tx.close().await.unwrap();
 
         assert_eq!(edge.next().await, Some("hello!"));
+        drop(handle);
         assert_eq!(edge.next().await, None);
     }
 }

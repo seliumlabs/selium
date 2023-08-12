@@ -40,7 +40,9 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
     let mut subscriber1 = start_subscriber("/acmeco/stocks").await?;
     let mut subscriber2 = start_subscriber("/acmeco/stocks").await?;
     let subscriber3 = start_subscriber("/acmeco/something_else").await?;
+    println!("Moo");
     let subscriber4 = start_subscriber("/bluthco/stocks").await?;
+    println!("Cow");
 
     let connection = selium::client()
         .keep_alive(5_000)?
@@ -76,13 +78,16 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
     let message5 = subscriber1.try_next().await?;
     let message6 = subscriber1.try_next().await?;
     let message7 = subscriber1.try_next().await?;
+    println!("Sub 1 done");
     let message8 = subscriber2.try_next().await?;
     let message9 = subscriber2.try_next().await?;
     let message10 = subscriber2.try_next().await?;
     let message11 = subscriber2.try_next().await?;
     let message12 = subscriber2.try_next().await?;
     let message13 = subscriber2.try_next().await?;
+    println!("Sub 2 almost");
     let message14 = subscriber2.try_next().await?;
+    println!("Sub 2 done");
     let message15 = subscriber3
         .into_future()
         .map(|_| String::new())
