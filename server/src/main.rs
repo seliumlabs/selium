@@ -1,5 +1,5 @@
 use crate::topic::Topic;
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
 use dashmap::{mapref::one::RefMut, DashMap};
@@ -150,12 +150,14 @@ async fn handle_stream(
         match result? {
             Frame::RegisterPublisher(payload) => {
                 let mut tx = create_topic(&payload.topic, &topics);
-                tx.try_send(Socket::Stream(StreamNotifyClose::new(stream)))?;
+                tx.try_send(Socket::Stream(StreamNotifyClose::new(stream)))
+                    .context("Failed to add Publisher sink")?;
             }
             Frame::RegisterSubscriber(payload) => {
                 let mut tx = create_topic(&payload.topic, &topics);
 
-                tx.try_send(Socket::Sink(stream))?;
+                tx.try_send(Socket::Sink(stream))
+                    .context("Failed to add Subscriber sink")?;
             }
             _ => return Err(anyhow!("Expected Header frame")),
         }

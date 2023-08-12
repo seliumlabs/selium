@@ -17,7 +17,6 @@ async fn test_pub_sub() {
     handle.kill().unwrap();
 
     let messages = result.unwrap();
-    // @TODO - Message ordering isn't yet guaranteed. This is a workaround.
     assert_eq!(messages[0], Some("foo".to_owned()));
     assert_eq!(messages[1], Some("bar".to_owned()));
     assert_eq!(messages[2], Some("foo".to_owned()));

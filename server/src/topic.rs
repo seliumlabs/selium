@@ -83,6 +83,9 @@ where
                     }
                 },
                 Poll::Ready(None) => return Poll::Ready(Ok(())), // if handle is terminated, the stream is dead
+                Poll::Pending if stream.is_empty() && buffered_item.is_none() => {
+                    return Poll::Pending
+                }
                 Poll::Pending => (),
             }
 
@@ -100,8 +103,9 @@ where
                 Poll::Ready(Some((_, Some(Err(e))))) => return Poll::Ready(Err(e)),
                 Poll::Ready(Some((_, None))) => (),
                 Poll::Ready(None) => {
-                    ready!(sink.poll_close(cx))?;
-                    return Poll::Ready(Ok(()));
+                    ready!(sink.as_mut().poll_flush(cx))?;
+                    // ready!(sink.as_mut().poll_close(cx))?;
+                    // return Poll::Ready(Ok(()));
                 }
                 Poll::Pending => {
                     ready!(sink.poll_flush(cx))?;
