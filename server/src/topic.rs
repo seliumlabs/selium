@@ -1,93 +1,150 @@
-use crate::{ordered_sink::OrderedExt, pipeline::Pipeline};
-use anyhow::{anyhow, Result};
-use futures::{
-    channel::mpsc,
-    future::{self, select, Either},
-    FutureExt, StreamExt, TryStreamExt,
-};
-use quinn::{Connection, StreamId};
-use selium_common::{
-    protocol::{Frame, PublisherPayload, SubscriberPayload},
-    types::BiStream,
-};
 use std::{
-    net::SocketAddr,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    pin::Pin,
+    task::{Context, Poll},
 };
 
-pub struct Topic {
-    pipeline: Pipeline,
-    sequence: Arc<AtomicUsize>,
+use anyhow::Result;
+use futures::{
+    channel::mpsc::{self, Receiver, Sender},
+    ready, Future, Sink, SinkExt, Stream, StreamExt,
+};
+use pin_project_lite::pin_project;
+use tokio_stream::StreamMap;
+
+use crate::sink::FanoutMany;
+
+pub struct BoxedStream<T>(pub Pin<Box<dyn Stream<Item = T> + Send + Sync>>);
+
+pub struct BoxedSink<T, E>(pub Pin<Box<dyn Sink<T, Error = E> + Send + Sync>>);
+
+pub enum Socket<St, Si, E> {
+    Stream(BoxedStream<St>),
+    Sink(BoxedSink<Si, E>),
 }
 
-impl Topic {
-    pub fn new(pipeline: Pipeline) -> Self {
-        Self {
-            pipeline,
-            sequence: Arc::new(AtomicUsize::new(1)),
-        }
+pin_project! {
+    #[project = TopicProj]
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    pub struct Topic<St, Si, E> {
+        #[pin]
+        stream: StreamMap<usize, BoxedStream<St>>,
+        next_stream_id: usize,
+        #[pin]
+        sink: FanoutMany<usize, BoxedSink<Si, E>>,
+        next_sink_id: usize,
+        #[pin]
+        handle: Receiver<Socket<St, Si, E>>,
+        buffered_item: Option<Si>,
+    }
+}
+
+impl<T> Stream for BoxedStream<T> {
+    type Item = T;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.0.poll_next_unpin(cx)
+    }
+}
+
+impl<T, E> Sink<T> for BoxedSink<T, E> {
+    type Error = E;
+
+    fn poll_ready(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        self.0.poll_ready_unpin(cx)
     }
 
-    pub async fn add_publisher(
-        &self,
-        header: PublisherPayload,
-        conn_addr: SocketAddr,
-        connection: Connection,
-        stream: BiStream,
-    ) -> Result<()> {
-        let stream_hash = sock_key(conn_addr, stream.get_recv_stream_id());
+    fn start_send(mut self: Pin<&mut Self>, item: T) -> std::result::Result<(), Self::Error> {
+        self.0.start_send_unpin(item)
+    }
 
-        self.pipeline.add_publisher(&stream_hash, header).await?;
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        self.0.poll_close_unpin(cx)
+    }
 
-        let messages = stream.try_for_each(|frame| match frame {
-            Frame::Message(bytes) => {
-                let seq = self.sequence.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(self.pipeline.traverse(&stream_hash, bytes, seq));
-                future::ok(())
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        self.0.poll_close_unpin(cx)
+    }
+}
+
+impl<St, Si, E> Topic<St, Si, E> {
+    pub fn pair() -> (Self, Sender<Socket<St, Si, E>>) {
+        let (tx, rx) = mpsc::channel(10);
+
+        (
+            Self {
+                stream: StreamMap::new(),
+                next_stream_id: 0,
+                sink: FanoutMany::new(),
+                next_sink_id: 0,
+                handle: rx,
+                buffered_item: None,
+            },
+            tx,
+        )
+    }
+}
+
+impl<St, Si, E> Future for Topic<St, Si, E>
+where
+    Si: Clone + Unpin,
+{
+    type Output = Result<(), E>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let TopicProj {
+            mut stream,
+            next_stream_id,
+            mut sink,
+            next_sink_id,
+            handle,
+            buffered_item,
+        } = self.project();
+
+        loop {
+            match handle.poll_next(cx) {
+                Poll::Ready(Some(sock)) => match sock {
+                    Socket::Stream(st) => {
+                        stream.insert(*next_stream_id, st);
+                        *next_stream_id += 1;
+                    }
+                    Socket::Sink(si) => {
+                        sink.insert(*next_sink_id, si);
+                        *next_sink_id += 1;
+                    }
+                },
+                Poll::Ready(None) => return Poll::Ready(Ok(())), // if handle is terminated, the stream is dead
+                Poll::Pending => (),
             }
-            _ => future::err(anyhow!("Expected Message frame")),
-        });
 
-        if let Either::Left((r, _)) = select(messages, connection.closed().boxed()).await {
-            r?;
+            // If we've got an item buffered already, we need to write it to the
+            // sink before we can do anything else
+            if buffered_item.is_some() {
+                ready!(sink.poll_ready(cx))?;
+                sink.as_mut().start_send(buffered_item.take().unwrap())?;
+            }
+
+            match stream.poll_next(cx) {
+                Poll::Ready(Some((_, item))) => {
+                    *buffered_item = Some(item);
+                }
+                Poll::Ready(None) => {
+                    ready!(sink.poll_close(cx))?;
+                    return Poll::Ready(Ok(()));
+                }
+                Poll::Pending => {
+                    ready!(sink.poll_flush(cx))?;
+                    return Poll::Pending;
+                }
+            }
         }
-
-        self.pipeline.rm_publisher(&stream_hash).await?;
-
-        Ok(())
     }
-
-    pub async fn add_subscriber(
-        &self,
-        header: SubscriberPayload,
-        conn_addr: SocketAddr,
-        connection: Connection,
-        sink: BiStream,
-    ) -> Result<()> {
-        let stream_hash = sock_key(conn_addr, sink.get_send_stream_id());
-
-        let (tx_chan, rx_chan) = mpsc::unbounded();
-        self.pipeline
-            .add_subscriber(&stream_hash, header, tx_chan)
-            .await?;
-
-        let forward = rx_chan
-            .map(|(seq, bytes)| Ok((seq, Frame::Message(bytes))))
-            .forward(sink.ordered(self.sequence.load(Ordering::SeqCst) - 1));
-
-        if let Either::Left((r, _)) = select(forward, connection.closed().boxed()).await {
-            r?;
-        }
-
-        self.pipeline.rm_subscriber(&stream_hash).await?;
-
-        Ok(())
-    }
-}
-
-fn sock_key(conn_addr: SocketAddr, stream_id: StreamId) -> String {
-    format!("{conn_addr}:{stream_id}")
 }

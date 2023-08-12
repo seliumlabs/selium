@@ -1,8 +1,5 @@
 use futures::{sink::With, Future, Sink, SinkExt as _};
 
-mod fanout_channel;
-pub use fanout_channel::*;
-
 mod fanout_many;
 pub use fanout_many::*;
 

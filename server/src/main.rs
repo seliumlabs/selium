@@ -1,19 +1,20 @@
-use crate::pipeline::topic::Topic;
-use anyhow::{anyhow, bail, Context, Result};
+use crate::topic::Topic;
+use anyhow::{anyhow, bail, Error, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
 use dashmap::DashMap;
 use env_logger::Builder;
-use futures::StreamExt;
+use futures::{channel::mpsc::Sender, StreamExt};
 use log::{error, info};
-use quinn::{Connection, IdleTimeout, VarInt};
+use quinn::{IdleTimeout, VarInt};
 use selium_common::{protocol::Frame, types::BiStream};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio_stream::StreamNotifyClose;
+use topic::{BoxedSink, BoxedStream, Socket};
 
-mod node;
+mod ordered_sink;
 mod quic;
 mod sink;
-mod stream;
 mod topic;
 
 #[derive(Parser, Debug)]
@@ -97,7 +98,7 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_connection(
-    topics: Arc<DashMap<String, Topic>>,
+    topics: Arc<DashMap<String, Sender<Socket<Option<Result<Frame>>, Frame, Error>>>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -133,7 +134,7 @@ async fn handle_connection(
         let topics_clone = topics.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(connection, topics_clone, stream).await {
+            if let Err(e) = handle_stream(topics_clone, stream).await {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -141,36 +142,22 @@ async fn handle_connection(
 }
 
 async fn handle_stream(
-    connection: Connection,
-    topics: Arc<DashMap<String, Topic>>,
+    topics: Arc<DashMap<String, Sender<Socket<Option<Result<Frame>>, Frame, Error>>>>,
     mut stream: BiStream,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                if !topics.contains_key(&payload.topic) {
-                    topics.insert(payload.topic.clone(), Topic::default());
-                }
-
-                let mut topic = topics.get_mut(&payload.topic).unwrap();
-
-                topic
-                    .add_publisher(payload, connection, stream)
-                    .await
-                    .context("Publisher error")?;
+                let mut tx = create_topic(&payload.topic, topics);
+                tx.try_send(Socket::Stream(BoxedStream(Box::pin(
+                    StreamNotifyClose::new(stream),
+                ))))?;
             }
             Frame::RegisterSubscriber(payload) => {
-                if !topics.contains_key(&payload.topic) {
-                    topics.insert(payload.topic.clone(), Topic::default());
-                }
+                let mut tx = create_topic(&payload.topic, topics);
 
-                let mut topic = topics.get_mut(&payload.topic).unwrap();
-
-                topic
-                    .add_subscriber(payload, connection, stream)
-                    .await
-                    .context("Subscriber error")?;
+                tx.try_send(Socket::Sink(BoxedSink(Box::pin(stream))))?;
             }
             _ => return Err(anyhow!("Expected Header frame")),
         }
@@ -179,4 +166,18 @@ async fn handle_stream(
     }
 
     Ok(())
+}
+
+fn create_topic(
+    name: &str,
+    topics: Arc<DashMap<String, Sender<Socket<Option<Result<Frame>>, Frame, Error>>>>,
+) -> Sender<Socket<Option<Result<Frame>>, Frame, Error>> {
+    if !topics.contains_key(name) {
+        let (topic, tx) = Topic::pair();
+        tokio::spawn(topic);
+
+        topics.insert(name.to_owned(), tx);
+    }
+
+    *topics.get_mut(name).unwrap()
 }
