@@ -104,8 +104,6 @@ where
                 Poll::Ready(Some((_, None))) => (),
                 Poll::Ready(None) => {
                     ready!(sink.as_mut().poll_flush(cx))?;
-                    // ready!(sink.as_mut().poll_close(cx))?;
-                    // return Poll::Ready(Ok(()));
                 }
                 Poll::Pending => {
                     ready!(sink.poll_flush(cx))?;

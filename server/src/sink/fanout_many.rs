@@ -117,7 +117,8 @@ where
     type Error = V::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        for idx in 0..self.entries.len() {
+        let mut idx = 0;
+        while idx < self.entries.len() {
             let (_, sink) = self.entries[idx].borrow_mut();
             pin!(sink);
             match sink.poll_ready(cx) {
@@ -125,7 +126,7 @@ where
                 Poll::Ready(Err(_)) => {
                     self.entries.swap_remove(idx);
                 }
-                Poll::Ready(Ok(())) => (),
+                Poll::Ready(Ok(())) => idx += 1,
             }
         }
 
@@ -148,7 +149,8 @@ where
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        for idx in 0..self.entries.len() {
+        let mut idx = 0;
+        while idx < self.entries.len() {
             let (_, sink) = self.entries[idx].borrow_mut();
             pin!(sink);
             match sink.poll_flush(cx) {
@@ -156,7 +158,7 @@ where
                 Poll::Ready(Err(_)) => {
                     self.entries.swap_remove(idx);
                 }
-                Poll::Ready(Ok(())) => (),
+                Poll::Ready(Ok(())) => idx += 1,
             }
         }
 
@@ -164,7 +166,8 @@ where
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        for idx in 0..self.entries.len() {
+        let mut idx = 0;
+        while idx < self.entries.len() {
             let (_, sink) = self.entries[idx].borrow_mut();
             pin!(sink);
             match sink.poll_close(cx) {
@@ -172,7 +175,7 @@ where
                 Poll::Ready(Err(_)) => {
                     self.entries.swap_remove(idx);
                 }
-                Poll::Ready(Ok(())) => (),
+                Poll::Ready(Ok(())) => idx += 1,
             }
         }
 
