@@ -963,7 +963,6 @@ dependencies = [
  "hex",
  "hmac-sha512",
  "log",
- "parking_lot",
  "pin-project-lite",
  "quinn",
  "rcgen",
