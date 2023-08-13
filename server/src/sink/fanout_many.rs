@@ -27,42 +27,6 @@ impl<K, V> FanoutMany<K, V> {
         }
     }
 
-    // pub fn iter(&self) -> impl Iterator<Item = &(K, V)> {
-    //     self.entries.iter()
-    // }
-
-    // pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut (K, V)> {
-    //     self.entries.iter_mut()
-    // }
-
-    // pub fn keys(&self) -> impl Iterator<Item = &K> {
-    //     self.iter().map(|(k, _)| k)
-    // }
-
-    // pub fn values(&self) -> impl Iterator<Item = &V> {
-    //     self.iter().map(|(_, v)| v)
-    // }
-
-    // pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
-    //     self.iter_mut().map(|(_, v)| v)
-    // }
-
-    // pub fn capacity(&self) -> usize {
-    //     self.entries.capacity()
-    // }
-
-    // pub fn len(&self) -> usize {
-    //     self.entries.len()
-    // }
-
-    // pub fn is_empty(&self) -> bool {
-    //     self.entries.is_empty()
-    // }
-
-    // pub fn clear(&mut self) {
-    //     self.entries.clear();
-    // }
-
     pub fn insert(&mut self, k: K, sink: V) -> Option<V>
     where
         K: Hash + Eq,
@@ -86,20 +50,6 @@ impl<K, V> FanoutMany<K, V> {
 
         None
     }
-
-    // pub fn contains_key<Q: ?Sized>(&self, k: &Q) -> bool
-    // where
-    //     K: Borrow<Q>,
-    //     Q: Hash + Eq,
-    // {
-    //     for i in 0..self.entries.len() {
-    //         if self.entries[i].0.borrow() == k {
-    //             return true;
-    //         }
-    //     }
-
-    //     false
-    // }
 }
 
 impl<K, V> Default for FanoutMany<K, V> {
