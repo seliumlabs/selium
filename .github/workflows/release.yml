@@ -29,14 +29,13 @@ jobs:
 
       - name: Get crate version
         id: version
-        run: echo ::set-output name=value::$(sed -ne 's/^version = "\(.*\)"/\1/p' < ${{ matrix.name }}/Cargo.toml)
+        run: echo value=$(sed -ne 's/^version = "\(.*\)"/\1/p' < ${{ matrix.name }}/Cargo.toml) >> $GITHUB_OUTPUT
 
       - name: Get CHANGELOG entry
         id: changelog
         run: |
           body=$(python ci/changelog.py ${{ steps.version.outputs.value }})
-          body="${body//$'\n'/'%0A'}"
-          echo ::set-output name=body::$body
+          echo "body=${body//$'\n'/'%0A'}" >> $GITHUB_OUTPUT
         if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
 
       - name: Tag branch
