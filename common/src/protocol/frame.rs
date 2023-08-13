@@ -7,7 +7,7 @@ const REGISTER_PUBLISHER: u8 = 0x0;
 const REGISTER_SUBSCRIBER: u8 = 0x1;
 const MESSAGE: u8 = 0x2;
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Frame {
     RegisterPublisher(PublisherPayload),
     RegisterSubscriber(SubscriberPayload),
@@ -66,7 +66,7 @@ pub struct PublisherPayload {
     pub operations: Vec<Operation>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SubscriberPayload {
     pub topic: String,
     pub retention_policy: u64,

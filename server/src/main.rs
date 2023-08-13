@@ -1,21 +1,22 @@
+use crate::topic::Topic;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
-use dashmap::DashMap;
+use dashmap::{mapref::one::RefMut, DashMap};
 use env_logger::Builder;
-use futures::StreamExt;
+use futures::{channel::mpsc::Sender, StreamExt};
 use log::{error, info};
-use pipeline::Pipeline;
-use quinn::{Connection, IdleTimeout, VarInt};
+use quinn::{IdleTimeout, VarInt};
 use selium_common::{protocol::Frame, types::BiStream};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
-use topic::Topic;
+use tokio_stream::StreamNotifyClose;
+use topic::Socket;
 
-mod graph;
-mod ordered_sink;
-mod pipeline;
 mod quic;
+mod sink;
 mod topic;
+
+type TopicChannel = Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -65,8 +66,6 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let pipeline = Pipeline::new();
-
     let (certs, key) = if let (Some(cert_path), Some(key_path)) = (args.cert.cert, args.cert.key) {
         quic::read_certs(cert_path, key_path)?
     } else if args.cert.self_signed {
@@ -88,10 +87,9 @@ async fn main() -> Result<()> {
 
     while let Some(conn) = endpoint.accept().await {
         info!("connection incoming");
-        let pipe_clone = pipeline.clone();
         let topics_clone = topics.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(pipe_clone.clone(), topics_clone, conn).await {
+            if let Err(e) = handle_connection(topics_clone, conn).await {
                 error!("connection failed: {:?}", e);
             }
         });
@@ -101,8 +99,7 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_connection(
-    pipeline: Pipeline,
-    topics: Arc<DashMap<String, Topic>>,
+    topics: Arc<DashMap<String, TopicChannel>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -135,13 +132,10 @@ async fn handle_connection(
             Ok(stream) => BiStream::from(stream),
         };
 
-        let pipe_clone = pipeline.clone();
         let topics_clone = topics.clone();
-        let addr = connection.remote_address();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(addr, pipe_clone, topics_clone, stream, connection).await
-            {
+            if let Err(e) = handle_stream(topics_clone, stream).await {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -149,38 +143,22 @@ async fn handle_connection(
 }
 
 async fn handle_stream(
-    conn_addr: SocketAddr,
-    pipeline: Pipeline,
-    topics: Arc<DashMap<String, Topic>>,
+    topics: Arc<DashMap<String, TopicChannel>>,
     mut stream: BiStream,
-    connection: Connection,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         match result? {
             Frame::RegisterPublisher(payload) => {
-                if !topics.contains_key(&payload.topic) {
-                    topics.insert(payload.topic.clone(), Topic::new(pipeline.clone()));
-                }
-
-                let topic = topics.get(&payload.topic).unwrap();
-
-                topic
-                    .add_publisher(payload, conn_addr, connection, stream)
-                    .await
-                    .context("Publisher error")?;
+                let mut tx = create_topic(&payload.topic, &topics);
+                tx.try_send(Socket::Stream(StreamNotifyClose::new(stream)))
+                    .context("Failed to add Publisher sink")?;
             }
             Frame::RegisterSubscriber(payload) => {
-                if !topics.contains_key(&payload.topic) {
-                    topics.insert(payload.topic.clone(), Topic::new(pipeline.clone()));
-                }
+                let mut tx = create_topic(&payload.topic, &topics);
 
-                let topic = topics.get(&payload.topic).unwrap();
-
-                topic
-                    .add_subscriber(payload, conn_addr, connection, stream)
-                    .await
-                    .context("Subscriber error")?;
+                tx.try_send(Socket::Sink(stream))
+                    .context("Failed to add Subscriber sink")?;
             }
             _ => return Err(anyhow!("Expected Header frame")),
         }
@@ -189,4 +167,18 @@ async fn handle_stream(
     }
 
     Ok(())
+}
+
+fn create_topic<'a>(
+    name: &str,
+    topics: &'a DashMap<String, TopicChannel>,
+) -> RefMut<'a, String, TopicChannel> {
+    if !topics.contains_key(name) {
+        let (topic, tx) = Topic::pair();
+        tokio::spawn(topic);
+
+        topics.insert(name.to_owned(), tx);
+    }
+
+    topics.get_mut(name).unwrap()
 }
