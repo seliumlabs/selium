@@ -30,10 +30,10 @@ async fn main() -> Result<()> {
 
     let mut publisher = connection
         .publisher("/acmeco/stocks")
+        .with_encoder(BincodeCodec::default())
         // Coming soon...
         // .map("/acmeco/forge_numbers.wasm")
         // .retain(Duration::from_secs(600))?
-        .with_encoder(BincodeCodec::default())
         .open()
         .await?;
 

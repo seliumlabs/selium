@@ -21,11 +21,11 @@ async fn main() -> Result<()> {
 
     let mut subscriber = connection
         .subscriber("/acmeco/stocks")
+        .with_decoder(BincodeCodec::<StockEvent>::default())
         // Coming soon...
         // .map("/selium/bonanza.wasm")
         // .filter("/selium/dodgy_stuff.wasm")
         // .retain(Duration::from_secs(600))?
-        .with_decoder(BincodeCodec::<StockEvent>::default())
         .open()
         .await?;
 

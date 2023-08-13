@@ -1,4 +1,4 @@
-use crate::traits::{MessageDecoder, MessageEncoder};
+use crate::traits::{MessageDecoder, MessageEncoder, SeliumCodec};
 use anyhow::Result;
 use bytes::{Buf, Bytes, BytesMut};
 use serde::{de::DeserializeOwned, Serialize};
@@ -50,6 +50,8 @@ impl<Item: DeserializeOwned> MessageDecoder<Item> for BincodeCodec<Item> {
         Ok(bincode::deserialize_from(buffer.reader())?)
     }
 }
+
+impl<Item> SeliumCodec for BincodeCodec<Item> {}
 
 #[cfg(test)]
 mod tests {

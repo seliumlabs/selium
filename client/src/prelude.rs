@@ -8,5 +8,4 @@
 //! use selium::prelude::*;
 //! ```
 //!
-
-pub use crate::traits::{Open, StreamConfig};
+pub use crate::traits::{Open, Operations, Retain};
