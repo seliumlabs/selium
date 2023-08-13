@@ -16,6 +16,8 @@ mod quic;
 mod sink;
 mod topic;
 
+type TopicChannel = Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>;
+
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct UserArgs {
@@ -97,7 +99,7 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_connection(
-    topics: Arc<DashMap<String, Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>>>,
+    topics: Arc<DashMap<String, TopicChannel>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -141,7 +143,7 @@ async fn handle_connection(
 }
 
 async fn handle_stream(
-    topics: Arc<DashMap<String, Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>>>,
+    topics: Arc<DashMap<String, TopicChannel>>,
     mut stream: BiStream,
 ) -> Result<()> {
     // Receive header
@@ -169,8 +171,8 @@ async fn handle_stream(
 
 fn create_topic<'a>(
     name: &str,
-    topics: &'a DashMap<String, Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>>,
-) -> RefMut<'a, String, Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>> {
+    topics: &'a DashMap<String, TopicChannel>,
+) -> RefMut<'a, String, TopicChannel> {
     if !topics.contains_key(name) {
         let (topic, tx) = Topic::pair();
         tokio::spawn(topic);
