@@ -13,6 +13,8 @@ use tokio_stream::StreamMap;
 
 use crate::sink::FanoutMany;
 
+const SOCK_CHANNEL_SIZE: usize = 100;
+
 pub enum Socket<St, Si> {
     Stream(St),
     Sink(Si),
@@ -36,7 +38,7 @@ pin_project! {
 
 impl<St, Si, Item> Topic<St, Si, Item> {
     pub fn pair() -> (Self, Sender<Socket<St, Si>>) {
-        let (tx, rx) = mpsc::channel(10);
+        let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
 
         (
             Self {

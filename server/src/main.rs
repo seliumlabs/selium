@@ -2,13 +2,13 @@ use crate::topic::Topic;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
-use dashmap::{mapref::one::RefMut, DashMap};
 use env_logger::Builder;
 use futures::{channel::mpsc::Sender, StreamExt};
 use log::{error, info};
 use quinn::{IdleTimeout, VarInt};
 use selium_common::{protocol::Frame, types::BiStream};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio::sync::Mutex;
 use tokio_stream::StreamNotifyClose;
 use topic::Socket;
 
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 
     // Create hash to store message ordering data
-    let topics = Arc::new(DashMap::new());
+    let topics = Arc::new(Mutex::new(HashMap::new()));
 
     while let Some(conn) = endpoint.accept().await {
         info!("connection incoming");
@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
 }
 
 async fn handle_connection(
-    topics: Arc<DashMap<String, TopicChannel>>,
+    topics: Arc<Mutex<HashMap<String, TopicChannel>>>,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -143,42 +143,39 @@ async fn handle_connection(
 }
 
 async fn handle_stream(
-    topics: Arc<DashMap<String, TopicChannel>>,
+    topics: Arc<Mutex<HashMap<String, TopicChannel>>>,
     mut stream: BiStream,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
-        match result? {
-            Frame::RegisterPublisher(payload) => {
-                let mut tx = create_topic(&payload.topic, &topics);
+        let frame = result?;
+        let topic_name = frame.get_topic().ok_or(anyhow!("Expected header frame"))?;
+
+        // Spawn new topic if it doesn't exist yet
+        let mut ts = topics.lock().await;
+        if !ts.contains_key(topic_name) {
+            let (fut, tx) = Topic::pair();
+            tokio::spawn(fut);
+
+            ts.insert(topic_name.to_owned(), tx);
+        }
+
+        let tx = ts.get_mut(topic_name).unwrap();
+
+        match frame {
+            Frame::RegisterPublisher(_) => {
                 tx.try_send(Socket::Stream(StreamNotifyClose::new(stream)))
                     .context("Failed to add Publisher sink")?;
             }
-            Frame::RegisterSubscriber(payload) => {
-                let mut tx = create_topic(&payload.topic, &topics);
-
+            Frame::RegisterSubscriber(_) => {
                 tx.try_send(Socket::Sink(stream))
                     .context("Failed to add Subscriber sink")?;
             }
-            _ => return Err(anyhow!("Expected Header frame")),
+            _ => unreachable!(), // because of `topic_name` instantiation
         }
     } else {
         info!("Stream closed");
     }
 
     Ok(())
-}
-
-fn create_topic<'a>(
-    name: &str,
-    topics: &'a DashMap<String, TopicChannel>,
-) -> RefMut<'a, String, TopicChannel> {
-    if !topics.contains_key(name) {
-        let (topic, tx) = Topic::pair();
-        tokio::spawn(topic);
-
-        topics.insert(name.to_owned(), tx);
-    }
-
-    topics.get_mut(name).unwrap()
 }
