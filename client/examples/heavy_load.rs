@@ -1,8 +1,8 @@
-use std::time::Instant;
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use selium::codecs::StringCodec;
 use selium::prelude::*;
+use std::time::Instant;
 
 const NUM_STREAMS: u64 = 10;
 const NUM_MESSAGES: u64 = 1_000_000;
@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
         .await
         .unwrap();
 
-    for _ in 0..NUM_STREAMS { 
+    for _ in 0..NUM_STREAMS {
         tokio::spawn({
             let mut publisher = connection
                 .publisher("/acmeco/stocks")
