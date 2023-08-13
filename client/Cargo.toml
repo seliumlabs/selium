@@ -61,3 +61,7 @@ required-features = ["bincode"]
 name = "publish_chrono"
 path = "examples/publish_chrono.rs"
 required-features = ["chrono"]
+
+[[example]]
+name = "heavy_load"
+path = "examples/heavy_load.rs"

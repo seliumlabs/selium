@@ -3,7 +3,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use std::mem::size_of;
 use tokio_util::codec::{Decoder, Encoder};
 
-const LEN_MARKER_SIZE: usize = size_of::<u32>();
+const LEN_MARKER_SIZE: usize = size_of::<u64>();
 const TYPE_MARKER_SIZE: usize = size_of::<u8>();
 const RESERVED_SIZE: usize = LEN_MARKER_SIZE + TYPE_MARKER_SIZE;
 
@@ -35,14 +35,20 @@ impl Decoder for MessageCodec {
             return Ok(None);
         }
 
-        let length = src.get_u64();
-        let message_type = src.get_u8();
+        let mut length_bytes = [0u8; LEN_MARKER_SIZE];
+        length_bytes.copy_from_slice(&src[..LEN_MARKER_SIZE]);
 
-        if src.len() < length as usize {
-            src.reserve(RESERVED_SIZE - src.len());
+        let length = u64::from_be_bytes(length_bytes);
+        let bytes_read = src.len() - RESERVED_SIZE;
+
+        if bytes_read < length as usize {
+            src.reserve(bytes_read);
             return Ok(None);
         }
 
+        src.advance(LEN_MARKER_SIZE);
+
+        let message_type = src.get_u8();
         let bytes = src.split_to(length as usize);
         let frame = Frame::try_from((message_type, bytes))?;
 
