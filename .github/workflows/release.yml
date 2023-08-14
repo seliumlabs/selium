@@ -32,7 +32,7 @@ jobs:
         uses: "WyriHaximus/github-action-get-previous-tag@v1"
         with:
           fallback: ${{ matrix.name }}-0.0.0
-          prefix: ${{ matrix.name }}
+          prefix: ${{ matrix.name }}-
 
       - name: Get crate version
         id: version
