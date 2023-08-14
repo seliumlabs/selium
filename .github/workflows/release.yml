@@ -12,6 +12,8 @@ jobs:
       matrix:
         name: [common, client, server]
         include:
+          - name: common
+            display: Common
           - name: client
             display: Client
           - name: server
@@ -67,5 +69,6 @@ jobs:
       - name: Cargo publish
         uses: actions-rs/cargo@v1
         with:
-          command: publish -p ${{ matrix.name }}
+          command: publish
+          args: -p ${{ matrix.name }}
         if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
