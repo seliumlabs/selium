@@ -10,7 +10,7 @@ jobs:
     name: Create GitHub Release
     strategy:
       matrix:
-        name: [client, server]
+        name: [common, client, server]
         include:
           - name: client
             display: Client
