@@ -9,23 +9,32 @@ jobs:
   release:
     name: Create GitHub Release
     strategy:
+      max-parallel: 1
       matrix:
-        name: [client, server]
+        name: [common, client, server]
         include:
+          - name: common
+            display: Common
+            repo: selium-common
           - name: client
             display: Client
+            repo: selium
           - name: server
             display: Server
+            repo: selium-server
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Get latest tag
         id: latesttag
         uses: "WyriHaximus/github-action-get-previous-tag@v1"
         with:
           fallback: ${{ matrix.name }}-0.0.0
+          prefix: ${{ matrix.name }}-
 
       - name: Get crate version
         id: version
@@ -34,8 +43,8 @@ jobs:
       - name: Get CHANGELOG entry
         id: changelog
         run: |
-          body=$(python ci/changelog.py ${{ steps.version.outputs.value }})
-          echo "body=${body//$'\n'/'%0A'}" >> $GITHUB_OUTPUT
+          body=$(python ci/changelog.py ${{ matrix.name }} ${{ steps.version.outputs.value }})
+          echo body=${body//$'\n'/'%0A'} >> $GITHUB_OUTPUT
         if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
 
       - name: Tag branch
@@ -68,4 +77,5 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: publish
+          args: -p ${{ matrix.repo }}
         if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
