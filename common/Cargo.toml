@@ -1,7 +1,16 @@
 [package]
 name = "selium-common"
 version = "0.1.0"
-edition = "2021"
+description = """
+selium-common is a dependent crate of Selium. Do not use directly.
+"""
+include = ["src/**/*"]
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [dependencies]
 anyhow = "1.0"
