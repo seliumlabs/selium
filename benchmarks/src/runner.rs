@@ -54,8 +54,9 @@ impl BenchmarkRunner {
     }
 
     pub async fn run(&self, args: Args) -> Result<BenchmarkResults> {
-        let mut tasks = Vec::with_capacity(2);
+        let mut tasks = Vec::with_capacity((args.num_of_streams + 1) as usize);
         let message = generate_message(args.message_size as usize);
+        let start = Instant::now();
 
         let mut subscriber = self
             .connection
@@ -92,8 +93,6 @@ impl BenchmarkRunner {
         });
 
         tasks.push(handle);
-
-        let start = Instant::now();
         join_all(tasks).await;
         let elapsed = start.elapsed();
 
