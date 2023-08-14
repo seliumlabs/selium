@@ -99,10 +99,12 @@ where
 
             // If we've got an item buffered already, we need to write it to the sink
             // before we can do anything else.
-            if let Some(item) = buffered_item.take() {
+            if buffered_item.is_some() {
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
                 ready!(sink.as_mut().poll_ready(cx)).unwrap();
-                sink.as_mut().start_send(item).unwrap();
+                sink.as_mut()
+                    .start_send(buffered_item.take().unwrap())
+                    .unwrap();
             }
 
             match stream.as_mut().poll_next(cx) {
