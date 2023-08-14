@@ -33,6 +33,14 @@ impl Frame {
         }
     }
 
+    pub fn get_topic(&self) -> Option<&str> {
+        match self {
+            Self::RegisterPublisher(p) => Some(&p.topic),
+            Self::RegisterSubscriber(s) => Some(&s.topic),
+            Self::Message(_) => None,
+        }
+    }
+
     pub fn write_to_bytes(self, dst: &mut BytesMut) -> Result<()> {
         match self {
             Frame::RegisterPublisher(payload) => bincode::serialize_into(dst.writer(), &payload)?,
