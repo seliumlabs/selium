@@ -2,6 +2,7 @@
 
 use std::{
     borrow::{Borrow, BorrowMut},
+    fmt::Debug,
     hash::Hash,
     pin::Pin,
     task::{Context, Poll},
@@ -9,6 +10,7 @@ use std::{
 
 use anyhow::Result;
 use futures::Sink;
+use log::error;
 use tokio::pin;
 
 #[must_use = "sinks do nothing unless you poll them"]
@@ -62,6 +64,7 @@ impl<K, V, Item> Sink<Item> for FanoutMany<K, V>
 where
     K: Unpin,
     V: Sink<Item> + Unpin,
+    V::Error: Debug,
     Item: Clone + Unpin,
 {
     type Error = V::Error;
@@ -84,15 +87,25 @@ where
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
+        let mut idx = 0;
         let len = self.entries.len();
-        for idx in 0..len {
+        while idx < len {
             let (_, sink) = self.entries[idx].borrow_mut();
             pin!(sink);
             if idx == len - 1 {
-                sink.start_send(item)?;
+                if let Err(e) = sink.start_send(item) {
+                    error!("Evicting broken sink from FanoutMany::start_send with err: {e:?}");
+                    self.entries.swap_remove(idx);
+                }
                 break;
             };
-            sink.start_send(item.clone())?;
+
+            if let Err(e) = sink.start_send(item.clone()) {
+                error!("Evicting broken sink from FanoutMany::start_send with err: {e:?}");
+                self.entries.swap_remove(idx);
+            } else {
+                idx += 1;
+            }
         }
 
         Ok(())
