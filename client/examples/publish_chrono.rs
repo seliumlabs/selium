@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    publisher.send("Hello, world!").await?;
+    publisher.send("Hello, world!".to_owned()).await?;
     publisher.finish().await?;
 
     Ok(())
