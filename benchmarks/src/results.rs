@@ -13,7 +13,7 @@ pub struct BenchmarkResults {
 
 impl BenchmarkResults {
     pub fn calculate(duration: Duration, args: Args) -> Self {
-        let total_bytes_transferred = args.num_of_messages * args.message_size as u64;
+        let total_bytes_transferred = args.num_of_messages * args.message_size;
         let total_mb_transferred = total_bytes_transferred as f64 / 1024.0 / 1024.0;
         let avg_throughput = total_mb_transferred / duration.as_secs_f64();
         let avg_latency = duration.as_nanos() as f64 / args.num_of_messages as f64;
