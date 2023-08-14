@@ -27,6 +27,12 @@ fn start_server() -> Child {
         .expect("Failed to start server")
 }
 
+fn generate_message(message_size: usize) -> String {
+    (0..message_size)
+        .map(|i| (i % 25 + 97) as u8 as char)
+        .collect()
+}
+
 pub struct BenchmarkRunner {
     server_handle: Child,
     connection: Client,
@@ -49,8 +55,7 @@ impl BenchmarkRunner {
 
     pub async fn run(&self, args: Args) -> Result<BenchmarkResults> {
         let mut tasks = Vec::with_capacity(2);
-        let message = "Hello, world!";
-        let size = message.len();
+        let message = generate_message(args.message_size as usize);
 
         let mut subscriber = self
             .connection
@@ -66,6 +71,8 @@ impl BenchmarkRunner {
                 .with_encoder(StringCodec)
                 .open()
                 .await?;
+
+            let message = message.clone();
 
             let handle = tokio::spawn(async move {
                 for _ in 0..args.num_of_messages / args.num_of_streams {
@@ -90,7 +97,7 @@ impl BenchmarkRunner {
         join_all(tasks).await;
         let elapsed = start.elapsed();
 
-        Ok(BenchmarkResults::calculate(elapsed, size, args))
+        Ok(BenchmarkResults::calculate(elapsed, args))
     }
 }
 

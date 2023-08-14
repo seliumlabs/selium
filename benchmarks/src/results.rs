@@ -12,8 +12,8 @@ pub struct BenchmarkResults {
 }
 
 impl BenchmarkResults {
-    pub fn calculate(duration: Duration, message_size: usize, args: Args) -> Self {
-        let total_bytes_transferred = args.num_of_messages * message_size as u64;
+    pub fn calculate(duration: Duration, args: Args) -> Self {
+        let total_bytes_transferred = args.num_of_messages * args.message_size as u64;
         let total_mb_transferred = total_bytes_transferred as f64 / 1024.0 / 1024.0;
         let avg_throughput = total_mb_transferred / duration.as_secs_f64();
         let avg_latency = duration.as_nanos() as f64 / args.num_of_messages as f64;
@@ -40,9 +40,11 @@ impl Display for BenchmarkResults {
 Benchmark Results
 ---------------------
 Number of Messages: {}
-Number of Streams: {}",
+Number of Streams: {}
+Message Size (Bytes): {}",
             self.args.num_of_messages.to_formatted_string(&Locale::en),
             self.args.num_of_streams.to_formatted_string(&Locale::en),
+            self.args.message_size.to_formatted_string(&Locale::en),
         );
 
         let header = format!(
