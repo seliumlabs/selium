@@ -9,6 +9,7 @@ jobs:
   release:
     name: Create GitHub Release
     strategy:
+      max-parallel: 1
       matrix:
         name: [common, client, server]
         include:
