@@ -3,7 +3,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser};
 use clap_verbosity_flag::Verbosity;
 use env_logger::Builder;
-use futures::{channel::mpsc::Sender, StreamExt};
+use futures::{channel::mpsc::Sender, SinkExt, StreamExt};
 use log::{error, info};
 use quinn::{IdleTimeout, VarInt};
 use selium_common::{protocol::Frame, types::BiStream};
@@ -164,11 +164,13 @@ async fn handle_stream(
 
         match frame {
             Frame::RegisterPublisher(_) => {
-                tx.try_send(Socket::Stream(StreamNotifyClose::new(stream)))
+                tx.send(Socket::Stream(StreamNotifyClose::new(stream)))
+                    .await
                     .context("Failed to add Publisher sink")?;
             }
             Frame::RegisterSubscriber(_) => {
-                tx.try_send(Socket::Sink(stream))
+                tx.send(Socket::Sink(stream))
+                    .await
                     .context("Failed to add Subscriber sink")?;
             }
             _ => unreachable!(), // because of `topic_name` instantiation
