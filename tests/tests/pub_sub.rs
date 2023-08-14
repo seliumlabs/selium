@@ -56,13 +56,13 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 
     publisher
         .send_all(&mut iter(vec![
-            Ok("foo"),
-            Ok("bar"),
-            Ok("foo"),
-            Ok("bar"),
-            Ok("foo"),
-            Ok("bar"),
-            Ok("foo"),
+            Ok("foo".to_owned()),
+            Ok("bar".to_owned()),
+            Ok("foo".to_owned()),
+            Ok("bar".to_owned()),
+            Ok("foo".to_owned()),
+            Ok("bar".to_owned()),
+            Ok("foo".to_owned()),
         ]))
         .await?;
 
