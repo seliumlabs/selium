@@ -7,7 +7,7 @@ use std::{
     time::Instant,
 };
 
-const SERVER_ADDR: &'static str = "127.0.0.1:7001";
+const SERVER_ADDR: &str = "127.0.0.1:7001";
 
 fn start_server() -> Child {
     Command::new(env!("CARGO"))

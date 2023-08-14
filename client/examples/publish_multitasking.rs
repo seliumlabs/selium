@@ -24,7 +24,10 @@ async fn main() -> Result<()> {
     tokio::spawn({
         let mut publisher = publisher.duplicate().await.unwrap();
         async move {
-            publisher.send("Hello from spawned task!".to_owned()).await.unwrap();
+            publisher
+                .send("Hello from spawned task!".to_owned())
+                .await
+                .unwrap();
             publisher.finish().await.unwrap();
         }
     });
