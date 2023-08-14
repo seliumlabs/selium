@@ -35,7 +35,7 @@ jobs:
         id: changelog
         run: |
           body=$(python ci/changelog.py ${{ steps.version.outputs.value }})
-          echo "body=${body//$'\n'/'%0A'}" >> $GITHUB_OUTPUT
+          echo body=${body//$'\n'/'%0A'} >> $GITHUB_OUTPUT
         if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
 
       - name: Tag branch
