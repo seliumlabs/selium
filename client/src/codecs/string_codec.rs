@@ -7,9 +7,9 @@ use bytes::{Bytes, BytesMut};
 pub struct StringCodec;
 
 /// Encodes a [&str] slice into [Bytes](bytes::Bytes).
-impl MessageEncoder<&str> for StringCodec {
-    fn encode(&self, item: &str) -> Result<Bytes> {
-        Ok(item.to_owned().into())
+impl MessageEncoder<String> for StringCodec {
+    fn encode(&self, item: String) -> Result<Bytes> {
+        Ok(item.into())
     }
 }
 
@@ -37,7 +37,7 @@ mod tests {
         let expected = BytesMut::from(input);
 
         let codec = StringCodec;
-        let encoded = codec.encode(input).unwrap();
+        let encoded = codec.encode(input.to_owned()).unwrap();
 
         assert_eq!(expected, encoded);
     }

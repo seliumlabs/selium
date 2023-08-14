@@ -1,0 +1,12 @@
+[package]
+name = "selium-benchmarks"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+selium = { path = "../client" }
+clap = { version = "4.3.21", features = ["derive"] }
+tokio = { version = "1.29", features = ["macros"] }
+futures = "0.3.28"
+anyhow = "1.0.72"
+num-format = "0.4.4"
