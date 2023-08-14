@@ -15,10 +15,13 @@ jobs:
         include:
           - name: common
             display: Common
+            repo: selium-common
           - name: client
             display: Client
+            repo: selium
           - name: server
             display: Server
+            repo: selium-server
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -71,5 +74,5 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: publish
-          args: -p ${{ matrix.name }}
+          args: -p ${{ matrix.repo }}
         if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
