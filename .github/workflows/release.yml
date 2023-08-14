@@ -67,5 +67,5 @@ jobs:
       - name: Cargo publish
         uses: actions-rs/cargo@v1
         with:
-          command: publish
+          command: publish -p ${{ matrix.name }}
         if: ${{ steps.latesttag.outputs.tag != format('{0}-{1}', matrix.name, steps.version.outputs.value) }}
