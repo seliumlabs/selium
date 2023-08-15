@@ -86,6 +86,41 @@ Finally, in our original terminal window, run the client:
 $ cargo run
 ```
 
+### Running Benchmarks
+
+Included in the repository is a `benchmarks` binary containing end-to-end benchmarks for the publisher/subscriber clients. 
+
+These benchmarks measure the performance of both encoding/decoding message payloads on the client, as well the responsiveness of the 
+Selium server.
+
+To run the benchmarks with the default options, execute the following commands:
+
+```bash
+$ cd benchmarks
+$ cargo run --release
+```
+
+This will run the benchmarks with default values provided for the benchmark configuration arguments, which should produce a summary 
+similar to the following:
+
+```bash
+$ cargo run --release
+
+Benchmark Results
+---------------------
+Number of Messages: 1,000,000
+Number of Streams: 10
+Message Size (Bytes): 32
+
+| Duration             | Total Transferred    | Avg. Throughput      | Avg. Latency         |
+| 1.3476 Secs          | 30.52 MB             | 22.65 MB/s           | 1347.56 ns           |
+```
+
+If the default configuration is not sufficient, execute the following command to see a list of benchmark arguments. 
+```bash
+$ cargo run -- --help
+``` 
+
 ### Next Steps
 
 Selium is a brokered messaging platform, meaning that it has a client and a server component. Check
