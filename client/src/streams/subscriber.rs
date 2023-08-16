@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use futures::{SinkExt, Stream, StreamExt};
 use quinn::Connection;
 use selium_common::protocol::{Frame, SubscriberPayload};
-use selium_common::types::BiStream;
+use selium_common::types::{BiStream, Executor};
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -60,13 +60,14 @@ impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
     D: MessageDecoder<Item> + SeliumCodec,
 {
-    fn map(mut self, module_path: &str) -> Self {
-        self.state.common.map(module_path);
+    fn map(mut self, executor: Executor) -> Self {
+        println!("{executor:?}");
+        self.state.common.map(executor);
         self
     }
 
-    fn filter(mut self, module_path: &str) -> Self {
-        self.state.common.filter(module_path);
+    fn filter(mut self, executor: Executor) -> Self {
+        self.state.common.filter(executor);
         self
     }
 }

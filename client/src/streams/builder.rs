@@ -1,7 +1,7 @@
 use crate::traits::TryIntoU64;
 use anyhow::Result;
 use quinn::Connection;
-use selium_common::types::Operation;
+use selium_common::types::{Executor, Operation};
 
 /// The default `retention_policy` setting for messages.
 pub const RETENTION_POLICY_DEFAULT: u64 = 0;
@@ -43,13 +43,13 @@ impl StreamCommon {
     }
 
     #[doc(hidden)]
-    pub fn map(&mut self, module_path: &str) {
-        self.operations.push(Operation::Map(module_path.into()));
+    pub fn map(&mut self, executor: Executor) {
+        self.operations.push(Operation::Map(executor));
     }
 
     #[doc(hidden)]
-    pub fn filter(&mut self, module_path: &str) {
-        self.operations.push(Operation::Filter(module_path.into()));
+    pub fn filter(&mut self, executor: Executor) {
+        self.operations.push(Operation::Filter(executor));
     }
 
     #[doc(hidden)]

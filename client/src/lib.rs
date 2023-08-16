@@ -1,11 +1,12 @@
 mod client;
 mod streams;
 
-pub mod codecs;
 pub(crate) mod crypto;
+pub(crate) mod utils;
+
+pub mod codecs;
 pub mod prelude;
 pub mod traits;
-pub(crate) mod utils;
 
 pub use client::*;
 pub use streams::*;

@@ -1,6 +1,7 @@
 use super::TryIntoU64;
 use anyhow::Result;
 use async_trait::async_trait;
+use selium_common::types::Executor;
 
 /// Provides an `open` method for [StreamBuilder](crate::StreamBuilder) implementations to
 /// construct and spawn a new stream.
@@ -30,6 +31,6 @@ pub trait Retain {
 
 #[doc(hidden)]
 pub trait Operations {
-    fn map(self, module_path: &str) -> Self;
-    fn filter(self, module_path: &str) -> Self;
+    fn map(self, executor: Executor) -> Self;
+    fn filter(self, executor: Executor) -> Self;
 }
