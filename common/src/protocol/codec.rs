@@ -60,7 +60,7 @@ impl Decoder for MessageCodec {
 mod tests {
     use super::*;
     use crate::protocol::{PublisherPayload, SubscriberPayload};
-    use crate::types::Operation;
+    use crate::types::{Executor, Operation};
     use bytes::Bytes;
 
     #[test]
@@ -69,15 +69,15 @@ mod tests {
             topic: "Some topic".into(),
             retention_policy: 5,
             operations: vec![
-                Operation::Map("first/module.wasm".into()),
-                Operation::Map("second/module.wasm".into()),
-                Operation::Filter("third/module.wasm".into()),
+                Operation::Map(Executor::Wasm("first/module.wasm".into())),
+                Operation::Map(Executor::Wasm("second/module.wasm".into())),
+                Operation::Filter(Executor::Wasm("third/module.wasm".into())),
             ],
         });
 
         let mut codec = MessageCodec::default();
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let expected = Bytes::from(&b"\0\0\0\0\0\0\0\x86\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -90,15 +90,15 @@ mod tests {
             topic: "Some topic".into(),
             retention_policy: 5,
             operations: vec![
-                Operation::Map("first/module.wasm".into()),
-                Operation::Map("second/module.wasm".into()),
-                Operation::Filter("third/module.wasm".into()),
+                Operation::Map(Executor::Wasm("first/module.wasm".into())),
+                Operation::Map(Executor::Wasm("second/module.wasm".into())),
+                Operation::Filter(Executor::Wasm("third/module.wasm".into())),
             ],
         });
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0\0\0\0\0z\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let expected = Bytes::from(&b"\0\0\0\0\0\0\0\x86\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -121,15 +121,15 @@ mod tests {
     #[test]
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec::default();
-        let mut src = BytesMut::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
             topic: "Some topic".into(),
             retention_policy: 5,
             operations: vec![
-                Operation::Map("first/module.wasm".into()),
-                Operation::Map("second/module.wasm".into()),
-                Operation::Filter("third/module.wasm".into()),
+                Operation::Map(Executor::Wasm("first/module.wasm".into())),
+                Operation::Map(Executor::Wasm("second/module.wasm".into())),
+                Operation::Filter(Executor::Wasm("third/module.wasm".into())),
             ],
         });
 
@@ -141,15 +141,15 @@ mod tests {
     #[test]
     fn decodes_register_publisher_frame() {
         let mut codec = MessageCodec::default();
-        let mut src = BytesMut::from("\0\0\0\0\0\0\0z\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
 
         let expected = Frame::RegisterPublisher(PublisherPayload {
             topic: "Some topic".into(),
             retention_policy: 5,
             operations: vec![
-                Operation::Map("first/module.wasm".into()),
-                Operation::Map("second/module.wasm".into()),
-                Operation::Filter("third/module.wasm".into()),
+                Operation::Map(Executor::Wasm("first/module.wasm".into())),
+                Operation::Map(Executor::Wasm("second/module.wasm".into())),
+                Operation::Filter(Executor::Wasm("third/module.wasm".into())),
             ],
         });
 
