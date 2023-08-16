@@ -9,7 +9,7 @@ use lazy_static::lazy_static;
 use proc_macro::TokenStream;
 use quote::quote;
 use rhai::Engine;
-use syn::parse_macro_input;
+use syn::{parse_macro_input, DeriveInput};
 
 lazy_static! {
     static ref ENGINE: Engine = Engine::new();
@@ -61,6 +61,22 @@ pub fn rhai(input: TokenStream) -> TokenStream {
             Executor::Rhai(#expression.to_owned())
         }),
         Err(_) => quote!(std::compile_error!("Invalid Rhai expression")),
+    };
+
+    token.into()
+}
+
+#[proc_macro_derive(SeliumCodec)]
+pub fn selium_codec_derive(input: TokenStream) -> TokenStream {
+    let DeriveInput { ident, generics, .. } = parse_macro_input!(input);
+    let (impl_generics, ty_generics, ..) = generics.split_for_impl();
+
+    let token = quote! {
+        impl #impl_generics SeliumCodec for #ident #ty_generics {
+            fn name(&self) -> String {
+                String::from(stringify!(#ident))
+            }
+        }
     };
 
     token.into()

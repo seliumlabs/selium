@@ -6,9 +6,9 @@ version = "0.1.0"
 proc-macro = true
 
 [dependencies]
-lazy_static = "1.4.0"
-proc-macro2 = "1.0.66"
-quote = "1.0.32"
-rhai = { version = "1.15.1", features = ["sync"] }
+lazy_static = "1.4"
+proc-macro2 = "1.0"
+quote = "1.0"
+rhai = { version = "1.15", features = ["sync"] }
 selium-common = { version = "0.1", path = "../common" }
-syn = "2.0.28"
+syn = "2.0"

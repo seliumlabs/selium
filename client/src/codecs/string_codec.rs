@@ -1,9 +1,11 @@
-use crate::traits::{MessageDecoder, MessageEncoder, SeliumCodec};
+use crate::traits::{MessageDecoder, MessageEncoder};
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
+use selium_common::traits::SeliumCodec;
+use selium_macros::SeliumCodec;
 
 /// A basic codec for encoding/decoding UTF-8 [String] message payloads.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, SeliumCodec)]
 pub struct StringCodec;
 
 /// Encodes a [&str] slice into [Bytes](bytes::Bytes).
@@ -24,8 +26,6 @@ impl MessageDecoder<String> for StringCodec {
         Ok(String::from_utf8(buffer[..].into())?)
     }
 }
-
-impl SeliumCodec for StringCodec {}
 
 #[cfg(test)]
 mod tests {

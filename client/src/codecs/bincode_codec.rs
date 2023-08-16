@@ -1,12 +1,14 @@
-use crate::traits::{MessageDecoder, MessageEncoder, SeliumCodec};
+use crate::traits::{MessageDecoder, MessageEncoder};
 use anyhow::Result;
 use bytes::{Buf, Bytes, BytesMut};
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
+use selium_macros::SeliumCodec;
+use selium_common::traits::SeliumCodec;
 
 /// A basic codec that uses [bincode] to serialize and deserialize
 /// binary message payloads.
-#[derive(Debug)]
+#[derive(Debug, SeliumCodec)]
 pub struct BincodeCodec<Item> {
     _marker: PhantomData<Item>,
 }
@@ -50,8 +52,6 @@ impl<Item: DeserializeOwned> MessageDecoder<Item> for BincodeCodec<Item> {
         Ok(bincode::deserialize_from(buffer.reader())?)
     }
 }
-
-impl<Item> SeliumCodec for BincodeCodec<Item> {}
 
 #[cfg(test)]
 mod tests {
