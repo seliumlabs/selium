@@ -68,6 +68,7 @@ mod tests {
         let frame = Frame::RegisterSubscriber(SubscriberPayload {
             topic: "Some topic".into(),
             retention_policy: 5,
+            decoder: Some("SomeCodec".to_owned()),
             operations: vec![
                 Operation::Map(Executor::Wasm("first/module.wasm".into())),
                 Operation::Map(Executor::Wasm("second/module.wasm".into())),
@@ -77,7 +78,7 @@ mod tests {
 
         let mut codec = MessageCodec::default();
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from(&b"\0\0\0\0\0\0\0\x86\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
+        let expected = Bytes::from(&b"\0\0\0\0\0\0\0\x98\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm\x01\t\0\0\0\0\0\0\0SomeCodec"[..]);
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -89,6 +90,7 @@ mod tests {
         let frame = Frame::RegisterPublisher(PublisherPayload {
             topic: "Some topic".into(),
             retention_policy: 5,
+            encoder: Some("SomeCodec".to_owned()),
             operations: vec![
                 Operation::Map(Executor::Wasm("first/module.wasm".into())),
                 Operation::Map(Executor::Wasm("second/module.wasm".into())),
@@ -98,7 +100,7 @@ mod tests {
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from(&b"\0\0\0\0\0\0\0\x86\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
+        let expected = Bytes::from(&b"\0\0\0\0\0\0\0\x98\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm\x01\t\0\0\0\0\0\0\0SomeCodec"[..]);
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -121,11 +123,12 @@ mod tests {
     #[test]
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec::default();
-        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
+        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x98\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm\x01\t\0\0\0\0\0\0\0SomeCodec"[..]);
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
             topic: "Some topic".into(),
             retention_policy: 5,
+            decoder: Some("SomeCodec".to_owned()),
             operations: vec![
                 Operation::Map(Executor::Wasm("first/module.wasm".into())),
                 Operation::Map(Executor::Wasm("second/module.wasm".into())),
@@ -141,11 +144,12 @@ mod tests {
     #[test]
     fn decodes_register_publisher_frame() {
         let mut codec = MessageCodec::default();
-        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
+        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x98\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x01\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm\x01\t\0\0\0\0\0\0\0SomeCodec"[..]);
 
         let expected = Frame::RegisterPublisher(PublisherPayload {
             topic: "Some topic".into(),
             retention_policy: 5,
+            encoder: Some("SomeCodec".to_owned()),
             operations: vec![
                 Operation::Map(Executor::Wasm("first/module.wasm".into())),
                 Operation::Map(Executor::Wasm("second/module.wasm".into())),

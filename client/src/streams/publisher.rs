@@ -1,5 +1,5 @@
 use super::builder::{StreamBuilder, StreamCommon};
-use crate::traits::{MessageEncoder, Open, Operations, Retain, TryIntoU64};
+use crate::traits::{MessageEncoder, Open, Operations, Retain, TryIntoU64, Codec};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};
@@ -48,7 +48,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
 
 impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>>
 where
-    E: MessageEncoder<Item>,
+    E: Codec + MessageEncoder<Item>,
 {
     fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
         self.state.common.retain(policy)?;
@@ -58,7 +58,7 @@ where
 
 impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>>
 where
-    E: MessageEncoder<Item> + SeliumCodec,
+    E: Codec + MessageEncoder<Item> + SeliumCodec,
 {
     fn map(mut self, executor: Executor) -> Self {
         self.state.common.map(executor);
@@ -74,7 +74,7 @@ where
 #[async_trait]
 impl<E, Item> Open for StreamBuilder<PublisherWantsOpen<E, Item>>
 where
-    E: MessageEncoder<Item> + Send + Clone,
+    E: Codec + MessageEncoder<Item> + Send + Clone,
     Item: Send,
 {
     type Output = Publisher<E, Item>;
@@ -84,6 +84,7 @@ where
             topic: self.state.common.topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
+            encoder: self.state.encoder.name(),
         };
 
         let publisher = Publisher::spawn(self.connection, headers, self.state.encoder).await?;
@@ -114,7 +115,7 @@ pub struct Publisher<E, Item> {
 
 impl<E, Item> Publisher<E, Item>
 where
-    E: MessageEncoder<Item> + Clone,
+    E: Codec + MessageEncoder<Item> + Clone,
 {
     async fn spawn(connection: Connection, headers: PublisherPayload, encoder: E) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(&connection).await?;
@@ -172,7 +173,7 @@ where
 
 impl<E, Item> Sink<Item> for Publisher<E, Item>
 where
-    E: MessageEncoder<Item> + Send + Unpin,
+    E: Codec + MessageEncoder<Item> + Send + Unpin,
     Item: Unpin,
 {
     type Error = anyhow::Error;

@@ -3,8 +3,7 @@ use anyhow::Result;
 use bytes::{Buf, Bytes, BytesMut};
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
-use selium_macros::SeliumCodec;
-use selium_common::traits::SeliumCodec;
+use crate::traits::{Codec, SeliumCodec};
 
 /// A basic codec that uses [bincode] to serialize and deserialize
 /// binary message payloads.

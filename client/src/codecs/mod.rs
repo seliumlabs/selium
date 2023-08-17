@@ -51,6 +51,7 @@
 //!
 //! However, when the provided codecs are either not suitable for your needs, or lack support for
 //! a specific serialization format, it is trivial to create a custom codec via the
+//! [CustomCodec](crate::traits::CustomCodec),
 //! [MessageEncoder](crate::traits::MessageEncoder) and
 //! [MessageDecoder](crate::traits::MessageDecoder) traits.
 //!
@@ -59,11 +60,14 @@
 //! To give a contrived example, let's create a codec called `ColorCodec`, which will encode and
 //! decode a [tuple] containing three [u8] values to describe a color.
 //!
-//! To begin, we'll create a struct called `ColorCodec`, and derive the [Default] and [Clone]
-//! traits.
+//! To begin, we'll create a struct called `ColorCodec`, and derive the [Default], [Clone] and 
+//! [CustomCodec](crate::traits::CustomCodec) traits.
 //!
 //! ```
-//! #[derive(Default, Clone)]
+//! # use selium_macros::CustomCodec;
+//! use selium::traits::{Codec, CustomCodec};
+//!
+//! #[derive(Default, Clone, CustomCodec)]
 //! pub struct ColorCodec;
 //! ```
 //!
@@ -75,7 +79,9 @@
 //! unnamed [tuple].
 //!
 //! ```
-//! # #[derive(Default, Clone)]
+//! # use selium_macros::CustomCodec;
+//! # use selium::traits::{Codec, CustomCodec};
+//! # #[derive(Default, Clone, CustomCodec)]
 //! # pub struct ColorCodec;
 //! use anyhow::Result;
 //! use selium::traits::{MessageEncoder, MessageDecoder};
@@ -104,9 +110,10 @@
 //!
 //! ```
 //! # use anyhow::Result;
-//! # use selium::traits::MessageEncoder;
+//! # use selium_macros::CustomCodec;
+//! # use selium::traits::{Codec, CustomCodec, MessageEncoder};
 //! # use bytes::{Bytes, BytesMut, BufMut};
-//! # #[derive(Default, Clone)]
+//! # #[derive(Default, Clone, CustomCodec)]
 //! # pub struct ColorCodec;
 //! # type Color = (u8, u8, u8);
 //! impl MessageEncoder<Color> for ColorCodec {
@@ -127,9 +134,10 @@
 //!
 //! ```
 //! # use anyhow::Result;
-//! # use selium::traits::MessageDecoder;
+//! # use selium_macros::CustomCodec;
+//! # use selium::traits::{Codec, CustomCodec, MessageDecoder};
 //! # use bytes::{Buf, BytesMut};
-//! # #[derive(Default, Clone)]
+//! # #[derive(Default, Clone, CustomCodec)]
 //! # pub struct ColorCodec;
 //! # type Color = (u8, u8, u8);
 //! impl MessageDecoder<Color> for ColorCodec {
@@ -147,11 +155,12 @@
 //! customized codec to suit your specific message format.
 //!
 //! ```
+//! # use selium_macros::CustomCodec;
 //! use anyhow::Result;
-//! use selium::traits::{MessageEncoder, MessageDecoder};
+//! use selium::traits::{Codec, CustomCodec, MessageEncoder, MessageDecoder};
 //! use bytes::{Bytes, BytesMut, Buf, BufMut};
 //!
-//! #[derive(Default, Clone)]
+//! #[derive(Default, Clone, CustomCodec)]
 //! pub struct ColorCodec;
 //!
 //! type Color = (u8, u8, u8);

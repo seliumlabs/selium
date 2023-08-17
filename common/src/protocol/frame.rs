@@ -72,6 +72,7 @@ pub struct PublisherPayload {
     pub topic: String,
     pub retention_policy: u64,
     pub operations: Vec<Operation>,
+    pub encoder: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -79,4 +80,5 @@ pub struct SubscriberPayload {
     pub topic: String,
     pub retention_policy: u64,
     pub operations: Vec<Operation>,
+    pub decoder: Option<String>,
 }

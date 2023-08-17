@@ -1,4 +1,4 @@
-use crate::traits::{MessageDecoder, Open, Operations, Retain, TryIntoU64};
+use crate::traits::{MessageDecoder, Open, Operations, Retain, TryIntoU64, Codec};
 use crate::{StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -49,7 +49,7 @@ impl StreamBuilder<SubscriberWantsDecoder> {
 
 impl<D, Item> Retain for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
-    D: MessageDecoder<Item>,
+    D: Codec + MessageDecoder<Item>,
 {
     fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
         self.state.common.retain(policy)?;
@@ -59,10 +59,9 @@ where
 
 impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
-    D: MessageDecoder<Item> + SeliumCodec,
+    D: Codec + MessageDecoder<Item> + SeliumCodec,
 {
     fn map(mut self, executor: Executor) -> Self {
-        println!("{executor:?}");
         self.state.common.map(executor);
         self
     }
@@ -76,7 +75,7 @@ where
 #[async_trait]
 impl<D, Item> Open for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
-    D: MessageDecoder<Item> + Send,
+    D: Codec + MessageDecoder<Item> + Send,
     Item: Send,
 {
     type Output = Subscriber<D, Item>;
@@ -86,7 +85,10 @@ where
             topic: self.state.common.topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
+            decoder: self.state.decoder.name(),
         };
+
+        println!("{headers:?}");
 
         let subscriber = Subscriber::spawn(self.connection, headers, self.state.decoder).await?;
 
@@ -110,7 +112,7 @@ pub struct Subscriber<D, Item> {
 
 impl<D, Item> Subscriber<D, Item>
 where
-    D: MessageDecoder<Item>,
+    D: Codec + MessageDecoder<Item>,
 {
     async fn spawn(connection: Connection, headers: SubscriberPayload, decoder: D) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(&connection).await?;
@@ -129,7 +131,7 @@ where
 
 impl<D, Item> Stream for Subscriber<D, Item>
 where
-    D: MessageDecoder<Item> + Send + Unpin,
+    D: Codec + MessageDecoder<Item> + Send + Unpin,
     Item: Unpin,
 {
     type Item = Result<Item>;
