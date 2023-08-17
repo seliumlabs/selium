@@ -10,3 +10,6 @@ pub mod traits;
 
 pub use client::*;
 pub use streams::*;
+
+#[macro_use]
+extern crate selium_macros;

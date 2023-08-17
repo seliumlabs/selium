@@ -2,7 +2,6 @@ extern crate lazy_static;
 extern crate proc_macro;
 extern crate quote;
 extern crate rhai;
-extern crate selium_common;
 extern crate syn;
 
 use lazy_static::lazy_static;
@@ -72,9 +71,29 @@ pub fn selium_codec_derive(input: TokenStream) -> TokenStream {
     let (impl_generics, ty_generics, ..) = generics.split_for_impl();
 
     let token = quote! {
-        impl #impl_generics SeliumCodec for #ident #ty_generics {
-            fn name(&self) -> String {
-                String::from(stringify!(#ident))
+        impl #impl_generics SeliumCodec for #ident #ty_generics {}
+
+        impl Codec for #ident #ty_generics {
+            fn name(&self) -> Option<String> {
+                Some(String::from(stringify!(#ident)))
+            }
+        }
+    };
+
+    token.into()
+}
+
+#[proc_macro_derive(CustomCodec)]
+pub fn custom_codec_derive(input: TokenStream) -> TokenStream {
+    let DeriveInput { ident, generics, .. } = parse_macro_input!(input);
+    let (impl_generics, ty_generics, ..) = generics.split_for_impl();
+
+    let token = quote! {
+        impl #impl_generics CustomCodec for #ident #ty_generics {}
+
+        impl Codec for #ident #ty_generics {
+            fn name(&self) -> Option<String> {
+                None
             }
         }
     };
