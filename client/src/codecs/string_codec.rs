@@ -1,7 +1,7 @@
+use crate::traits::{Codec, SeliumCodec};
 use crate::traits::{MessageDecoder, MessageEncoder};
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
-use crate::traits::{Codec, SeliumCodec};
 
 /// A basic codec for encoding/decoding UTF-8 [String] message payloads.
 #[derive(Default, Clone, SeliumCodec)]

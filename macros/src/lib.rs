@@ -18,8 +18,8 @@ lazy_static! {
 /// expression in an [Executor](selium_common::types::Executor).
 ///
 /// # Errors
-/// 
-/// If the provided expression is not valid Rhai syntax, a compiler error 
+///
+/// If the provided expression is not valid Rhai syntax, a compiler error
 /// will be emitted at build time.
 ///
 /// ```compile_fail
@@ -67,7 +67,9 @@ pub fn rhai(input: TokenStream) -> TokenStream {
 
 #[proc_macro_derive(SeliumCodec)]
 pub fn selium_codec_derive(input: TokenStream) -> TokenStream {
-    let DeriveInput { ident, generics, .. } = parse_macro_input!(input);
+    let DeriveInput {
+        ident, generics, ..
+    } = parse_macro_input!(input);
     let (impl_generics, ty_generics, ..) = generics.split_for_impl();
 
     let token = quote! {
@@ -85,7 +87,9 @@ pub fn selium_codec_derive(input: TokenStream) -> TokenStream {
 
 #[proc_macro_derive(CustomCodec)]
 pub fn custom_codec_derive(input: TokenStream) -> TokenStream {
-    let DeriveInput { ident, generics, .. } = parse_macro_input!(input);
+    let DeriveInput {
+        ident, generics, ..
+    } = parse_macro_input!(input);
     let (impl_generics, ty_generics, ..) = generics.split_for_impl();
 
     let token = quote! {

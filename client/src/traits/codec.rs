@@ -1,9 +1,9 @@
 use anyhow::Result;
 use bytes::{Bytes, BytesMut};
 
-/// Implicitly implemented by both `Selium` and custom codecs. 
+/// Implicitly implemented by both `Selium` and custom codecs.
 ///
-/// Do not implement this directly on your custom codec types. Derive the [CustomCodec] 
+/// Do not implement this directly on your custom codec types. Derive the [CustomCodec]
 /// trait instead.
 pub trait Codec {
     fn name(&self) -> Option<String>;
@@ -11,7 +11,7 @@ pub trait Codec {
 
 pub(crate) trait SeliumCodec {}
 
-/// Derived by custom client codecs. Implicitly implements the [Codec] trait. 
+/// Derived by custom client codecs. Implicitly implements the [Codec] trait.
 ///
 /// See [codecs](crate::codecs) for more information.
 pub trait CustomCodec {}

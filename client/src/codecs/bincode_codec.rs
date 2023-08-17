@@ -1,9 +1,9 @@
+use crate::traits::{Codec, SeliumCodec};
 use crate::traits::{MessageDecoder, MessageEncoder};
 use anyhow::Result;
 use bytes::{Buf, Bytes, BytesMut};
 use serde::{de::DeserializeOwned, Serialize};
 use std::marker::PhantomData;
-use crate::traits::{Codec, SeliumCodec};
 
 /// A basic codec that uses [bincode] to serialize and deserialize
 /// binary message payloads.

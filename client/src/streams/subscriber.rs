@@ -1,4 +1,4 @@
-use crate::traits::{MessageDecoder, Open, Operations, Retain, TryIntoU64, Codec};
+use crate::traits::{Codec, MessageDecoder, Open, Operations, Retain, SeliumCodec, TryIntoU64};
 use crate::{StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -7,7 +7,6 @@ use futures::{SinkExt, Stream, StreamExt};
 use quinn::Connection;
 use selium_common::protocol::{Frame, SubscriberPayload};
 use selium_common::types::{BiStream, Executor};
-use selium_common::traits::SeliumCodec;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -59,7 +58,7 @@ where
 
 impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
-    D: Codec + MessageDecoder<Item> + SeliumCodec,
+    D: SeliumCodec + MessageDecoder<Item>,
 {
     fn map(mut self, executor: Executor) -> Self {
         self.state.common.map(executor);
@@ -87,8 +86,6 @@ where
             operations: self.state.common.operations,
             decoder: self.state.decoder.name(),
         };
-
-        println!("{headers:?}");
 
         let subscriber = Subscriber::spawn(self.connection, headers, self.state.decoder).await?;
 

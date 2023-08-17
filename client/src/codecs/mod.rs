@@ -60,7 +60,7 @@
 //! To give a contrived example, let's create a codec called `ColorCodec`, which will encode and
 //! decode a [tuple] containing three [u8] values to describe a color.
 //!
-//! To begin, we'll create a struct called `ColorCodec`, and derive the [Default], [Clone] and 
+//! To begin, we'll create a struct called `ColorCodec`, and derive the [Default], [Clone] and
 //! [CustomCodec](crate::traits::CustomCodec) traits.
 //!
 //! ```
