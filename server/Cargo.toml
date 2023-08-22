@@ -32,7 +32,7 @@ rustls = "0.21"
 rustls-pemfile = "1.0"
 selium-common = { version = "0.1", path = "../common" }
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.31", features = [
+tokio = { version = "1.32", features = [
     "macros",
     "net",
     "rt-multi-thread",
