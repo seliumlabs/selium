@@ -1,6 +1,6 @@
 [workspace]
-members = ["client", "server", "common", "tests", "benchmarks"]
-default-members = ["client", "server", "common", "tests"]
+members = ["client", "server", "common", "tests", "benchmarks", "standard"]
+default-members = ["client", "server", "common", "tests", "standard"]
 
 [workspace.package]
 edition = "2021"

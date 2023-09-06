@@ -1,0 +1,12 @@
+[package]
+name = "selium-std"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+bytes = "1.4"
+flate2 = { version = "1.0", features = ["zlib"] }
+
+[dev-dependencies]
+fake = "2.8.0"
