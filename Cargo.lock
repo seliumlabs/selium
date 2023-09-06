@@ -1043,6 +1043,7 @@ dependencies = [
  "bytes",
  "fake",
  "flate2",
+ "selium-traits",
 ]
 
 [[package]]
@@ -1053,6 +1054,14 @@ dependencies = [
  "futures",
  "selium",
  "tokio",
+]
+
+[[package]]
+name = "selium-traits"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
 ]
 
 [[package]]

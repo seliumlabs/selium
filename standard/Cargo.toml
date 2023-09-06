@@ -7,6 +7,7 @@ edition = "2021"
 anyhow = "1.0"
 bytes = "1.4"
 flate2 = { version = "1.0", features = ["zlib"] }
+selium-traits = { version = "0.1", path = "../traits" }
 
 [dev-dependencies]
 fake = "2.8.0"
