@@ -1,46 +1,78 @@
 use anyhow::Result;
 use bytes::Bytes;
-use selium_traits::compression::Compress;
+use selium_traits::compression::{Compress, CompressionLevel};
 
 const HIGHEST_COMPRESSION: i32 = 9;
-const BALANCED_COMPRESSION: i32 = 5;
 const FASTEST_COMPRESSION: i32 = 1;
 
-pub fn highest_ratio() -> ZstdComp {
-    ZstdComp {
-        level: HIGHEST_COMPRESSION,
-    }
-}
+pub struct InitialState;
 
-pub fn balanced() -> ZstdComp {
-    ZstdComp {
-        level: BALANCED_COMPRESSION,
-    }
-}
-
-pub fn fastest() -> ZstdComp {
-    ZstdComp {
-        level: FASTEST_COMPRESSION,
-    }
-}
-
-pub fn level(level: i32) -> ZstdComp {
-    ZstdComp { level }
-}
-
-pub fn default() -> ZstdComp {
-    ZstdComp {
-        level: zstd::DEFAULT_COMPRESSION_LEVEL,
-    }
-}
-
-pub struct ZstdComp {
+pub struct ConfiguredState {
     level: i32,
 }
 
-impl Compress for ZstdComp {
+impl Default for ConfiguredState {
+    fn default() -> Self {
+        Self {
+            level: zstd::DEFAULT_COMPRESSION_LEVEL,
+        }
+    }
+}
+
+pub fn new() -> ZstdComp<InitialState> {
+    ZstdComp {
+        state: InitialState,
+    }
+}
+
+pub fn default() -> ZstdComp<ConfiguredState> {
+    ZstdComp::default()
+}
+
+#[derive(Default)]
+pub struct ZstdComp<State> {
+    state: State,
+}
+
+impl CompressionLevel for ZstdComp<InitialState> {
+    type Target = ZstdComp<ConfiguredState>;
+
+    fn highest_ratio(self) -> Self::Target {
+        ZstdComp {
+            state: ConfiguredState {
+                level: HIGHEST_COMPRESSION,
+            },
+        }
+    }
+
+    fn balanced(self) -> Self::Target {
+        ZstdComp {
+            state: ConfiguredState {
+                level: zstd::DEFAULT_COMPRESSION_LEVEL,
+            },
+        }
+    }
+
+    fn fastest(self) -> Self::Target {
+        ZstdComp {
+            state: ConfiguredState {
+                level: FASTEST_COMPRESSION,
+            },
+        }
+    }
+
+    fn level(self, level: u32) -> Self::Target {
+        ZstdComp {
+            state: ConfiguredState {
+                level: level.try_into().unwrap(),
+            },
+        }
+    }
+}
+
+impl Compress for ZstdComp<ConfiguredState> {
     fn compress(&self, input: Bytes) -> Result<Bytes> {
-        let output = zstd::encode_all(&input[..], self.level)?;
+        let output = zstd::encode_all(&input[..], self.state.level)?;
         Ok(output.into())
     }
 }

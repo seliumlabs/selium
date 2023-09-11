@@ -2,7 +2,7 @@ use super::types::DeflateLibrary;
 use bytes::Bytes;
 use flate2::write::{GzEncoder, ZlibEncoder};
 use flate2::Compression;
-use selium_traits::compression::Compress;
+use selium_traits::compression::{Compress, CompressionLevel};
 use std::io::Write;
 
 pub struct InitialState {
@@ -41,8 +41,10 @@ pub struct DeflateComp<State> {
     state: State,
 }
 
-impl DeflateComp<InitialState> {
-    pub fn highest_ratio(self) -> DeflateComp<ConfiguredState> {
+impl CompressionLevel for DeflateComp<InitialState> {
+    type Target = DeflateComp<ConfiguredState>;
+
+    fn highest_ratio(self) -> Self::Target {
         DeflateComp {
             state: ConfiguredState {
                 library: self.state.library,
@@ -51,16 +53,16 @@ impl DeflateComp<InitialState> {
         }
     }
 
-    pub fn balanced(self) -> DeflateComp<ConfiguredState> {
+    fn balanced(self) -> Self::Target {
         DeflateComp {
             state: ConfiguredState {
                 library: self.state.library,
-                level: Compression::new(5),
+                level: Compression::default(),
             },
         }
     }
 
-    pub fn fastest(self) -> DeflateComp<ConfiguredState> {
+    fn fastest(self) -> Self::Target {
         DeflateComp {
             state: ConfiguredState {
                 library: self.state.library,
@@ -69,7 +71,7 @@ impl DeflateComp<InitialState> {
         }
     }
 
-    pub fn level(self, level: u32) -> DeflateComp<ConfiguredState> {
+    fn level(self, level: u32) -> Self::Target {
         DeflateComp {
             state: ConfiguredState {
                 library: self.state.library,

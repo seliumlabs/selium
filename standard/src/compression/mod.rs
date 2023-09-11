@@ -1,3 +1,4 @@
+pub mod brotli;
 pub mod deflate;
 pub mod zstd;
 
@@ -7,7 +8,7 @@ mod test {
     use bytes::Bytes;
     use fake::faker::lorem::en::Sentence;
     use fake::Fake;
-    use selium_traits::compression::{Compress, Decompress};
+    use selium_traits::compression::{Compress, CompressionLevel, Decompress};
 
     fn generate_payload() -> Bytes {
         let payload: String = Sentence(0..1).fake();
@@ -101,7 +102,12 @@ mod test {
     #[test]
     fn zstd_fastest() {
         let payload = generate_payload();
-        let compressed = zstd::comp::fastest().compress(payload.clone()).unwrap();
+
+        let compressed = zstd::comp::new()
+            .fastest()
+            .compress(payload.clone())
+            .unwrap();
+
         let output = zstd::decomp::new().decompress(compressed).unwrap();
 
         assert_eq!(payload, output)
@@ -110,7 +116,12 @@ mod test {
     #[test]
     fn zstd_balanced() {
         let payload = generate_payload();
-        let compressed = zstd::comp::balanced().compress(payload.clone()).unwrap();
+
+        let compressed = zstd::comp::new()
+            .balanced()
+            .compress(payload.clone())
+            .unwrap();
+
         let output = zstd::decomp::new().decompress(compressed).unwrap();
 
         assert_eq!(payload, output)
@@ -120,7 +131,8 @@ mod test {
     fn zstd_highest_ratio() {
         let payload = generate_payload();
 
-        let compressed = zstd::comp::highest_ratio()
+        let compressed = zstd::comp::new()
+            .highest_ratio()
             .compress(payload.clone())
             .unwrap();
 
@@ -128,4 +140,133 @@ mod test {
 
         assert_eq!(payload, output)
     }
+
+    #[test]
+    fn brotli_text_fastest() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::text()
+            .fastest()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+    }
+
+    #[test]
+    fn brotli_text_balanced() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::text()
+            .balanced()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+
+    }
+
+    #[test]
+    fn brotli_text_highest_ratio() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::text()
+            .highest_ratio()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+    }
+
+    #[test]
+    fn brotli_generic_fastest() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::generic()
+            .fastest()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+    }
+
+    #[test]
+    fn brotli_generic_balanced() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::generic()
+            .balanced()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+
+    }
+
+    #[test]
+    fn brotli_generic_highest_ratio() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::generic()
+            .highest_ratio()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+    }
+
+    #[test]
+    fn brotli_font_fastest() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::font()
+            .fastest()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+    }
+
+    #[test]
+    fn brotli_font_balanced() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::font()
+            .balanced()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+    }
+
+    #[test]
+    fn brotli_font_highest_ratio() {
+        let payload = generate_payload();
+
+        let compressed = brotli::comp::font()
+            .highest_ratio()
+            .compress(payload.clone())
+            .unwrap();
+
+        let output = brotli::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output)
+    }
+
 }
