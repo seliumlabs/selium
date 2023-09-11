@@ -11,6 +11,12 @@ pub struct ConfiguredState {
     level: i32,
 }
 
+impl ConfiguredState {
+    pub fn new(level: i32) -> Self {
+        Self { level }
+    }
+}
+
 impl Default for ConfiguredState {
     fn default() -> Self {
         Self {
@@ -39,33 +45,27 @@ impl CompressionLevel for ZstdComp<InitialState> {
 
     fn highest_ratio(self) -> Self::Target {
         ZstdComp {
-            state: ConfiguredState {
-                level: HIGHEST_COMPRESSION,
-            },
+            state: ConfiguredState::new(HIGHEST_COMPRESSION),
         }
     }
 
     fn balanced(self) -> Self::Target {
         ZstdComp {
-            state: ConfiguredState {
-                level: zstd::DEFAULT_COMPRESSION_LEVEL,
-            },
+            state: ConfiguredState::new(zstd::DEFAULT_COMPRESSION_LEVEL),
         }
     }
 
     fn fastest(self) -> Self::Target {
         ZstdComp {
-            state: ConfiguredState {
-                level: FASTEST_COMPRESSION,
-            },
+            state: ConfiguredState::new(FASTEST_COMPRESSION),
         }
     }
 
     fn level(self, level: u32) -> Self::Target {
+        let level = level.try_into().unwrap();
+
         ZstdComp {
-            state: ConfiguredState {
-                level: level.try_into().unwrap(),
-            },
+            state: ConfiguredState::new(level),
         }
     }
 }

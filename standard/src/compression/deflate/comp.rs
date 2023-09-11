@@ -9,34 +9,41 @@ pub struct InitialState {
     library: DeflateLibrary,
 }
 
+impl InitialState {
+    pub fn new(library: DeflateLibrary) -> Self {
+        Self { library }
+    }
+}
+
 #[derive(Default)]
 pub struct ConfiguredState {
     library: DeflateLibrary,
     level: Compression,
 }
 
+impl ConfiguredState {
+    pub fn new(library: DeflateLibrary, level: Compression) -> Self {
+        Self { library, level }
+    }
+}
+
 pub fn gzip() -> DeflateComp<InitialState> {
     DeflateComp {
-        state: InitialState {
-            library: DeflateLibrary::Gzip,
-        },
+        state: InitialState::new(DeflateLibrary::Gzip),
     }
 }
 
 pub fn zlib() -> DeflateComp<InitialState> {
     DeflateComp {
-        state: InitialState {
-            library: DeflateLibrary::Zlib,
-        },
+        state: InitialState::new(DeflateLibrary::Zlib),
     }
 }
 
 pub fn default() -> DeflateComp<ConfiguredState> {
-    DeflateComp {
-        state: ConfiguredState::default(),
-    }
+    DeflateComp::default()
 }
 
+#[derive(Default)]
 pub struct DeflateComp<State> {
     state: State,
 }
@@ -46,37 +53,25 @@ impl CompressionLevel for DeflateComp<InitialState> {
 
     fn highest_ratio(self) -> Self::Target {
         DeflateComp {
-            state: ConfiguredState {
-                library: self.state.library,
-                level: Compression::best(),
-            },
+            state: ConfiguredState::new(self.state.library, Compression::best()),
         }
     }
 
     fn balanced(self) -> Self::Target {
         DeflateComp {
-            state: ConfiguredState {
-                library: self.state.library,
-                level: Compression::default(),
-            },
+            state: ConfiguredState::new(self.state.library, Compression::default()),
         }
     }
 
     fn fastest(self) -> Self::Target {
         DeflateComp {
-            state: ConfiguredState {
-                library: self.state.library,
-                level: Compression::fast(),
-            },
+            state: ConfiguredState::new(self.state.library, Compression::fast()),
         }
     }
 
     fn level(self, level: u32) -> Self::Target {
         DeflateComp {
-            state: ConfiguredState {
-                library: self.state.library,
-                level: Compression::new(level),
-            },
+            state: ConfiguredState::new(self.state.library, Compression::new(level)),
         }
     }
 }
