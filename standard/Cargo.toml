@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
+brotli2 = "0.3"
 bytes = "1.4"
 flate2 = { version = "1.0", features = ["zlib"] }
 selium-traits = { version = "0.1", path = "../traits" }
