@@ -18,8 +18,11 @@ pub struct BrotliComp {
 
 impl BrotliComp {
     pub fn new(mode: BrotliEncoderMode) -> Self {
-        let mut params = BrotliEncoderParams::default();
-        params.mode = mode;
+        let params = BrotliEncoderParams {
+            mode,
+            ..Default::default()
+        };
+
         Self { params }
     }
 
