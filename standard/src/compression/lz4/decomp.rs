@@ -4,7 +4,7 @@ use lz4_flex::frame::FrameDecoder;
 use selium_traits::compression::Decompress;
 use std::io::Read;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Lz4Decomp;
 
 impl Decompress for Lz4Decomp {

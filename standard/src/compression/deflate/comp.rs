@@ -5,7 +5,7 @@ use flate2::Compression;
 use selium_traits::compression::{Compress, CompressionLevel};
 use std::io::Write;
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct DeflateComp {
     library: DeflateLibrary,
     level: Compression,

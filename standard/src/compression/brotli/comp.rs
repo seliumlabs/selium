@@ -11,7 +11,7 @@ const RECOMMENDED_COMPRESSION: i32 = 6;
 const FASTEST_COMPRESSION: i32 = 1;
 const BUFFER_SIZE: usize = 4096;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct BrotliComp {
     params: BrotliEncoderParams,
 }

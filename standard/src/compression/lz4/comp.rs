@@ -4,7 +4,7 @@ use lz4_flex::frame::FrameEncoder;
 use selium_traits::compression::Compress;
 use std::io::Write;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Lz4Comp;
 
 impl Compress for Lz4Comp {

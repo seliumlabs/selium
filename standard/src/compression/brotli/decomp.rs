@@ -6,7 +6,7 @@ use std::io::Read;
 
 const BUFFER_SIZE: usize = 4096;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct BrotliDecomp;
 
 impl Decompress for BrotliDecomp {

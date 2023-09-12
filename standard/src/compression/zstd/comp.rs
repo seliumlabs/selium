@@ -5,7 +5,7 @@ use selium_traits::compression::{Compress, CompressionLevel};
 const HIGHEST_COMPRESSION: i32 = 9;
 const FASTEST_COMPRESSION: i32 = 1;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ZstdComp {
     level: i32,
 }

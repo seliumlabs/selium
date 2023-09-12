@@ -5,7 +5,7 @@ use flate2::read::{GzDecoder, ZlibDecoder};
 use selium_traits::compression::Decompress;
 use std::io::Read;
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct DeflateDecomp {
     library: DeflateLibrary,
 }
