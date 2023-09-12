@@ -2,10 +2,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use selium_traits::compression::Decompress;
 
-pub fn new() -> ZstdDecomp {
-    ZstdDecomp
-}
-
+#[derive(Debug, Clone)]
 pub struct ZstdDecomp;
 
 impl Decompress for ZstdDecomp {

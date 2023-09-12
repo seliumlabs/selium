@@ -1,2 +1,5 @@
-pub mod comp;
-pub mod decomp;
+mod comp;
+mod decomp;
+
+pub use comp::*;
+pub use decomp::*;

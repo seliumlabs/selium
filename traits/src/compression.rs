@@ -1,5 +1,5 @@
-use bytes::Bytes;
 use anyhow::Result;
+use bytes::Bytes;
 
 pub trait Compress {
     fn compress(&self, input: Bytes) -> Result<Bytes>;
@@ -10,11 +10,8 @@ pub trait Decompress {
 }
 
 pub trait CompressionLevel {
-    type Target;
-
-    fn highest_ratio(self) -> Self::Target;
-    fn balanced(self) -> Self::Target;
-    fn fastest(self) -> Self::Target;
-    fn level(self, level: u32) -> Self::Target;
+    fn highest_ratio(self) -> Self;
+    fn balanced(self) -> Self;
+    fn fastest(self) -> Self;
+    fn level(self, level: u32) -> Self;
 }
-

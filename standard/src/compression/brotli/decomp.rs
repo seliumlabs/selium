@@ -4,10 +4,7 @@ use bytes::Bytes;
 use selium_traits::compression::Decompress;
 use std::io::Read;
 
-pub fn new() -> BrotliDecomp {
-    BrotliDecomp
-}
-
+#[derive(Debug, Clone)]
 pub struct BrotliDecomp;
 
 impl Decompress for BrotliDecomp {

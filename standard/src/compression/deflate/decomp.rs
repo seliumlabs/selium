@@ -1,31 +1,27 @@
 use super::types::DeflateLibrary;
-use selium_traits::compression::Decompress;
 use anyhow::Result;
 use bytes::Bytes;
 use flate2::read::{GzDecoder, ZlibDecoder};
+use selium_traits::compression::Decompress;
 use std::io::Read;
 
-pub fn gzip() -> DeflateDecomp {
-    DeflateDecomp {
-        library: DeflateLibrary::Gzip,
-    }
-}
-
-pub fn zlib() -> DeflateDecomp {
-    DeflateDecomp {
-        library: DeflateLibrary::Zlib,
-    }
-}
-
-pub fn default() -> DeflateDecomp {
-    DeflateDecomp {
-        library: DeflateLibrary::default(),
-    }
-}
-
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct DeflateDecomp {
     library: DeflateLibrary,
+}
+
+impl DeflateDecomp {
+    pub fn new(library: DeflateLibrary) -> Self {
+        Self { library }
+    }
+
+    pub fn gzip() -> Self {
+        Self::new(DeflateLibrary::Gzip)
+    }
+
+    pub fn zlib() -> DeflateDecomp {
+        Self::new(DeflateLibrary::Zlib)
+    }
 }
 
 impl Decompress for DeflateDecomp {

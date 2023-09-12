@@ -8,93 +8,68 @@ const HIGHEST_COMPRESSION: u32 = 9;
 const RECOMMENDED_COMPRESSION: u32 = 6;
 const FASTEST_COMPRESSION: u32 = 1;
 
-pub struct InitialState {
-    mode: CompressMode,
-}
-
-impl InitialState {
-    pub fn new(mode: CompressMode) -> Self {
-        Self { mode }
-    }
-}
-
-pub struct ConfiguredState {
+#[derive(Debug, Clone)]
+pub struct BrotliComp {
     params: CompressParams,
 }
 
-impl ConfiguredState {
-    pub fn new(mode: CompressMode, quality: u32) -> Self {
-        Self {
-            params: CompressParams::new().mode(mode).quality(quality).to_owned(),
-        }
-    }
-}
-
-impl Default for ConfiguredState {
+impl Default for BrotliComp {
     fn default() -> Self {
-        Self::new(CompressMode::Generic, RECOMMENDED_COMPRESSION)
+        let mut params = CompressParams::new();
+
+        params
+            .mode(CompressMode::Generic)
+            .quality(RECOMMENDED_COMPRESSION);
+
+        Self { params }
     }
 }
 
-pub fn generic() -> BrotliComp<InitialState> {
-    BrotliComp {
-        state: InitialState::new(CompressMode::Generic),
+impl BrotliComp {
+    pub fn new(mode: CompressMode) -> Self {
+        let mut params = CompressParams::new();
+        params.mode(mode);
+        Self { params }
+    }
+
+    pub fn generic() -> Self {
+        BrotliComp::new(CompressMode::Generic)
+    }
+
+    pub fn text() -> Self {
+        BrotliComp::new(CompressMode::Text)
+    }
+
+    pub fn font() -> Self {
+        BrotliComp::new(CompressMode::Font)
     }
 }
 
-pub fn text() -> BrotliComp<InitialState> {
-    BrotliComp {
-        state: InitialState::new(CompressMode::Text),
+impl CompressionLevel for BrotliComp {
+    fn highest_ratio(mut self) -> Self {
+        self.params.quality(HIGHEST_COMPRESSION);
+        self
+    }
+
+    fn balanced(mut self) -> Self {
+        self.params.quality(RECOMMENDED_COMPRESSION);
+        self
+    }
+
+    fn fastest(mut self) -> Self {
+        self.params.quality(FASTEST_COMPRESSION);
+        self
+    }
+
+    fn level(mut self, level: u32) -> Self {
+        self.params.quality(level);
+        self
     }
 }
 
-pub fn font() -> BrotliComp<InitialState> {
-    BrotliComp {
-        state: InitialState::new(CompressMode::Font),
-    }
-}
-
-pub fn default() -> BrotliComp<ConfiguredState> {
-    BrotliComp::default()
-}
-
-#[derive(Default)]
-pub struct BrotliComp<State> {
-    state: State,
-}
-
-impl CompressionLevel for BrotliComp<InitialState> {
-    type Target = BrotliComp<ConfiguredState>;
-
-    fn highest_ratio(self) -> Self::Target {
-        BrotliComp {
-            state: ConfiguredState::new(self.state.mode, HIGHEST_COMPRESSION),
-        }
-    }
-
-    fn balanced(self) -> Self::Target {
-        BrotliComp {
-            state: ConfiguredState::new(self.state.mode, RECOMMENDED_COMPRESSION),
-        }
-    }
-
-    fn fastest(self) -> Self::Target {
-        BrotliComp {
-            state: ConfiguredState::new(self.state.mode, FASTEST_COMPRESSION),
-        }
-    }
-
-    fn level(self, level: u32) -> Self::Target {
-        BrotliComp {
-            state: ConfiguredState::new(self.state.mode, level),
-        }
-    }
-}
-
-impl Compress for BrotliComp<ConfiguredState> {
+impl Compress for BrotliComp {
     fn compress(&self, mut input: Bytes) -> Result<Bytes> {
-        let buf = Vec::new();
-        let mut encoder = BrotliEncoder::from_params(buf, &self.state.params);
+        let mut encoder = BrotliEncoder::from_params(vec![], &self.params);
         encoder.write_all(&mut input)?;
 
         Ok(encoder.finish()?.into())

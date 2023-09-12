@@ -4,10 +4,7 @@ use bytes::Bytes;
 use selium_traits::compression::Compress;
 use std::io::Write;
 
-pub fn new() -> Lz4Comp {
-    Lz4Comp
-}
-
+#[derive(Debug, Clone)]
 pub struct Lz4Comp;
 
 impl Compress for Lz4Comp {

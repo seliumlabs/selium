@@ -5,93 +5,66 @@ use flate2::Compression;
 use selium_traits::compression::{Compress, CompressionLevel};
 use std::io::Write;
 
-pub struct InitialState {
-    library: DeflateLibrary,
-}
-
-impl InitialState {
-    pub fn new(library: DeflateLibrary) -> Self {
-        Self { library }
-    }
-}
-
-#[derive(Default)]
-pub struct ConfiguredState {
+#[derive(Default, Clone)]
+pub struct DeflateComp {
     library: DeflateLibrary,
     level: Compression,
 }
 
-impl ConfiguredState {
-    pub fn new(library: DeflateLibrary, level: Compression) -> Self {
-        Self { library, level }
-    }
-}
-
-pub fn gzip() -> DeflateComp<InitialState> {
-    DeflateComp {
-        state: InitialState::new(DeflateLibrary::Gzip),
-    }
-}
-
-pub fn zlib() -> DeflateComp<InitialState> {
-    DeflateComp {
-        state: InitialState::new(DeflateLibrary::Zlib),
-    }
-}
-
-pub fn default() -> DeflateComp<ConfiguredState> {
-    DeflateComp::default()
-}
-
-#[derive(Default)]
-pub struct DeflateComp<State> {
-    state: State,
-}
-
-impl CompressionLevel for DeflateComp<InitialState> {
-    type Target = DeflateComp<ConfiguredState>;
-
-    fn highest_ratio(self) -> Self::Target {
-        DeflateComp {
-            state: ConfiguredState::new(self.state.library, Compression::best()),
+impl DeflateComp {
+    pub fn new(library: DeflateLibrary) -> Self {
+        Self {
+            library,
+            level: Compression::default(),
         }
     }
 
-    fn balanced(self) -> Self::Target {
-        DeflateComp {
-            state: ConfiguredState::new(self.state.library, Compression::default()),
-        }
+    pub fn gzip() -> Self {
+        DeflateComp::new(DeflateLibrary::Gzip)
     }
 
-    fn fastest(self) -> Self::Target {
-        DeflateComp {
-            state: ConfiguredState::new(self.state.library, Compression::fast()),
-        }
-    }
-
-    fn level(self, level: u32) -> Self::Target {
-        DeflateComp {
-            state: ConfiguredState::new(self.state.library, Compression::new(level)),
-        }
+    pub fn zlib() -> Self {
+        DeflateComp::new(DeflateLibrary::Zlib)
     }
 }
 
-impl Compress for DeflateComp<ConfiguredState> {
+impl CompressionLevel for DeflateComp {
+    fn highest_ratio(mut self) -> Self {
+        self.level = Compression::best();
+        self
+    }
+
+    fn balanced(mut self) -> Self {
+        self.level = Compression::default();
+        self
+    }
+
+    fn fastest(mut self) -> Self {
+        self.level = Compression::fast();
+        self
+    }
+
+    fn level(mut self, level: u32) -> Self {
+        self.level = Compression::new(level);
+        self
+    }
+}
+
+impl Compress for DeflateComp {
     fn compress(&self, mut input: Bytes) -> anyhow::Result<Bytes> {
-        let mut buf = Vec::new();
-        let level = self.state.level;
-
-        match self.state.library {
+        let bytes = match self.library {
             DeflateLibrary::Gzip => {
-                let mut encoder = GzEncoder::new(&mut buf, level);
+                let mut encoder = GzEncoder::new(vec![], self.level);
                 encoder.write(&mut input)?;
+                encoder.finish()?
             }
             DeflateLibrary::Zlib => {
-                let mut encoder = ZlibEncoder::new(&mut buf, level);
+                let mut encoder = ZlibEncoder::new(vec![], self.level);
                 encoder.write(&mut input)?;
+                encoder.finish()?
             }
         };
 
-        Ok(buf.into())
+        Ok(bytes.into())
     }
 }
