@@ -1,77 +1,69 @@
 use anyhow::Result;
-use brotli2::{write::BrotliEncoder, CompressMode, CompressParams};
+use brotli::enc::backward_references::BrotliEncoderMode;
+use brotli::enc::writer::CompressorWriter;
+use brotli::enc::BrotliEncoderParams;
 use bytes::Bytes;
 use selium_traits::compression::{Compress, CompressionLevel};
 use std::io::Write;
 
-const HIGHEST_COMPRESSION: u32 = 9;
-const RECOMMENDED_COMPRESSION: u32 = 6;
-const FASTEST_COMPRESSION: u32 = 1;
+const HIGHEST_COMPRESSION: i32 = 11;
+const RECOMMENDED_COMPRESSION: i32 = 6;
+const FASTEST_COMPRESSION: i32 = 1;
+const BUFFER_SIZE: usize = 4096;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct BrotliComp {
-    params: CompressParams,
-}
-
-impl Default for BrotliComp {
-    fn default() -> Self {
-        let mut params = CompressParams::new();
-
-        params
-            .mode(CompressMode::Generic)
-            .quality(RECOMMENDED_COMPRESSION);
-
-        Self { params }
-    }
+    params: BrotliEncoderParams,
 }
 
 impl BrotliComp {
-    pub fn new(mode: CompressMode) -> Self {
-        let mut params = CompressParams::new();
-        params.mode(mode);
+    pub fn new(mode: BrotliEncoderMode) -> Self {
+        let mut params = BrotliEncoderParams::default();
+        params.mode = mode;
         Self { params }
     }
 
     pub fn generic() -> Self {
-        BrotliComp::new(CompressMode::Generic)
+        BrotliComp::new(BrotliEncoderMode::BROTLI_MODE_GENERIC)
     }
 
     pub fn text() -> Self {
-        BrotliComp::new(CompressMode::Text)
+        BrotliComp::new(BrotliEncoderMode::BROTLI_MODE_TEXT)
     }
 
     pub fn font() -> Self {
-        BrotliComp::new(CompressMode::Font)
+        BrotliComp::new(BrotliEncoderMode::BROTLI_MODE_FONT)
     }
 }
 
 impl CompressionLevel for BrotliComp {
     fn highest_ratio(mut self) -> Self {
-        self.params.quality(HIGHEST_COMPRESSION);
+        self.params.quality = HIGHEST_COMPRESSION;
         self
     }
 
     fn balanced(mut self) -> Self {
-        self.params.quality(RECOMMENDED_COMPRESSION);
+        self.params.quality = RECOMMENDED_COMPRESSION;
         self
     }
 
     fn fastest(mut self) -> Self {
-        self.params.quality(FASTEST_COMPRESSION);
+        self.params.quality = FASTEST_COMPRESSION;
         self
     }
 
     fn level(mut self, level: u32) -> Self {
-        self.params.quality(level);
+        self.params.quality = level.try_into().unwrap();
         self
     }
 }
 
 impl Compress for BrotliComp {
     fn compress(&self, input: Bytes) -> Result<Bytes> {
-        let mut encoder = BrotliEncoder::from_params(vec![], &self.params);
+        let mut encoder = CompressorWriter::with_params(vec![], BUFFER_SIZE, &self.params);
         encoder.write_all(&input)?;
+        encoder.flush()?;
 
-        Ok(encoder.finish()?.into())
+        Ok(encoder.into_inner().into())
     }
 }
