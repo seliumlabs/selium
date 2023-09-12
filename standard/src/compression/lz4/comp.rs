@@ -1,6 +1,6 @@
-use lz4_flex::frame::FrameEncoder;
 use anyhow::Result;
 use bytes::Bytes;
+use lz4_flex::frame::FrameEncoder;
 use selium_traits::compression::Compress;
 use std::io::Write;
 

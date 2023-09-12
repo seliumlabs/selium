@@ -7,21 +7,24 @@ use futures::{SinkExt, Stream, StreamExt};
 use quinn::Connection;
 use selium_common::protocol::{Frame, SubscriberPayload};
 use selium_common::types::BiStream;
+use selium_traits::compression::Decompress;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
+type Decomp = Arc<dyn Decompress + Send + Sync>;
+
 #[doc(hidden)]
-#[derive(Debug)]
 pub struct SubscriberWantsDecoder {
     pub(crate) common: StreamCommon,
 }
 
 #[doc(hidden)]
-#[derive(Debug)]
 pub struct SubscriberWantsOpen<D, Item> {
     common: StreamCommon,
     decoder: D,
+    decompression: Option<Decomp>,
     _marker: PhantomData<Item>,
 }
 
@@ -36,6 +39,7 @@ impl StreamBuilder<SubscriberWantsDecoder> {
         let state = SubscriberWantsOpen {
             common: self.state.common,
             decoder,
+            decompression: None,
             _marker: PhantomData,
         };
 
@@ -46,10 +50,17 @@ impl StreamBuilder<SubscriberWantsDecoder> {
     }
 }
 
-impl<D, Item> Retain for StreamBuilder<SubscriberWantsOpen<D, Item>>
-where
-    D: MessageDecoder<Item>,
-{
+impl<D, Item> StreamBuilder<SubscriberWantsOpen<D, Item>> {
+    pub fn with_decompression<T: Decompress + Send + Sync + 'static>(
+        mut self,
+        decomp: T,
+    ) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
+        self.state.decompression = Some(Arc::new(decomp));
+        self
+    }
+}
+
+impl<D, Item> Retain for StreamBuilder<SubscriberWantsOpen<D, Item>> {
     fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
         self.state.common.retain(policy)?;
         Ok(self)
@@ -58,7 +69,7 @@ where
 
 impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
-    D: MessageDecoder<Item> + SeliumCodec,
+    D: SeliumCodec,
 {
     fn map(mut self, module_path: &str) -> Self {
         self.state.common.map(module_path);
@@ -86,7 +97,13 @@ where
             operations: self.state.common.operations,
         };
 
-        let subscriber = Subscriber::spawn(self.connection, headers, self.state.decoder).await?;
+        let subscriber = Subscriber::spawn(
+            self.connection,
+            headers,
+            self.state.decoder,
+            self.state.decompression,
+        )
+        .await?;
 
         Ok(subscriber)
     }
@@ -103,6 +120,7 @@ where
 pub struct Subscriber<D, Item> {
     stream: BiStream,
     decoder: D,
+    decompression: Option<Decomp>,
     _marker: PhantomData<Item>,
 }
 
@@ -110,7 +128,12 @@ impl<D, Item> Subscriber<D, Item>
 where
     D: MessageDecoder<Item>,
 {
-    async fn spawn(connection: Connection, headers: SubscriberPayload, decoder: D) -> Result<Self> {
+    async fn spawn(
+        connection: Connection,
+        headers: SubscriberPayload,
+        decoder: D,
+        decompression: Option<Decomp>,
+    ) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(&connection).await?;
         let frame = Frame::RegisterSubscriber(headers);
 
@@ -120,6 +143,7 @@ where
         Ok(Self {
             stream,
             decoder,
+            decompression,
             _marker: PhantomData,
         })
     }
@@ -139,10 +163,14 @@ where
             None => return Poll::Ready(None),
         };
 
-        let bytes = match frame {
+        let mut bytes = match frame {
             Frame::Message(bytes) => bytes,
             _ => return Poll::Ready(None),
         };
+
+        if let Some(decomp) = &self.decompression {
+            bytes = decomp.decompress(bytes)?;
+        }
 
         let mut mut_bytes = BytesMut::with_capacity(bytes.len());
         mut_bytes.extend_from_slice(&bytes[..]);
