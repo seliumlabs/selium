@@ -51,9 +51,9 @@ impl StreamBuilder<PublisherWantsEncoder> {
 }
 
 impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
-    pub fn with_compression<C>(mut self, comp: C) -> StreamBuilder<PublisherWantsOpen<E, Item>>
+    pub fn with_compression<T>(mut self, comp: T) -> StreamBuilder<PublisherWantsOpen<E, Item>>
     where
-        C: Compress + Send + Sync + 'static,
+        T: Compress + Send + Sync + 'static,
     {
         self.state.compression = Some(Arc::new(comp));
         self

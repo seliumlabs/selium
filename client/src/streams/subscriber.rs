@@ -51,10 +51,10 @@ impl StreamBuilder<SubscriberWantsDecoder> {
 }
 
 impl<D, Item> StreamBuilder<SubscriberWantsOpen<D, Item>> {
-    pub fn with_decompression<T: Decompress + Send + Sync + 'static>(
-        mut self,
-        decomp: T,
-    ) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
+    pub fn with_decompression<T>(mut self, decomp: T) -> StreamBuilder<SubscriberWantsOpen<D, Item>>
+    where
+        T: Decompress + Send + Sync + 'static,
+    {
         self.state.decompression = Some(Arc::new(decomp));
         self
     }
