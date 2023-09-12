@@ -1,5 +1,6 @@
 pub mod brotli;
 pub mod deflate;
+pub mod lz4;
 pub mod zstd;
 
 #[cfg(test)]
@@ -110,7 +111,7 @@ mod test {
 
         let output = zstd::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -124,7 +125,7 @@ mod test {
 
         let output = zstd::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -138,7 +139,7 @@ mod test {
 
         let output = zstd::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -152,7 +153,7 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -166,8 +167,7 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
-
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -181,7 +181,7 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -195,7 +195,7 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -209,8 +209,7 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
-
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -224,7 +223,7 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -238,7 +237,7 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -252,7 +251,7 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
     #[test]
@@ -266,7 +265,15 @@ mod test {
 
         let output = brotli::decomp::new().decompress(compressed).unwrap();
 
-        assert_eq!(payload, output)
+        assert_eq!(payload, output);
     }
 
+    #[test]
+    fn lz4() {
+        let payload = generate_payload();
+        let compressed = lz4::comp::new().compress(payload.clone()).unwrap();
+        let output = lz4::decomp::new().decompress(compressed).unwrap();
+
+        assert_eq!(payload, output);
+    }
 }

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use selium_std::compression::{brotli, deflate, zstd};
+use selium_std::compression::{brotli, deflate, lz4, zstd};
 use selium_traits::compression::{Compress, CompressionLevel, Decompress};
 
 pub fn deflate_benchmarks(c: &mut Criterion) {
@@ -75,11 +75,25 @@ pub fn brotli_benchmarks(c: &mut Criterion) {
     });
 }
 
+pub fn lz4_benchmarks(c: &mut Criterion) {
+    c.bench_function("lz4", |b| {
+        b.iter(|| {
+            let payload = black_box(Bytes::from(black_box("hello, world!")));
+            let compressed = lz4::comp::new().compress(payload).unwrap();
+
+            lz4::decomp::new()
+                .decompress(black_box(compressed))
+                .unwrap();
+        })
+    });
+}
+
 criterion_group!(
     benches,
     deflate_benchmarks,
     zstd_benchmarks,
-    brotli_benchmarks
+    brotli_benchmarks,
+    lz4_benchmarks
 );
 
 criterion_main!(benches);
