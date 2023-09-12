@@ -8,6 +8,7 @@ anyhow = "1.0"
 brotli2 = "0.3"
 bytes = "1.4"
 flate2 = { version = "1.0", features = ["zlib"] }
+lz4_flex = "0.11.1"
 selium-traits = { version = "0.1", path = "../traits" }
 zstd = "0.12"
 
