@@ -51,16 +51,16 @@ impl CompressionLevel for DeflateComp {
 }
 
 impl Compress for DeflateComp {
-    fn compress(&self, mut input: Bytes) -> anyhow::Result<Bytes> {
+    fn compress(&self, input: Bytes) -> anyhow::Result<Bytes> {
         let bytes = match self.library {
             DeflateLibrary::Gzip => {
                 let mut encoder = GzEncoder::new(vec![], self.level);
-                encoder.write(&mut input)?;
+                encoder.write_all(&input)?;
                 encoder.finish()?
             }
             DeflateLibrary::Zlib => {
                 let mut encoder = ZlibEncoder::new(vec![], self.level);
-                encoder.write(&mut input)?;
+                encoder.write_all(&input)?;
                 encoder.finish()?
             }
         };

@@ -68,9 +68,9 @@ impl CompressionLevel for BrotliComp {
 }
 
 impl Compress for BrotliComp {
-    fn compress(&self, mut input: Bytes) -> Result<Bytes> {
+    fn compress(&self, input: Bytes) -> Result<Bytes> {
         let mut encoder = BrotliEncoder::from_params(vec![], &self.params);
-        encoder.write_all(&mut input)?;
+        encoder.write_all(&input)?;
 
         Ok(encoder.finish()?.into())
     }
