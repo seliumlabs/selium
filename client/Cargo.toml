@@ -28,12 +28,15 @@ quinn = "0.10"
 rustls = "0.21"
 rustls-pemfile = "1.0"
 selium-common = { version = "0.1", path = "../common" }
+selium-std = { version = "0.1", optional = true, path = "../standard" }
+selium-traits = { version = "0.1", path = "../traits" }
 serde = { version = "1.0", optional = true, features = ["derive"] }
 tokio = { version = "1.32", features = ["full"] }
 
 [features]
 chrono = ["dep:chrono"]
 bincode = ["dep:bincode", "dep:serde"]
+std = ["dep:selium-std"]
 
 [[example]]
 name = "publish"
@@ -61,3 +64,13 @@ required-features = ["bincode"]
 name = "publish_chrono"
 path = "examples/publish_chrono.rs"
 required-features = ["chrono"]
+
+[[example]]
+name = "compression"
+path = "examples/compression.rs"
+required-features = ["std"]
+
+[[example]]
+name = "decompression"
+path = "examples/decompression.rs"
+required-features = ["std"]

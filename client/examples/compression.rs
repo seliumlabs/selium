@@ -2,6 +2,8 @@ use anyhow::Result;
 use futures::SinkExt;
 use selium::codecs::StringCodec;
 use selium::prelude::*;
+use selium::std::compression::deflate::DeflateComp;
+use selium_traits::compression::CompressionLevel;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -14,21 +16,11 @@ async fn main() -> Result<()> {
     let mut publisher = connection
         .publisher("/acmeco/stocks")
         .with_encoder(StringCodec)
+        .with_compression(DeflateComp::gzip().fastest())
         .open()
         .await?;
 
-    tokio::spawn({
-        let mut publisher = publisher.duplicate().await.unwrap();
-        async move {
-            publisher
-                .send("Hello from spawned task!".to_owned())
-                .await
-                .unwrap();
-            publisher.finish().await.unwrap();
-        }
-    });
-
-    publisher.send("Hello from main!".to_owned()).await?;
+    publisher.send("Hello, world!".to_owned()).await?;
     publisher.finish().await?;
 
     Ok(())

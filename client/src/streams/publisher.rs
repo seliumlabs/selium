@@ -6,9 +6,13 @@ use futures::{Sink, SinkExt};
 use quinn::Connection;
 use selium_common::protocol::{Frame, PublisherPayload};
 use selium_common::types::BiStream;
+use selium_traits::compression::Compress;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
+
+type Comp = Arc<dyn Compress + Send + Sync>;
 
 #[doc(hidden)]
 #[derive(Debug)]
@@ -17,10 +21,10 @@ pub struct PublisherWantsEncoder {
 }
 
 #[doc(hidden)]
-#[derive(Debug)]
 pub struct PublisherWantsOpen<E, Item> {
     common: StreamCommon,
     encoder: E,
+    compression: Option<Comp>,
     _marker: PhantomData<Item>,
 }
 
@@ -35,6 +39,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
         let state = PublisherWantsOpen {
             common: self.state.common,
             encoder,
+            compression: None,
             _marker: PhantomData,
         };
 
@@ -45,10 +50,17 @@ impl StreamBuilder<PublisherWantsEncoder> {
     }
 }
 
-impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>>
-where
-    E: MessageEncoder<Item>,
-{
+impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
+    pub fn with_compression<T>(mut self, comp: T) -> StreamBuilder<PublisherWantsOpen<E, Item>>
+    where
+        T: Compress + Send + Sync + 'static,
+    {
+        self.state.compression = Some(Arc::new(comp));
+        self
+    }
+}
+
+impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>> {
     fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
         self.state.common.retain(policy)?;
         Ok(self)
@@ -57,7 +69,7 @@ where
 
 impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>>
 where
-    E: MessageEncoder<Item> + SeliumCodec,
+    E: SeliumCodec,
 {
     fn map(mut self, module_path: &str) -> Self {
         self.state.common.map(module_path);
@@ -85,7 +97,13 @@ where
             operations: self.state.common.operations,
         };
 
-        let publisher = Publisher::spawn(self.connection, headers, self.state.encoder).await?;
+        let publisher = Publisher::spawn(
+            self.connection,
+            headers,
+            self.state.encoder,
+            self.state.compression,
+        )
+        .await?;
 
         Ok(publisher)
     }
@@ -103,19 +121,25 @@ where
 ///
 /// **Note:** The Publisher struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
-pub struct Publisher<E, Item> {
+pub struct Publisher<Enc, Item> {
     connection: Connection,
     stream: BiStream,
     headers: PublisherPayload,
-    encoder: E,
+    encoder: Enc,
+    compression: Option<Comp>,
     _marker: PhantomData<Item>,
 }
 
-impl<E, Item> Publisher<E, Item>
+impl<Enc, Item> Publisher<Enc, Item>
 where
-    E: MessageEncoder<Item> + Clone,
+    Enc: MessageEncoder<Item> + Clone,
 {
-    async fn spawn(connection: Connection, headers: PublisherPayload, encoder: E) -> Result<Self> {
+    async fn spawn(
+        connection: Connection,
+        headers: PublisherPayload,
+        encoder: Enc,
+        compression: Option<Comp>,
+    ) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(&connection).await?;
         let frame = Frame::RegisterPublisher(headers.clone());
         stream.send(frame).await?;
@@ -125,6 +149,7 @@ where
             stream,
             headers,
             encoder,
+            compression,
             _marker: PhantomData,
         })
     }
@@ -146,6 +171,7 @@ where
             self.connection.clone(),
             self.headers.clone(),
             self.encoder.clone(),
+            self.compression.clone(),
         )
         .await?;
 
@@ -169,9 +195,9 @@ where
     }
 }
 
-impl<E, Item> Sink<Item> for Publisher<E, Item>
+impl<Enc, Item> Sink<Item> for Publisher<Enc, Item>
 where
-    E: MessageEncoder<Item> + Send + Unpin,
+    Enc: MessageEncoder<Item> + Send + Unpin,
     Item: Unpin,
 {
     type Error = anyhow::Error;
@@ -181,7 +207,12 @@ where
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
-        let bytes = self.encoder.encode(item)?;
+        let mut bytes = self.encoder.encode(item)?;
+
+        if let Some(comp) = &self.compression {
+            bytes = comp.compress(bytes)?;
+        }
+
         self.stream.start_send_unpin(Frame::Message(bytes))
     }
 

@@ -9,3 +9,8 @@ pub(crate) mod utils;
 
 pub use client::*;
 pub use streams::*;
+
+#[cfg(feature = "std")]
+pub mod std {
+    pub use selium_std::*;
+}

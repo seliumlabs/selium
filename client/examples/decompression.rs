@@ -1,6 +1,8 @@
 use anyhow::Result;
 use futures::StreamExt;
-use selium::{codecs::StringCodec, prelude::*};
+use selium::codecs::StringCodec;
+use selium::prelude::*;
+use selium::std::compression::deflate::DeflateDecomp;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -13,6 +15,7 @@ async fn main() -> Result<()> {
     let mut subscriber = connection
         .subscriber("/acmeco/stocks")
         .with_decoder(StringCodec)
+        .with_decompression(DeflateDecomp::gzip())
         .open()
         .await?;
 
