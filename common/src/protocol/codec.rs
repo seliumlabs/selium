@@ -75,7 +75,7 @@ mod tests {
             ],
         });
 
-        let mut codec = MessageCodec::default();
+        let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
         let expected = Bytes::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
 
@@ -119,8 +119,27 @@ mod tests {
     }
 
     #[test]
+    fn encodes_batch_message_frame() {
+        let batch = vec![
+            Bytes::from("First message"),
+            Bytes::from("Second message"),
+            Bytes::from("Third message"),
+        ];
+
+        let frame = Frame::BatchMessage(batch);
+
+        let mut codec = MessageCodec;
+        let mut buffer = BytesMut::new();
+        let expected = Bytes::from("\0\0\0\0\0\0\0H\x03\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
+
+        codec.encode(frame, &mut buffer).unwrap();
+
+        assert_eq!(buffer, expected);
+    }
+
+    #[test]
     fn decodes_register_subscriber_frame() {
-        let mut codec = MessageCodec::default();
+        let mut codec = MessageCodec;
         let mut src = BytesMut::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
@@ -140,7 +159,7 @@ mod tests {
 
     #[test]
     fn decodes_register_publisher_frame() {
-        let mut codec = MessageCodec::default();
+        let mut codec = MessageCodec;
         let mut src = BytesMut::from("\0\0\0\0\0\0\0z\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
 
         let expected = Frame::RegisterPublisher(PublisherPayload {
@@ -164,6 +183,22 @@ mod tests {
         let mut src = BytesMut::from("\0\0\0\0\0\0\0\x0b\x02Hello world");
 
         let expected = Frame::Message(Bytes::from("Hello world"));
+        let result = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn decodes_batch_message_frame() {
+        let mut codec = MessageCodec;
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0H\x03\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
+
+        let expected = Frame::BatchMessage(vec![
+            Bytes::from("First message"),
+            Bytes::from("Second message"),
+            Bytes::from("Third message"),
+        ]);
+
         let result = codec.decode(&mut src).unwrap().unwrap();
 
         assert_eq!(result, expected);
