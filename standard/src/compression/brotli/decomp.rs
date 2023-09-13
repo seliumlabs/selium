@@ -1,7 +1,7 @@
+use crate::traits::compression::Decompress;
 use anyhow::Result;
 use brotli::Decompressor;
 use bytes::Bytes;
-use selium_traits::compression::Decompress;
 use std::io::Read;
 
 const BUFFER_SIZE: usize = 4096;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::StreamExt;
-use selium::codecs::StringCodec;
 use selium::prelude::*;
+use selium::std::codecs::StringCodec;
 use selium::std::compression::deflate::DeflateDecomp;
 
 #[tokio::main]

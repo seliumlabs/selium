@@ -1,7 +1,7 @@
+use crate::traits::compression::Decompress;
 use anyhow::Result;
 use bytes::Bytes;
 use lz4_flex::frame::FrameDecoder;
-use selium_traits::compression::Decompress;
 use std::io::Read;
 
 #[derive(Debug)]

@@ -1,6 +1,6 @@
+use crate::traits::compression::{Compress, CompressionLevel};
 use anyhow::Result;
 use bytes::Bytes;
-use selium_traits::compression::{Compress, CompressionLevel};
 
 const HIGHEST_COMPRESSION: i32 = 9;
 const FASTEST_COMPRESSION: i32 = 1;

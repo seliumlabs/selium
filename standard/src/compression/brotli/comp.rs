@@ -1,9 +1,9 @@
+use crate::traits::compression::{Compress, CompressionLevel};
 use anyhow::Result;
 use brotli::enc::backward_references::BrotliEncoderMode;
 use brotli::enc::writer::CompressorWriter;
 use brotli::enc::BrotliEncoderParams;
 use bytes::Bytes;
-use selium_traits::compression::{Compress, CompressionLevel};
 use std::io::Write;
 
 const HIGHEST_COMPRESSION: i32 = 11;

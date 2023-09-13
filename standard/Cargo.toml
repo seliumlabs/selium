@@ -5,16 +5,22 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-brotli = "3.3.4"
+bincode = { version = "1.3", optional = true }
+brotli = { version = "3.3", optional = true }
 bytes = "1.4"
-flate2 = { version = "1.0", features = ["zlib"] }
-lz4_flex = "0.11.1"
-selium-traits = { version = "0.1", path = "../traits" }
-zstd = "0.12"
+flate2 = { version = "1.0", features = ["zlib"], optional = true }
+lz4_flex = { version = "0.11", optional = true }
+serde = { version = "1.0", optional = true }
+zstd = { version = "0.12", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
 fake = "2.8"
+
+[features]
+compression = ["dep:brotli", "dep:flate2", "dep:lz4_flex", "dep:zstd"]
+codec = ["dep:bincode", "dep:serde"]
+traits = []
 
 [[bench]]
 name = "compression"

@@ -1,7 +1,6 @@
 mod client;
 mod streams;
 
-pub mod codecs;
 pub(crate) mod crypto;
 pub mod prelude;
 pub mod traits;

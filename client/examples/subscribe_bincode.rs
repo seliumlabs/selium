@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::StreamExt;
-use selium::codecs::BincodeCodec;
 use selium::prelude::*;
+use selium::std::codecs::BincodeCodec;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

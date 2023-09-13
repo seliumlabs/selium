@@ -11,7 +11,7 @@
 //! Codecs are almost never used directly, but are provided as a configuration option while
 //! constructing a [Subscriber](crate::Subscriber) or [Publisher](crate::Publisher) stream. The
 //! [Subscriber](crate::Subscriber) or [Publisher](crate::Publisher) will then call the underlying
-//! [encode](crate::traits::MessageEncoder::encode) or [decode](crate::traits::MessageDecoder::decode)
+//! [encode](crate::traits::codec::MessageEncoder::encode) or [decode](crate::traits::codec::MessageDecoder::decode)
 //! method in their respective [Sink](futures::Sink) or [Stream](futures::Stream) implementations when
 //! producing or consuming messages.
 //!
@@ -22,12 +22,12 @@
 //!
 //! ### The MessageEncoder Trait
 //!
-//! The [MessageEncoder](crate::traits::MessageEncoder) trait is responsible for specifying the process of
+//! The [MessageEncoder](crate::traits::codec::MessageEncoder) trait is responsible for specifying the process of
 //! receiving a generic input of type `Item`, and condensing it down into a [BytesMut](bytes::BytesMut)
 //! value.
 //!
-//! [MessageEncoder](crate::traits::MessageEncoder) exposes a single method to implementors,
-//! [encode](crate::traits::MessageEncoder::encode).
+//! [MessageEncoder](crate::traits::codec::MessageEncoder) exposes a single method to implementors,
+//! [encode](crate::traits::codec::MessageEncoder::encode).
 
 //!
 //! # Decoder
@@ -37,11 +37,11 @@
 //!
 //! ### The MessageDecoder Trait
 //!
-//! The [MessageDecoder](crate::traits::MessageDecoder) trait is responsible for specifying the
+//! The [MessageDecoder](crate::traits::codec::MessageDecoder) trait is responsible for specifying the
 //! process of converting a [BytesMut](bytes::BytesMut) value into the target `Item` type.
 //!
-//! [MessageDecoder](crate::traits::MessageDecoder) exposes a single method to implementors,
-//! [decode](crate::traits::MessageDecoder::decode).
+//! [MessageDecoder](crate::traits::codec::MessageDecoder) exposes a single method to implementors,
+//! [decode](crate::traits::codec::MessageDecoder::decode).
 //!
 //! # Custom Codecs
 //!
@@ -51,8 +51,8 @@
 //!
 //! However, when the provided codecs are either not suitable for your needs, or lack support for
 //! a specific serialization format, it is trivial to create a custom codec via the
-//! [MessageEncoder](crate::traits::MessageEncoder) and
-//! [MessageDecoder](crate::traits::MessageDecoder) traits.
+//! [MessageEncoder](crate::traits::codec::MessageEncoder) and
+//! [MessageDecoder](crate::traits::codec::MessageDecoder) traits.
 //!
 //! ## Example
 //!
@@ -67,8 +67,8 @@
 //! pub struct ColorCodec;
 //! ```
 //!
-//! Next, we will implement the [MessageEncoder](crate::traits::MessageEncoder) and
-//! [MessageDecoder](crate::traits::MessageDecoder) traits for our `ColorCodec` struct,
+//! Next, we will implement the [MessageEncoder](crate::traits::codec::MessageEncoder) and
+//! [MessageDecoder](crate::traits::codec::MessageDecoder) traits for our `ColorCodec` struct,
 //! Let's leave them unimplemented for now.
 //!
 //! For the sake of convenience, a type alias `Color` has been defined to give meaning to the
@@ -78,7 +78,7 @@
 //! # #[derive(Default, Clone)]
 //! # pub struct ColorCodec;
 //! use anyhow::Result;
-//! use selium::traits::{MessageEncoder, MessageDecoder};
+//! use selium_std::traits::codec::{MessageEncoder, MessageDecoder};
 //! use bytes::{Bytes, BytesMut};
 //!
 //! type Color = (u8, u8, u8);
@@ -96,15 +96,15 @@
 //! }
 //! ```
 //!
-//! Now we can finish the implementations of the [encode](crate::traits::MessageEncoder::encode) and
-//! [decode](crate::traits::MessageEncoder::encode) methods.
+//! Now we can finish the implementations of the [encode](crate::traits::codec::MessageEncoder::encode) and
+//! [decode](crate::traits::codec::MessageEncoder::encode) methods.
 //!
-//! Starting with the [encode](crate::traits::MessageEncoder::encode) method, we can push each element in
+//! Starting with the [encode](crate::traits::codec::MessageEncoder::encode) method, we can push each element in
 //! the tuple onto a [BytesMut](bytes::BytesMut) buffer. Be sure to reserve enough space prior to this operation.
 //!
 //! ```
 //! # use anyhow::Result;
-//! # use selium::traits::MessageEncoder;
+//! # use selium_std::traits::codec::MessageEncoder;
 //! # use bytes::{Bytes, BytesMut, BufMut};
 //! # #[derive(Default, Clone)]
 //! # pub struct ColorCodec;
@@ -122,12 +122,12 @@
 //! }
 //! ```
 //!
-//! Finally, we can complete the [decode](crate::traits::MessageDecoder::decode) method by popping three
+//! Finally, we can complete the [decode](crate::traits::codec::MessageDecoder::decode) method by popping three
 //! [u8] values from the [BytesMut](bytes::BytesMut) buffer, and reconstructing the tuple.
 //!
 //! ```
 //! # use anyhow::Result;
-//! # use selium::traits::MessageDecoder;
+//! # use selium_std::traits::codec::MessageDecoder;
 //! # use bytes::{Buf, BytesMut};
 //! # #[derive(Default, Clone)]
 //! # pub struct ColorCodec;
@@ -148,7 +148,7 @@
 //!
 //! ```
 //! use anyhow::Result;
-//! use selium::traits::{MessageEncoder, MessageDecoder};
+//! use selium_std::traits::codec::{MessageEncoder, MessageDecoder};
 //! use bytes::{Bytes, BytesMut, Buf, BufMut};
 //!
 //! #[derive(Default, Clone)]
@@ -179,11 +179,8 @@
 //! }
 //! ```
 
-#[cfg(feature = "bincode")]
 mod bincode_codec;
 mod string_codec;
 
-#[cfg(feature = "bincode")]
 pub use bincode_codec::*;
-
 pub use string_codec::*;

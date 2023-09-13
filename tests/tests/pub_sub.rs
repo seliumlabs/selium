@@ -4,7 +4,8 @@ use std::{
 };
 
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
-use selium::{codecs::StringCodec, prelude::*, Subscriber};
+use selium::std::codecs::StringCodec;
+use selium::{prelude::*, Subscriber};
 
 const SERVER_ADDR: &'static str = "127.0.0.1:7001";
 

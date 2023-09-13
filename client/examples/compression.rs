@@ -1,9 +1,9 @@
 use anyhow::Result;
 use futures::SinkExt;
-use selium::codecs::StringCodec;
 use selium::prelude::*;
+use selium::std::codecs::StringCodec;
 use selium::std::compression::deflate::DeflateComp;
-use selium_traits::compression::CompressionLevel;
+use selium::std::traits::compression::CompressionLevel;
 
 #[tokio::main]
 async fn main() -> Result<()> {

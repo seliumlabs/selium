@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use selium_std::compression::{brotli, deflate, lz4, zstd};
-use selium_traits::compression::{Compress, CompressionLevel, Decompress};
+use selium_std::traits::compression::{Compress, CompressionLevel, Decompress};
 
 pub fn deflate_benchmarks(c: &mut Criterion) {
     c.bench_function("DEFLATE | gzip | fastest", |b| {
