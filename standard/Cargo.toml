@@ -16,6 +16,7 @@ zstd = { version = "0.12", optional = true }
 [dev-dependencies]
 criterion = "0.5"
 fake = "2.8"
+serde = { version = "1.0", features = ["derive"] }
 
 [features]
 compression = ["dep:brotli", "dep:flate2", "dep:lz4_flex", "dep:zstd"]
@@ -23,5 +24,11 @@ codec = ["dep:bincode", "dep:serde"]
 traits = []
 
 [[bench]]
+name = "codecs"
+harness = false
+required-features = ["codec", "traits"]
+
+[[bench]]
 name = "compression"
 harness = false
+required-features = ["compression", "traits"]
