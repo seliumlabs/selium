@@ -1,8 +1,8 @@
 use super::types::DeflateLibrary;
+use crate::traits::compression::{Compress, CompressionLevel};
 use bytes::Bytes;
 use flate2::write::{GzEncoder, ZlibEncoder};
 use flate2::Compression;
-use selium_traits::compression::{Compress, CompressionLevel};
 use std::io::Write;
 
 #[derive(Default)]

@@ -1,8 +1,8 @@
 use super::types::DeflateLibrary;
+use crate::traits::compression::Decompress;
 use anyhow::Result;
 use bytes::Bytes;
 use flate2::read::{GzDecoder, ZlibDecoder};
-use selium_traits::compression::Decompress;
 use std::io::Read;
 
 #[derive(Default)]

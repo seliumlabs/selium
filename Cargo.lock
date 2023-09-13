@@ -1248,7 +1248,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "chrono",
  "futures",
@@ -1257,7 +1256,6 @@ dependencies = [
  "rustls-pemfile",
  "selium-common",
  "selium-std",
- "selium-traits",
  "serde",
  "tokio",
 ]
@@ -1317,13 +1315,14 @@ name = "selium-std"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "brotli",
  "bytes",
  "criterion",
  "fake",
  "flate2",
  "lz4_flex",
- "selium-traits",
+ "serde",
  "zstd",
 ]
 
@@ -1335,14 +1334,6 @@ dependencies = [
  "futures",
  "selium",
  "tokio",
-]
-
-[[package]]
-name = "selium-traits"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
 ]
 
 [[package]]

@@ -1,12 +1,13 @@
 use super::builder::{StreamBuilder, StreamCommon};
-use crate::traits::{MessageEncoder, Open, Operations, Retain, SeliumCodec, TryIntoU64};
+use crate::std::traits::codec::MessageEncoder;
+use crate::traits::{Open, Operations, Retain, TryIntoU64};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};
 use quinn::Connection;
 use selium_common::protocol::{Frame, PublisherPayload};
 use selium_common::types::BiStream;
-use selium_traits::compression::Compress;
+use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -67,10 +68,7 @@ impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>> {
     }
 }
 
-impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>>
-where
-    E: SeliumCodec,
-{
+impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>> {
     fn map(mut self, module_path: &str) -> Self {
         self.state.common.map(module_path);
         self

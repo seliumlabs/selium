@@ -1,7 +1,7 @@
+use crate::traits::compression::Compress;
 use anyhow::Result;
 use bytes::Bytes;
 use lz4_flex::frame::FrameEncoder;
-use selium_traits::compression::Compress;
 use std::io::Write;
 
 #[derive(Debug)]

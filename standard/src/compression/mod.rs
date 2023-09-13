@@ -6,10 +6,10 @@ pub mod zstd;
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::traits::compression::{Compress, CompressionLevel, Decompress};
     use bytes::Bytes;
     use fake::faker::lorem::en::Sentence;
     use fake::Fake;
-    use selium_traits::compression::{Compress, CompressionLevel, Decompress};
 
     fn generate_payload() -> Bytes {
         let payload: String = Sentence(0..1).fake();
