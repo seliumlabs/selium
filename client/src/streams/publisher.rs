@@ -65,7 +65,10 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
         self
     }
 
-    pub fn with_batching(mut self, config: BatchConfig) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
+    pub fn with_batching(
+        mut self,
+        config: BatchConfig,
+    ) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
         self.state.batch_config = Some(config);
         self
     }
@@ -254,7 +257,7 @@ where
                 self.send_batch(now)?;
             }
 
-            return Poll::Ready(Ok(()))
+            return Poll::Ready(Ok(()));
         }
 
         self.stream.poll_ready_unpin(cx)
