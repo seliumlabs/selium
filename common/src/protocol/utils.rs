@@ -1,4 +1,4 @@
-use bytes::{Bytes, BytesMut, BufMut, Buf};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 pub fn encode_message_batch(batch: Vec<Bytes>) -> Bytes {
     let mut bytes = BytesMut::new();

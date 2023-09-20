@@ -1,6 +1,6 @@
 use crate::types::Operation;
 use anyhow::{bail, Result};
-use bytes::{BufMut, BytesMut, Bytes};
+use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 
 const REGISTER_PUBLISHER: u8 = 0x0;
@@ -51,7 +51,7 @@ impl Frame {
             Frame::RegisterPublisher(payload) => bincode::serialize_into(dst.writer(), &payload)?,
             Frame::RegisterSubscriber(payload) => bincode::serialize_into(dst.writer(), &payload)?,
             Frame::Message(bytes) => dst.extend_from_slice(&bytes),
-            Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes)
+            Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes),
         }
 
         Ok(())

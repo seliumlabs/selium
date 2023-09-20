@@ -2,10 +2,10 @@ use crate::traits::{Open, Operations, Retain, TryIntoU64};
 use crate::{StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
-use bytes::{BytesMut, Bytes};
+use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, Stream, StreamExt};
 use quinn::Connection;
-use selium_common::protocol::{Frame, SubscriberPayload, decode_message_batch};
+use selium_common::protocol::{decode_message_batch, Frame, SubscriberPayload};
 use selium_common::types::BiStream;
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
@@ -89,7 +89,8 @@ where
     type Output = Subscriber<D, Item>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = SubscriberPayload { topic: self.state.common.topic,
+        let headers = SubscriberPayload {
+            topic: self.state.common.topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
         };
@@ -175,7 +176,7 @@ where
             Some(Err(err)) => return Poll::Ready(Some(Err(err))),
             None => return Poll::Ready(None),
         };
-        
+
         match frame {
             // If the frame is a standard, unbatched message, then decode and return it
             // immediately.

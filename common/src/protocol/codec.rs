@@ -59,7 +59,7 @@ impl Decoder for MessageCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{PublisherPayload, SubscriberPayload, encode_message_batch};
+    use crate::protocol::{encode_message_batch, PublisherPayload, SubscriberPayload};
     use crate::types::Operation;
     use bytes::Bytes;
 

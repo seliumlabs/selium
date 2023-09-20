@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};
 use quinn::Connection;
-use selium_common::protocol::{Frame, PublisherPayload, encode_message_batch};
+use selium_common::protocol::{encode_message_batch, Frame, PublisherPayload};
 use selium_common::types::BiStream;
 use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
@@ -114,19 +114,22 @@ where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
     Item: Unpin,
 {
-    pub async fn open_with_batching(self, batch_config: BatchConfig) -> Result<BatchPublisher<E, Item>> {
+    pub async fn open_with_batching(
+        self,
+        batch_config: BatchConfig,
+    ) -> Result<BatchPublisher<E, Item>> {
         let headers = PublisherPayload {
             topic: self.state.common.topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
         };
-        
+
         let publisher = BatchPublisher::spawn(
             self.connection,
             headers,
             self.state.encoder,
             self.state.compression,
-            batch_config
+            batch_config,
         )
         .await?;
 
@@ -258,7 +261,7 @@ pub struct BatchPublisher<E, Item> {
     compression: Option<Comp>,
     batch: MessageBatch,
     batch_config: BatchConfig,
-    _marker: PhantomData<Item>
+    _marker: PhantomData<Item>,
 }
 
 impl<E, Item> BatchPublisher<E, Item>
