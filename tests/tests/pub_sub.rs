@@ -118,6 +118,8 @@ fn start_server() -> Child {
     Command::new(env!("CARGO"))
         .args([
             "run",
+            "--bin",
+            "selium-server",
             "--",
             "--bind-addr",
             SERVER_ADDR,
