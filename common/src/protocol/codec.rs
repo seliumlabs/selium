@@ -59,7 +59,7 @@ impl Decoder for MessageCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{PublisherPayload, SubscriberPayload};
+    use crate::protocol::{PublisherPayload, SubscriberPayload, encode_message_batch};
     use crate::types::Operation;
     use bytes::Bytes;
 
@@ -120,11 +120,11 @@ mod tests {
 
     #[test]
     fn encodes_batch_message_frame() {
-        let batch = vec![
+        let batch = encode_message_batch(vec![
             Bytes::from("First message"),
             Bytes::from("Second message"),
             Bytes::from("Third message"),
-        ];
+        ]);
 
         let frame = Frame::BatchMessage(batch);
 
@@ -193,12 +193,13 @@ mod tests {
         let mut codec = MessageCodec;
         let mut src = BytesMut::from("\0\0\0\0\0\0\0H\x03\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
 
-        let expected = Frame::BatchMessage(vec![
+        let batch = encode_message_batch(vec![
             Bytes::from("First message"),
             Bytes::from("Second message"),
             Bytes::from("Third message"),
         ]);
 
+        let expected = Frame::BatchMessage(batch);
         let result = codec.decode(&mut src).unwrap().unwrap();
 
         assert_eq!(result, expected);

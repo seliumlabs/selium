@@ -1,8 +1,6 @@
-use std::mem::size_of;
-
 use crate::types::Operation;
 use anyhow::{bail, Result};
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut, Bytes};
 use serde::{Deserialize, Serialize};
 
 const REGISTER_PUBLISHER: u8 = 0x0;
@@ -15,7 +13,7 @@ pub enum Frame {
     RegisterPublisher(PublisherPayload),
     RegisterSubscriber(SubscriberPayload),
     Message(Bytes),
-    BatchMessage(Vec<Bytes>),
+    BatchMessage(Bytes),
 }
 
 impl Frame {
@@ -24,13 +22,7 @@ impl Frame {
             Self::RegisterPublisher(payload) => bincode::serialized_size(payload)?,
             Self::RegisterSubscriber(payload) => bincode::serialized_size(payload)?,
             Self::Message(bytes) => bytes.len() as u64,
-            Self::BatchMessage(messages) => {
-                let num_of_messages = size_of::<u64>();
-                let messages_len = size_of::<u64>() * messages.len();
-                let bytes_len = messages.iter().fold(0, |len, m| len + m.len());
-
-                (num_of_messages + messages_len + bytes_len) as u64
-            }
+            Self::BatchMessage(bytes) => bytes.len() as u64,
         };
 
         Ok(length)
@@ -59,16 +51,7 @@ impl Frame {
             Frame::RegisterPublisher(payload) => bincode::serialize_into(dst.writer(), &payload)?,
             Frame::RegisterSubscriber(payload) => bincode::serialize_into(dst.writer(), &payload)?,
             Frame::Message(bytes) => dst.extend_from_slice(&bytes),
-            Frame::BatchMessage(messages) => {
-                // Put a u64 into dst representing the amount of messages in the batch
-                dst.put_u64(messages.len() as u64);
-                messages.iter().for_each(|m| {
-                    // Put a u64 into dst representing the length of the message
-                    dst.put_u64(m.len() as u64);
-                    // Put the message bytes into dst
-                    dst.extend_from_slice(m)
-                });
-            }
+            Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes)
         }
 
         Ok(())
@@ -78,23 +61,12 @@ impl Frame {
 impl TryFrom<(u8, BytesMut)> for Frame {
     type Error = anyhow::Error;
 
-    fn try_from((message_type, mut bytes): (u8, BytesMut)) -> Result<Self> {
+    fn try_from((message_type, bytes): (u8, BytesMut)) -> Result<Self> {
         let frame = match message_type {
             REGISTER_PUBLISHER => Frame::RegisterPublisher(bincode::deserialize(&bytes)?),
             REGISTER_SUBSCRIBER => Frame::RegisterSubscriber(bincode::deserialize(&bytes)?),
             MESSAGE => Frame::Message(bytes.into()),
-            BATCH_MESSAGE => {
-                let num_of_messages = bytes.get_u64();
-                let mut messages = Vec::with_capacity(num_of_messages as usize);
-
-                for _ in 0..num_of_messages {
-                    let message_len = bytes.get_u64();
-                    let message_bytes = bytes.split_to(message_len as usize);
-                    messages.push(message_bytes.into());
-                }
-
-                Frame::BatchMessage(messages)
-            }
+            BATCH_MESSAGE => Frame::BatchMessage(bytes.into()),
             _ => bail!("Unknown message type"),
         };
 
