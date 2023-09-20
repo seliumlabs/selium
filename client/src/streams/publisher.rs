@@ -1,17 +1,19 @@
 use super::builder::{StreamBuilder, StreamCommon};
+use crate::batching::{BatchConfig, MessageBatch};
 use crate::std::traits::codec::MessageEncoder;
 use crate::traits::{Open, Operations, Retain, TryIntoU64};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt};
 use quinn::Connection;
-use selium_common::protocol::{Frame, PublisherPayload};
+use selium_common::protocol::{Frame, PublisherPayload, encode_message_batch};
 use selium_common::types::BiStream;
 use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 type Comp = Arc<dyn Compress + Send + Sync>;
 
@@ -107,6 +109,31 @@ where
     }
 }
 
+impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>>
+where
+    E: MessageEncoder<Item> + Clone + Send + Unpin,
+    Item: Unpin,
+{
+    pub async fn open_with_batching(self, batch_config: BatchConfig) -> Result<BatchPublisher<E, Item>> {
+        let headers = PublisherPayload {
+            topic: self.state.common.topic,
+            retention_policy: self.state.common.retention_policy,
+            operations: self.state.common.operations,
+        };
+        
+        let publisher = BatchPublisher::spawn(
+            self.connection,
+            headers,
+            self.state.encoder,
+            self.state.compression,
+            batch_config
+        )
+        .await?;
+
+        Ok(publisher)
+    }
+}
+
 /// A traditional publisher stream that produces and sends messages to a topic.
 ///
 /// A Publisher is different to a [Subscriber](crate::Subscriber), in that it holds a reference
@@ -119,23 +146,23 @@ where
 ///
 /// **Note:** The Publisher struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
-pub struct Publisher<Enc, Item> {
+pub struct Publisher<E, Item> {
     connection: Connection,
     stream: BiStream,
     headers: PublisherPayload,
-    encoder: Enc,
+    encoder: E,
     compression: Option<Comp>,
     _marker: PhantomData<Item>,
 }
 
-impl<Enc, Item> Publisher<Enc, Item>
+impl<E, Item> Publisher<E, Item>
 where
-    Enc: MessageEncoder<Item> + Clone,
+    E: MessageEncoder<Item> + Clone,
 {
     async fn spawn(
         connection: Connection,
         headers: PublisherPayload,
-        encoder: Enc,
+        encoder: E,
         compression: Option<Comp>,
     ) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(&connection).await?;
@@ -212,6 +239,124 @@ where
         }
 
         self.stream.start_send_unpin(Frame::Message(bytes))
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        self.stream.poll_flush_unpin(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        self.stream.poll_close_unpin(cx)
+    }
+}
+
+pub struct BatchPublisher<E, Item> {
+    stream: BiStream,
+    connection: Connection,
+    headers: PublisherPayload,
+    encoder: E,
+    compression: Option<Comp>,
+    batch: MessageBatch,
+    batch_config: BatchConfig,
+    _marker: PhantomData<Item>
+}
+
+impl<E, Item> BatchPublisher<E, Item>
+where
+    E: MessageEncoder<Item> + Clone + Send + Unpin,
+    Item: Unpin,
+{
+    async fn spawn(
+        connection: Connection,
+        headers: PublisherPayload,
+        encoder: E,
+        compression: Option<Comp>,
+        batch_config: BatchConfig,
+    ) -> Result<Self> {
+        let mut stream = BiStream::try_from_connection(&connection).await?;
+        let batch = MessageBatch::from(batch_config.clone());
+        let register_frame = Frame::RegisterPublisher(headers.clone());
+
+        stream.send(register_frame).await?;
+
+        Ok(Self {
+            stream,
+            connection,
+            headers,
+            encoder,
+            compression,
+            batch,
+            batch_config,
+            _marker: PhantomData,
+        })
+    }
+
+    pub async fn duplicate(&self) -> Result<Self> {
+        let publisher = BatchPublisher::spawn(
+            self.connection.clone(),
+            self.headers.clone(),
+            self.encoder.clone(),
+            self.compression.clone(),
+            self.batch_config.clone(),
+        )
+        .await?;
+
+        Ok(publisher)
+    }
+
+    pub async fn finish(mut self) -> Result<()> {
+        self.flush_batch()?;
+        self.close().await?;
+        Ok(())
+    }
+
+    fn send_batch(&mut self, now: Instant) -> Result<()> {
+        let batch = self.batch.drain();
+        let mut bytes = encode_message_batch(batch);
+
+        if let Some(comp) = &self.compression {
+            bytes = comp.compress(bytes)?;
+        }
+
+        let frame = Frame::BatchMessage(bytes);
+        self.stream.start_send_unpin(frame)?;
+        self.batch.update_last_run(now);
+
+        Ok(())
+    }
+
+    fn flush_batch(&mut self) -> Result<()> {
+        let now = Instant::now();
+
+        if !self.batch.is_empty() {
+            self.send_batch(now)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<E, Item> Sink<Item> for BatchPublisher<E, Item>
+where
+    E: MessageEncoder<Item> + Clone + Send + Unpin,
+    Item: Unpin,
+{
+    type Error = anyhow::Error;
+
+    fn poll_ready(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<()>> {
+        let now = Instant::now();
+
+        if self.batch.is_ready(now) {
+            self.send_batch(now)?;
+        }
+
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
+        let bytes = self.encoder.encode(item)?;
+        self.batch.push(bytes);
+        Ok(())
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {

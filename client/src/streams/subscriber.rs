@@ -2,10 +2,10 @@ use crate::traits::{Open, Operations, Retain, TryIntoU64};
 use crate::{StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
-use bytes::BytesMut;
+use bytes::{BytesMut, Bytes};
 use futures::{SinkExt, Stream, StreamExt};
 use quinn::Connection;
-use selium_common::protocol::{Frame, SubscriberPayload};
+use selium_common::protocol::{Frame, SubscriberPayload, decode_message_batch};
 use selium_common::types::BiStream;
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
@@ -89,8 +89,7 @@ where
     type Output = Subscriber<D, Item>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = SubscriberPayload {
-            topic: self.state.common.topic,
+        let headers = SubscriberPayload { topic: self.state.common.topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
         };
@@ -119,6 +118,7 @@ pub struct Subscriber<D, Item> {
     stream: BiStream,
     decoder: D,
     decompression: Option<Decomp>,
+    message_batch: Option<Vec<Bytes>>,
     _marker: PhantomData<Item>,
 }
 
@@ -141,9 +141,18 @@ where
         Ok(Self {
             stream,
             decoder,
+            message_batch: None,
             decompression,
             _marker: PhantomData,
         })
+    }
+
+    fn decode_message(&mut self, bytes: Bytes) -> Poll<Option<Result<Item>>> {
+        let mut mut_bytes = BytesMut::with_capacity(bytes.len());
+        mut_bytes.extend_from_slice(&bytes);
+
+        let decoded = self.decoder.decode(&mut mut_bytes)?;
+        Poll::Ready(Some(Ok(decoded)))
     }
 }
 
@@ -155,25 +164,42 @@ where
     type Item = Result<Item>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Attempt to pop a message off of the current batch, if available.
+        if let Some(bytes) = self.message_batch.as_mut().and_then(|b| b.pop()) {
+            return self.decode_message(bytes);
+        }
+
+        // Otherwise, poll a new frame from the stream
         let frame = match futures::ready!(self.stream.poll_next_unpin(cx)) {
             Some(Ok(frame)) => frame,
             Some(Err(err)) => return Poll::Ready(Some(Err(err))),
             None => return Poll::Ready(None),
         };
+        
+        match frame {
+            // If the frame is a standard, unbatched message, then decode and return it
+            // immediately.
+            Frame::Message(mut bytes) => {
+                if let Some(decomp) = &self.decompression {
+                    bytes = decomp.decompress(bytes)?;
+                }
 
-        let mut bytes = match frame {
-            Frame::Message(bytes) => bytes,
-            _ => return Poll::Ready(None),
-        };
+                self.decode_message(bytes)
+            }
+            // If the frame is a batched message, then set the current batch and call `poll_next`
+            // again to begin popping off messages.
+            Frame::BatchMessage(mut bytes) => {
+                if let Some(decomp) = &self.decompression {
+                    bytes = decomp.decompress(bytes)?;
+                }
 
-        if let Some(decomp) = &self.decompression {
-            bytes = decomp.decompress(bytes)?;
+                let batch = decode_message_batch(bytes);
+                self.message_batch = Some(batch);
+                self.poll_next(cx)
+            }
+            // Otherwise, do nothing.
+            _ => Poll::Ready(None),
         }
-
-        let mut mut_bytes = BytesMut::with_capacity(bytes.len());
-        mut_bytes.extend_from_slice(&bytes[..]);
-
-        Poll::Ready(Some(self.decoder.decode(&mut mut_bytes)))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
