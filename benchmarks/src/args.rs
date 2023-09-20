@@ -13,4 +13,12 @@ pub struct Args {
     /// Size (in bytes) of the message payload
     #[arg(long, default_value_t = 32)]
     pub message_size: u64,
+
+    /// Enable message batching
+    #[arg(long, default_value_t = false)]
+    pub enable_batching: bool,
+
+    /// Enable compression
+    #[arg(long, default_value_t = false)]
+    pub enable_compression: bool,
 }
