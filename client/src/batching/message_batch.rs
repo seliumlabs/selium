@@ -18,7 +18,7 @@ impl MessageBatch {
         batch.collect()
     }
 
-    pub fn is_empty(&mut self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.batch.is_empty()
     }
 
