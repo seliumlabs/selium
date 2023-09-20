@@ -41,10 +41,14 @@ Benchmark Results
 ---------------------
 Number of Messages: {}
 Number of Streams: {}
-Message Size (Bytes): {}",
+Message Size (Bytes): {}
+Batching Enabled: {}
+Compression Enabled: {}",
             self.args.num_of_messages.to_formatted_string(&Locale::en),
             self.args.num_of_streams.to_formatted_string(&Locale::en),
             self.args.message_size.to_formatted_string(&Locale::en),
+            self.args.enable_batching,
+            self.args.enable_compression,
         );
 
         let header = format!(

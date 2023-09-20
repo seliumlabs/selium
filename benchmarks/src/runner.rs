@@ -4,9 +4,7 @@ use futures::SinkExt;
 use futures::{future::join_all, StreamExt};
 use selium::batching::BatchConfig;
 use selium::std::codecs::StringCodec;
-use selium::std::compression::brotli::{BrotliComp, BrotliDecomp};
 use selium::std::compression::lz4::{Lz4Comp, Lz4Decomp};
-use selium::std::traits::compression::CompressionLevel;
 use selium::{prelude::*, Client};
 use std::{
     process::{Child, Command},
@@ -90,7 +88,6 @@ impl BenchmarkRunner {
             }
 
             let mut publisher = publisher.open().await?;
-
             let message = message.clone();
 
             let handle = tokio::spawn(async move {
