@@ -1,7 +1,7 @@
 use crate::traits::TryIntoU64;
 use anyhow::Result;
 use quinn::Connection;
-use selium_common::types::Operation;
+use selium_protocol::Operation;
 
 /// The default `retention_policy` setting for messages.
 pub const RETENTION_POLICY_DEFAULT: u64 = 0;

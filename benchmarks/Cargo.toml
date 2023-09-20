@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-selium = { path = "../client" }
-clap = { version = "4.4.4", features = ["derive"] }
+selium = { path = "../client", features = ["std"] }
+clap = { version = "4.4", features = ["derive"] }
 tokio = { version = "1.32", features = ["macros"] }
-futures = "0.3.28"
-anyhow = "1.0.75"
-num-format = "0.4.4"
+futures = "0.3"
+anyhow = "1.0"
+num-format = "0.4"

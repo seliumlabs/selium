@@ -1,4 +1,4 @@
-use crate::types::Operation;
+use crate::Operation;
 use anyhow::{bail, Result};
 use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
@@ -6,12 +6,14 @@ use serde::{Deserialize, Serialize};
 const REGISTER_PUBLISHER: u8 = 0x0;
 const REGISTER_SUBSCRIBER: u8 = 0x1;
 const MESSAGE: u8 = 0x2;
+const BATCH_MESSAGE: u8 = 0x3;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Frame {
     RegisterPublisher(PublisherPayload),
     RegisterSubscriber(SubscriberPayload),
     Message(Bytes),
+    BatchMessage(Bytes),
 }
 
 impl Frame {
@@ -20,6 +22,7 @@ impl Frame {
             Self::RegisterPublisher(payload) => bincode::serialized_size(payload)?,
             Self::RegisterSubscriber(payload) => bincode::serialized_size(payload)?,
             Self::Message(bytes) => bytes.len() as u64,
+            Self::BatchMessage(bytes) => bytes.len() as u64,
         };
 
         Ok(length)
@@ -30,6 +33,7 @@ impl Frame {
             Self::RegisterPublisher(_) => REGISTER_PUBLISHER,
             Self::RegisterSubscriber(_) => REGISTER_SUBSCRIBER,
             Self::Message(_) => MESSAGE,
+            Self::BatchMessage(_) => BATCH_MESSAGE,
         }
     }
 
@@ -38,6 +42,7 @@ impl Frame {
             Self::RegisterPublisher(p) => Some(&p.topic),
             Self::RegisterSubscriber(s) => Some(&s.topic),
             Self::Message(_) => None,
+            Self::BatchMessage(_) => None,
         }
     }
 
@@ -46,6 +51,7 @@ impl Frame {
             Frame::RegisterPublisher(payload) => bincode::serialize_into(dst.writer(), &payload)?,
             Frame::RegisterSubscriber(payload) => bincode::serialize_into(dst.writer(), &payload)?,
             Frame::Message(bytes) => dst.extend_from_slice(&bytes),
+            Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes),
         }
 
         Ok(())
@@ -60,6 +66,7 @@ impl TryFrom<(u8, BytesMut)> for Frame {
             REGISTER_PUBLISHER => Frame::RegisterPublisher(bincode::deserialize(&bytes)?),
             REGISTER_SUBSCRIBER => Frame::RegisterSubscriber(bincode::deserialize(&bytes)?),
             MESSAGE => Frame::Message(bytes.into()),
+            BATCH_MESSAGE => Frame::BatchMessage(bytes.into()),
             _ => bail!("Unknown message type"),
         };
 

@@ -1,4 +1,4 @@
-use crate::protocol::{Frame, MessageCodec};
+use crate::{Frame, MessageCodec};
 use anyhow::Result;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};

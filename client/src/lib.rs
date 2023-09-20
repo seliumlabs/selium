@@ -1,6 +1,7 @@
 mod client;
 mod streams;
 
+pub mod batching;
 pub(crate) mod crypto;
 pub mod prelude;
 pub mod traits;

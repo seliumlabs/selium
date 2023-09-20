@@ -1,7 +1,11 @@
 use crate::{args::Args, results::BenchmarkResults};
 use anyhow::Result;
-use futures::{future::join_all, SinkExt, StreamExt};
-use selium::{codecs::StringCodec, prelude::*, Client};
+use futures::SinkExt;
+use futures::{future::join_all, StreamExt};
+use selium::batching::BatchConfig;
+use selium::std::codecs::StringCodec;
+use selium::std::compression::lz4::{Lz4Comp, Lz4Decomp};
+use selium::{prelude::*, Client};
 use std::{
     process::{Child, Command},
     time::Instant,
@@ -13,6 +17,8 @@ fn start_server() -> Child {
     Command::new(env!("CARGO"))
         .args([
             "run",
+            "--bin",
+            "selium-server",
             "--release",
             "--",
             "--bind-addr",
@@ -22,7 +28,6 @@ fn start_server() -> Child {
             "--key",
             "benchmarks/certs/ca.key",
         ])
-        .current_dir("..")
         .spawn()
         .expect("Failed to start server")
 }
@@ -43,7 +48,7 @@ impl BenchmarkRunner {
         let server_handle = start_server();
 
         let connection = selium::client()
-            .with_certificate_authority("certs/ca.crt")?
+            .with_certificate_authority("benchmarks/certs/ca.crt")?
             .connect(SERVER_ADDR)
             .await?;
 
@@ -54,25 +59,36 @@ impl BenchmarkRunner {
     }
 
     pub async fn run(&self, args: Args) -> Result<BenchmarkResults> {
-        let mut tasks = Vec::with_capacity((args.num_of_streams + 1) as usize);
+        let mut tasks = Vec::with_capacity(args.num_of_streams as usize);
         let message = generate_message(args.message_size as usize);
         let start = Instant::now();
 
         let mut subscriber = self
             .connection
             .subscriber("/acmeco/stocks")
-            .with_decoder(StringCodec)
-            .open()
-            .await?;
+            .with_decoder(StringCodec);
+
+        if args.enable_compression {
+            subscriber = subscriber.with_decompression(Lz4Decomp);
+        }
+
+        let mut subscriber = subscriber.open().await?;
 
         for _ in 0..args.num_of_streams {
             let mut publisher = self
                 .connection
                 .publisher("/acmeco/stocks")
-                .with_encoder(StringCodec)
-                .open()
-                .await?;
+                .with_encoder(StringCodec);
 
+            if args.enable_batching {
+                publisher = publisher.with_batching(BatchConfig::high_throughput());
+            }
+
+            if args.enable_compression {
+                publisher = publisher.with_compression(Lz4Comp);
+            }
+
+            let mut publisher = publisher.open().await?;
             let message = message.clone();
 
             let handle = tokio::spawn(async move {
@@ -88,7 +104,7 @@ impl BenchmarkRunner {
 
         let handle = tokio::spawn(async move {
             for _ in 0..args.num_of_messages {
-                let _ = subscriber.next().await.unwrap();
+                let _ = subscriber.next().await;
             }
         });
 

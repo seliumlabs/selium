@@ -1254,7 +1254,7 @@ dependencies = [
  "quinn",
  "rustls",
  "rustls-pemfile",
- "selium-common",
+ "selium-protocol",
  "selium-std",
  "serde",
  "tokio",
@@ -1273,7 +1273,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "selium-common"
+name = "selium-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1303,7 +1303,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-pemfile",
- "selium-common",
+ "selium-protocol",
  "serde",
  "tokio",
  "tokio-stream",
