@@ -1,7 +1,9 @@
 use crate::{args::Args, results::BenchmarkResults};
 use anyhow::Result;
 use futures::{future::join_all, SinkExt, StreamExt};
-use selium::{codecs::StringCodec, prelude::*, Client};
+use selium::batching::BatchConfig;
+use selium::std::codecs::StringCodec;
+use selium::{prelude::*, Client};
 use std::{
     process::{Child, Command},
     time::Instant,
@@ -70,7 +72,7 @@ impl BenchmarkRunner {
                 .connection
                 .publisher("/acmeco/stocks")
                 .with_encoder(StringCodec)
-                .open()
+                .open_with_batching(BatchConfig::high_throughput())
                 .await?;
 
             let message = message.clone();
@@ -88,7 +90,7 @@ impl BenchmarkRunner {
 
         let handle = tokio::spawn(async move {
             for _ in 0..args.num_of_messages {
-                let _ = subscriber.next().await.unwrap();
+                let _ = subscriber.next().await;
             }
         });
 
