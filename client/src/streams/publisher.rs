@@ -308,9 +308,7 @@ where
     }
 
     pub async fn finish(mut self) -> Result<()> {
-        self.flush_batch()?;
-        self.close().await?;
-        Ok(())
+        self.close().await
     }
 
     fn send_batch(&mut self, now: Instant) -> Result<()> {
@@ -324,16 +322,6 @@ where
         let frame = Frame::BatchMessage(bytes);
         self.stream.start_send_unpin(frame)?;
         self.batch.update_last_run(now);
-
-        Ok(())
-    }
-
-    fn flush_batch(&mut self) -> Result<()> {
-        let now = Instant::now();
-
-        if !self.batch.is_empty() {
-            self.send_batch(now)?;
-        }
 
         Ok(())
     }
@@ -367,6 +355,11 @@ where
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        if !self.batch.is_empty() {
+            let now = Instant::now();
+            self.send_batch(now)?;
+        }
+
         self.stream.poll_close_unpin(cx)
     }
 }
