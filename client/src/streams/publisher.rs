@@ -267,7 +267,8 @@ where
         let bytes = self.encoder.encode(item)?;
 
         if let Some(batch) = self.batch.as_mut() {
-            Ok(batch.push(bytes))
+            batch.push(bytes);
+            Ok(())
         } else {
             self.send_single(bytes)
         }
