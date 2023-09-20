@@ -21,7 +21,7 @@ pub fn decode_message_batch(mut bytes: Bytes) -> Vec<Bytes> {
     for _ in 0..num_of_messages {
         let message_len = bytes.get_u64();
         let message_bytes = bytes.split_to(message_len as usize);
-        messages.push(message_bytes.into());
+        messages.push(message_bytes);
     }
 
     messages
