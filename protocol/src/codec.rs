@@ -1,4 +1,4 @@
-use crate::protocol::Frame;
+use crate::Frame;
 use bytes::{Buf, BufMut, BytesMut};
 use std::mem::size_of;
 use tokio_util::codec::{Decoder, Encoder};
@@ -59,8 +59,8 @@ impl Decoder for MessageCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{encode_message_batch, PublisherPayload, SubscriberPayload};
-    use crate::types::Operation;
+    use crate::utils::encode_message_batch;
+    use crate::{Operation, PublisherPayload, SubscriberPayload};
     use bytes::Bytes;
 
     #[test]

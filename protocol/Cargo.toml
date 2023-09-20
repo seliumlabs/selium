@@ -1,8 +1,8 @@
 [package]
-name = "selium-common"
+name = "selium-protocol"
 version = "0.1.0"
 description = """
-selium-common is a dependent crate of Selium. Do not use directly.
+selium-protocol is a dependent crate of Selium. Do not use directly.
 """
 include = ["src/**/*"]
 edition.workspace = true

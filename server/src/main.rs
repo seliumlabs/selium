@@ -6,7 +6,7 @@ use env_logger::Builder;
 use futures::{channel::mpsc::Sender, SinkExt, StreamExt};
 use log::{error, info};
 use quinn::{IdleTimeout, VarInt};
-use selium_common::{protocol::Frame, types::BiStream};
+use selium_protocol::{Frame, BiStream};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 use tokio_stream::StreamNotifyClose;

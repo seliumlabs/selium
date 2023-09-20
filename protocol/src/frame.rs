@@ -1,4 +1,4 @@
-use crate::types::Operation;
+use crate::Operation;
 use anyhow::{bail, Result};
 use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
