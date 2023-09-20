@@ -17,6 +17,8 @@ fn start_server() -> Child {
     Command::new(env!("CARGO"))
         .args([
             "run",
+            "--bin",
+            "selium-server",
             "--release",
             "--",
             "--bind-addr",
@@ -26,7 +28,6 @@ fn start_server() -> Child {
             "--key",
             "benchmarks/certs/ca.key",
         ])
-        .current_dir("..")
         .spawn()
         .expect("Failed to start server")
 }
@@ -47,7 +48,7 @@ impl BenchmarkRunner {
         let server_handle = start_server();
 
         let connection = selium::client()
-            .with_certificate_authority("certs/ca.crt")?
+            .with_certificate_authority("benchmarks/certs/ca.crt")?
             .connect(SERVER_ADDR)
             .await?;
 
@@ -80,11 +81,11 @@ impl BenchmarkRunner {
                 .with_encoder(StringCodec);
 
             if args.enable_batching {
-                publisher = publisher.with_batching(BatchConfig::high_throughput())
+                publisher = publisher.with_batching(BatchConfig::high_throughput());
             }
 
             if args.enable_compression {
-                publisher = publisher.with_compression(Lz4Comp)
+                publisher = publisher.with_compression(Lz4Comp);
             }
 
             let mut publisher = publisher.open().await?;
