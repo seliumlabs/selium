@@ -1,5 +1,6 @@
 use super::builder::{StreamBuilder, StreamCommon};
 use crate::batching::{BatchConfig, MessageBatch};
+use crate::chunking::{ChunkConfig, ChunkStore};
 use crate::std::traits::codec::MessageEncoder;
 use crate::traits::{Open, Operations, Retain, TryIntoU64};
 use anyhow::Result;
@@ -30,6 +31,7 @@ pub struct PublisherWantsOpen<E, Item> {
     encoder: E,
     compression: Option<Comp>,
     batch_config: Option<BatchConfig>,
+    chunk_config: Option<ChunkConfig>,
     _marker: PhantomData<Item>,
 }
 
@@ -46,6 +48,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
             encoder,
             compression: None,
             batch_config: None,
+            chunk_config: None,
             _marker: PhantomData,
         };
 
@@ -57,7 +60,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
 }
 
 impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
-    pub fn with_compression<T>(mut self, comp: T) -> StreamBuilder<PublisherWantsOpen<E, Item>>
+    pub fn with_compression<T>(mut self, comp: T) -> Self
     where
         T: Compress + Send + Sync + 'static,
     {
@@ -68,8 +71,16 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
     pub fn with_batching(
         mut self,
         config: BatchConfig,
-    ) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
+    ) -> Self {
         self.state.batch_config = Some(config);
+        self
+    }
+
+    pub fn with_chunking(
+        mut self,
+        config: ChunkConfig,
+    ) -> Self {
+        self.state.chunk_config = Some(config);
         self
     }
 }
@@ -114,6 +125,7 @@ where
             self.state.encoder,
             self.state.compression,
             self.state.batch_config,
+            self.state.chunk_config,
         )
         .await?;
 
@@ -140,7 +152,9 @@ pub struct Publisher<E, Item> {
     encoder: E,
     compression: Option<Comp>,
     batch: Option<MessageBatch>,
+    chunk_store: Option<ChunkStore>,
     batch_config: Option<BatchConfig>,
+    chunk_config: Option<ChunkConfig>,
     _marker: PhantomData<Item>,
 }
 
@@ -155,9 +169,11 @@ where
         encoder: E,
         compression: Option<Comp>,
         batch_config: Option<BatchConfig>,
+        chunk_config: Option<ChunkConfig>,
     ) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(&connection).await?;
         let batch = batch_config.as_ref().map(|c| MessageBatch::from(c.clone()));
+        let chunk_store = chunk_config.as_ref().map(|c| ChunkStore::from(c.clone()));
         let frame = Frame::RegisterPublisher(headers.clone());
 
         stream.send(frame).await?;
@@ -170,7 +186,8 @@ where
             compression,
             batch,
             batch_config,
-
+            chunk_store,
+            chunk_config,
             _marker: PhantomData,
         })
     }
@@ -194,6 +211,7 @@ where
             self.encoder.clone(),
             self.compression.clone(),
             self.batch_config.clone(),
+            self.chunk_config.clone(),
         )
         .await?;
 

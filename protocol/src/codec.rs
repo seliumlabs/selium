@@ -2,6 +2,7 @@ use crate::Frame;
 use bytes::{Buf, BufMut, BytesMut};
 use std::mem::size_of;
 use tokio_util::codec::{Decoder, Encoder};
+use uuid::uuid;
 
 const LEN_MARKER_SIZE: usize = size_of::<u64>();
 const TYPE_MARKER_SIZE: usize = size_of::<u8>();
@@ -60,7 +61,7 @@ impl Decoder for MessageCodec {
 mod tests {
     use super::*;
     use crate::utils::encode_message_batch;
-    use crate::{Operation, PublisherPayload, SubscriberPayload};
+    use crate::{Chunk, ChunkHeaders, Operation, PublisherPayload, SubscriberPayload};
     use bytes::Bytes;
 
     #[test]
@@ -138,6 +139,24 @@ mod tests {
     }
 
     #[test]
+    fn encodes_chunk_message_frame() {
+        let uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+        let payload = Bytes::from("Hello world");
+
+        let chunk_headers = ChunkHeaders::new(uuid, 1, 10);
+        let chunk = Chunk::new(chunk_headers, payload);
+        let frame = Frame::ChunkMessage(chunk);
+
+        let mut codec = MessageCodec;
+        let mut buffer = BytesMut::new();
+        let expected = Bytes::from(&b"\0\0\0\0\0\0\03\x04\x10\0\0\0\0\0\0\0g\xe5PD\x10\xb1Bo\x92G\xbbh\x0e_\xe0\xc8\x01\0\0\0\n\0\0\0\x0b\0\0\0\0\0\0\0Hello world"[..]);
+
+        codec.encode(frame, &mut buffer).unwrap();
+
+        assert_eq!(buffer, expected)
+    }
+
+    #[test]
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec;
         let mut src = BytesMut::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
@@ -203,5 +222,21 @@ mod tests {
         let result = codec.decode(&mut src).unwrap().unwrap();
 
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn decodes_chunk_message_frame() {
+        let mut codec = MessageCodec;
+        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\03\x04\x10\0\0\0\0\0\0\0g\xe5PD\x10\xb1Bo\x92G\xbbh\x0e_\xe0\xc8\x01\0\0\0\n\0\0\0\x0b\0\0\0\0\0\0\0Hello world"[..]);
+
+        let uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+        let payload = Bytes::from("Hello world");
+
+        let chunk_headers = ChunkHeaders::new(uuid, 1, 10);
+        let chunk = Chunk::new(chunk_headers, payload);
+        let expected = Frame::ChunkMessage(chunk);
+        let result = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(result, expected)
     }
 }

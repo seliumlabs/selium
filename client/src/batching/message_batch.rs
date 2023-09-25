@@ -2,6 +2,7 @@ use super::BatchConfig;
 use bytes::Bytes;
 use std::time::Instant;
 
+#[derive(Debug)]
 pub struct MessageBatch {
     batch: Vec<Bytes>,
     config: BatchConfig,
