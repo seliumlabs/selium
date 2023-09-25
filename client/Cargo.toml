@@ -29,6 +29,7 @@ rustls-pemfile = "1.0"
 selium-protocol = { version = "0.1", path = "../protocol" }
 selium-std = { version = "0.1", optional = true, path = "../standard" }
 tokio = { version = "1.32", features = ["full"] }
+uuid = { version = "1.4", features = ["v4", "serde"] }
 
 [dev-dependencies]
 serde = "1.0"
