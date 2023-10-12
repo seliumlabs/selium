@@ -3,13 +3,13 @@
 
 use std::{fs, path::PathBuf, sync::Arc};
 
+use crate::util::cert::load_root_store;
 use anyhow::{bail, Context, Result};
 use quinn::{IdleTimeout, ServerConfig};
 use rcgen::generate_simple_self_signed;
-use rustls::{Certificate, PrivateKey};
 use rustls::server::AllowAnyAuthenticatedClient;
+use rustls::{Certificate, PrivateKey};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
-use crate::util::cert::{load_root_store};
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 

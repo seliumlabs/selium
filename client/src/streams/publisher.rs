@@ -1,6 +1,5 @@
 use super::builder::{StreamBuilder, StreamCommon};
 use crate::batching::{BatchConfig, MessageBatch};
-use selium_std::traits::codec::MessageEncoder;
 use crate::traits::{Open, Operations, Retain, TryIntoU64};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,6 +8,7 @@ use futures::{Sink, SinkExt};
 use quinn::Connection;
 use selium_protocol::utils::encode_message_batch;
 use selium_protocol::{BiStream, Frame, PublisherPayload};
+use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
 use std::pin::Pin;

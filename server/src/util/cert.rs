@@ -1,9 +1,9 @@
-use std::fs::File;
-use std::io::BufReader;
-use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use rustls::{Certificate, RootCertStore};
 use rustls_pemfile::certs;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::PathBuf;
 
 fn load_certs(cert_file: &PathBuf) -> Result<Vec<Certificate>> {
     certs(&mut BufReader::new(File::open(cert_file)?))

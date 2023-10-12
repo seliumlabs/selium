@@ -1,12 +1,12 @@
 use crate::crypto::cert::load_root_store;
 use crate::traits::TryIntoU64;
+use crate::utils::cert::load_keypair;
 use crate::utils::client::establish_connection;
 use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsDecoder};
 use anyhow::Result;
 use quinn::{Connection, VarInt};
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use std::path::PathBuf;
-use crate::utils::cert::{load_keypair};
 
 /// The default `keep_alive` interval for a client connection.
 pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
@@ -14,13 +14,13 @@ pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct ClientWantsRootCert {
-    keep_alive: u64
+    keep_alive: u64,
 }
 
 #[derive(Debug)]
 pub struct ClientWantsCertAndKey {
     keep_alive: u64,
-    root_store: RootCertStore
+    root_store: RootCertStore,
 }
 
 #[doc(hidden)]
@@ -29,7 +29,7 @@ pub struct ClientWantsConnect {
     keep_alive: u64,
     root_store: RootCertStore,
     certs: Vec<Certificate>,
-    key: PrivateKey
+    key: PrivateKey,
 }
 
 /// A convenient builder struct used to build a [Client] instance.
@@ -115,29 +115,27 @@ impl ClientBuilder<ClientWantsRootCert> {
         let root_store = load_root_store(&ca_path.into())?;
         let state = ClientWantsCertAndKey {
             keep_alive: self.state.keep_alive,
-            root_store
+            root_store,
         };
         Ok(ClientBuilder { state })
     }
 }
 
 impl ClientBuilder<ClientWantsCertAndKey> {
-
     pub fn with_cert_and_key<T: Into<PathBuf>>(
         self,
         cert_file: T,
-        key_file: T
+        key_file: T,
     ) -> Result<ClientBuilder<ClientWantsConnect>> {
         let (certs, key) = load_keypair(&cert_file.into(), &key_file.into())?;
         let state = ClientWantsConnect {
             keep_alive: self.state.keep_alive,
             root_store: self.state.root_store,
             certs,
-            key
+            key,
         };
-        Ok(ClientBuilder { state} )
+        Ok(ClientBuilder { state })
     }
-
 }
 
 impl ClientBuilder<ClientWantsConnect> {
@@ -158,8 +156,9 @@ impl ClientBuilder<ClientWantsConnect> {
             self.state.certs,
             self.state.key,
             &self.state.root_store,
-            self.state.keep_alive
-        ).await?;
+            self.state.keep_alive,
+        )
+        .await?;
 
         tokio::spawn({
             let connection = connection.clone();

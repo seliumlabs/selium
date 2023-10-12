@@ -1,10 +1,10 @@
+use anyhow::Context;
+use anyhow::Result;
+use rustls::{Certificate, PrivateKey};
+use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use anyhow::Context;
-use rustls::{Certificate, PrivateKey};
-use rustls_pemfile::{certs, pkcs8_private_keys};
-use anyhow::{Result};
 
 pub type KeyPair = (Vec<Certificate>, PrivateKey);
 

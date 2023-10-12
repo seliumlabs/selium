@@ -7,17 +7,17 @@ use std::{net::SocketAddr, time::Duration};
 
 pub(crate) const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
-
 pub(crate) fn configure_client(
     certs: Vec<Certificate>,
     key: PrivateKey,
     root_store: &RootCertStore,
-    keep_alive: u64
+    keep_alive: u64,
 ) -> ClientConfig {
     let mut crypto = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_store.to_owned())
-        .with_client_auth_cert(certs, key).unwrap();
+        .with_client_auth_cert(certs, key)
+        .unwrap();
 
     crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
 
