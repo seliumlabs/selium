@@ -44,8 +44,8 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 
     let connection = selium::client()
         .keep_alive(5_000)?
-        .with_certificate_authority("certs/ca/first/ca.crt")?
-        .with_cert_and_key("certs/client/first/client.crt", "certs/client/first/client.key")?
+        .with_certificate_authority("certs/ca.crt")?
+        .with_cert_and_key("certs/client.crt", "certs/client.key")?
         .connect(SERVER_ADDR)
         .await?;
 
@@ -102,8 +102,8 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>, Box<dyn Error>> {
     let connection = selium::client()
         .keep_alive(5_000)?
-        .with_certificate_authority("certs/ca/first/ca.crt")?
-        .with_cert_and_key("certs/client/first/client.crt", "certs/client/first/client.key")?
+        .with_certificate_authority("certs/ca.crt")?
+        .with_cert_and_key("certs/client.crt", "certs/client.key")?
         .connect(SERVER_ADDR)
         .await?;
 
@@ -126,9 +126,11 @@ fn start_server() -> Child {
             "--bind-addr",
             SERVER_ADDR,
             "--cert",
-            "tests/certs/ca.crt",
+            "tests/certs/server.crt",
             "--key",
-            "tests/certs/ca.key",
+            "tests/certs/server.key",
+            "--ca",
+            "tests/certs/ca.crt",
             "-vvvv",
         ])
         .current_dir("..")
