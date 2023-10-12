@@ -1,8 +1,10 @@
 use crate::Frame;
+use anyhow::{bail, Result};
 use bytes::{Buf, BufMut, BytesMut};
 use std::mem::size_of;
 use tokio_util::codec::{Decoder, Encoder};
 
+const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 const LEN_MARKER_SIZE: usize = size_of::<u64>();
 const TYPE_MARKER_SIZE: usize = size_of::<u8>();
 const RESERVED_SIZE: usize = LEN_MARKER_SIZE + TYPE_MARKER_SIZE;
@@ -13,8 +15,10 @@ pub struct MessageCodec;
 impl Encoder<Frame> for MessageCodec {
     type Error = anyhow::Error;
 
-    fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<()> {
         let length = item.get_length()?;
+        validate_payload_length(length)?;
+
         let message_type = item.get_type();
 
         dst.reserve(RESERVED_SIZE + length as usize);
@@ -30,7 +34,7 @@ impl Decoder for MessageCodec {
     type Error = anyhow::Error;
     type Item = Frame;
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
         if src.len() < RESERVED_SIZE {
             return Ok(None);
         }
@@ -39,6 +43,8 @@ impl Decoder for MessageCodec {
         length_bytes.copy_from_slice(&src[..LEN_MARKER_SIZE]);
 
         let length = u64::from_be_bytes(length_bytes);
+        validate_payload_length(length)?;
+
         let bytes_read = src.len() - RESERVED_SIZE;
 
         if bytes_read < length as usize {
@@ -53,6 +59,18 @@ impl Decoder for MessageCodec {
         let frame = Frame::try_from((message_type, bytes))?;
 
         Ok(Some(frame))
+    }
+}
+
+fn validate_payload_length(length: u64) -> Result<()> {
+    if length > MAX_MESSAGE_SIZE as u64 {
+        bail!(
+            "Payload size ({} bytes) is greater than maximum allowed size ({} bytes)",
+            length,
+            MAX_MESSAGE_SIZE
+        )
+    } else {
+        Ok(())
     }
 }
 
@@ -138,6 +156,17 @@ mod tests {
     }
 
     #[test]
+    fn fails_to_encode_if_payload_too_large() {
+        const PAYLOAD: [u8; MAX_MESSAGE_SIZE + 1] = [0u8; MAX_MESSAGE_SIZE + 1];
+
+        let frame = Frame::Message(Bytes::from_static(&PAYLOAD));
+        let mut codec = MessageCodec;
+        let mut buffer = BytesMut::new();
+
+        assert!(codec.encode(frame, &mut buffer).is_err());
+    }
+
+    #[test]
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec;
         let mut src = BytesMut::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
@@ -203,5 +232,15 @@ mod tests {
         let result = codec.decode(&mut src).unwrap().unwrap();
 
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn fails_to_decode_if_payload_too_large() {
+        const PAYLOAD: [u8; MAX_MESSAGE_SIZE + 1] = [0u8; MAX_MESSAGE_SIZE + 1];
+
+        let mut codec = MessageCodec;
+        let mut src = BytesMut::from(&PAYLOAD[..]);
+
+        assert!(codec.decode(&mut src).is_err());
     }
 }
