@@ -10,7 +10,7 @@ pub type KeyPair = (Vec<Certificate>, PrivateKey);
 
 pub fn load_certs(cert_file: &PathBuf) -> Result<Vec<Certificate>> {
     certs(&mut BufReader::new(File::open(cert_file)?))
-        .with_context(|| format!("Failed to load valid certificates from "))
+        .with_context(|| format!("Failed to load valid certificates from {cert_file:?}"))
         .map(|mut certs| certs.drain(..).map(Certificate).collect())
 }
 
