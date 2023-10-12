@@ -15,6 +15,7 @@ use topic::Socket;
 mod quic;
 mod sink;
 mod topic;
+mod util;
 
 type TopicChannel = Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>;
 
@@ -38,6 +39,9 @@ struct UserArgs {
     /// Can be called multiple times to increase output
     #[clap(flatten)]
     verbose: Verbosity,
+    /// path to CA certificate
+    #[clap(long)]
+    ca: PathBuf,
 }
 
 #[derive(Args, Debug)]
@@ -79,7 +83,7 @@ async fn main() -> Result<()> {
         stateless_retry: args.stateless_retry,
         max_idle_timeout: IdleTimeout::from(VarInt::from_u32(args.max_idle_timeout)),
     };
-    let config = quic::server_config(certs, key, opts)?;
+    let config = quic::server_config(args.ca, certs, key, opts)?;
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 
     // Create hash to store message ordering data

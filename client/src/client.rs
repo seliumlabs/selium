@@ -4,16 +4,23 @@ use crate::utils::client::establish_connection;
 use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsDecoder};
 use anyhow::Result;
 use quinn::{Connection, VarInt};
-use rustls::RootCertStore;
+use rustls::{Certificate, PrivateKey, RootCertStore};
 use std::path::PathBuf;
+use crate::utils::cert::{load_keypair};
 
 /// The default `keep_alive` interval for a client connection.
 pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct ClientWantsCert {
+pub struct ClientWantsRootCert {
+    keep_alive: u64
+}
+
+#[derive(Debug)]
+pub struct ClientWantsCertAndKey {
     keep_alive: u64,
+    root_store: RootCertStore
 }
 
 #[doc(hidden)]
@@ -21,6 +28,8 @@ pub struct ClientWantsCert {
 pub struct ClientWantsConnect {
     keep_alive: u64,
     root_store: RootCertStore,
+    certs: Vec<Certificate>,
+    key: PrivateKey
 }
 
 /// A convenient builder struct used to build a [Client] instance.
@@ -43,15 +52,15 @@ pub struct ClientBuilder<T> {
 /// ```
 /// let client = selium::client();
 /// ```
-pub fn client() -> ClientBuilder<ClientWantsCert> {
+pub fn client() -> ClientBuilder<ClientWantsRootCert> {
     ClientBuilder {
-        state: ClientWantsCert {
+        state: ClientWantsRootCert {
             keep_alive: KEEP_ALIVE_DEFAULT,
         },
     }
 }
 
-impl ClientBuilder<ClientWantsCert> {
+impl ClientBuilder<ClientWantsRootCert> {
     /// Overrides the `keep_alive` interval for the client connection in milliseconds.
     ///
     /// Accepts any `interval` argument that can be *fallibly* converted into a [u64] via the
@@ -102,16 +111,33 @@ impl ClientBuilder<ClientWantsCert> {
     pub fn with_certificate_authority<T: Into<PathBuf>>(
         self,
         ca_path: T,
-    ) -> Result<ClientBuilder<ClientWantsConnect>> {
+    ) -> Result<ClientBuilder<ClientWantsCertAndKey>> {
         let root_store = load_root_store(&ca_path.into())?;
-
-        let state = ClientWantsConnect {
+        let state = ClientWantsCertAndKey {
             keep_alive: self.state.keep_alive,
-            root_store,
+            root_store
         };
-
         Ok(ClientBuilder { state })
     }
+}
+
+impl ClientBuilder<ClientWantsCertAndKey> {
+
+    pub fn with_cert_and_key<T: Into<PathBuf>>(
+        self,
+        cert_file: T,
+        key_file: T
+    ) -> Result<ClientBuilder<ClientWantsConnect>> {
+        let (certs, key) = load_keypair(&cert_file.into(), &key_file.into())?;
+        let state = ClientWantsConnect {
+            keep_alive: self.state.keep_alive,
+            root_store: self.state.root_store,
+            certs,
+            key
+        };
+        Ok(ClientBuilder { state} )
+    }
+
 }
 
 impl ClientBuilder<ClientWantsConnect> {
@@ -127,8 +153,13 @@ impl ClientBuilder<ClientWantsConnect> {
     /// [SocketAddr](std::net::SocketAddr).
     /// - If the connection cannot be established.
     pub async fn connect(self, addr: &str) -> Result<Client> {
-        let connection =
-            establish_connection(addr, &self.state.root_store, self.state.keep_alive).await?;
+        let connection = establish_connection(
+            addr,
+            self.state.certs,
+            self.state.key,
+            &self.state.root_store,
+            self.state.keep_alive
+        ).await?;
 
         tokio::spawn({
             let connection = connection.clone();

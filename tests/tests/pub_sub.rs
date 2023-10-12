@@ -44,8 +44,9 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 
     let connection = selium::client()
         .keep_alive(5_000)?
-        .with_certificate_authority("certs/ca.crt")?
-        .connect("127.0.0.1:7001")
+        .with_certificate_authority("certs/ca/first/ca.crt")?
+        .with_cert_and_key("certs/client/first/client.crt", "certs/client/first/client.key")?
+        .connect(SERVER_ADDR)
         .await?;
 
     let mut publisher = connection
@@ -101,7 +102,8 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>, Box<dyn Error>> {
     let connection = selium::client()
         .keep_alive(5_000)?
-        .with_certificate_authority("certs/ca.crt")?
+        .with_certificate_authority("certs/ca/first/ca.crt")?
+        .with_cert_and_key("certs/client/first/client.crt", "certs/client/first/client.key")?
         .connect(SERVER_ADDR)
         .await?;
 

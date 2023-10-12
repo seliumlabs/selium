@@ -1,17 +1,23 @@
 use super::net::get_socket_addrs;
 use anyhow::Result;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
-use rustls::RootCertStore;
+use rustls::{Certificate, PrivateKey, RootCertStore};
 use std::sync::Arc;
 use std::{net::SocketAddr, time::Duration};
 
 pub(crate) const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
-pub(crate) fn configure_client(root_store: &RootCertStore, keep_alive: u64) -> ClientConfig {
+
+pub(crate) fn configure_client(
+    certs: Vec<Certificate>,
+    key: PrivateKey,
+    root_store: &RootCertStore,
+    keep_alive: u64
+) -> ClientConfig {
     let mut crypto = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_store.to_owned())
-        .with_no_client_auth();
+        .with_client_auth_cert(certs, key).unwrap();
 
     crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
 
@@ -39,11 +45,13 @@ pub(crate) async fn connect_to_endpoint(
 
 pub(crate) async fn establish_connection(
     host: &str,
+    certs: Vec<Certificate>,
+    key: PrivateKey,
     root_store: &RootCertStore,
     keep_alive: u64,
 ) -> Result<Connection> {
     let addr = get_socket_addrs(host)?;
-    let config = configure_client(root_store, keep_alive);
+    let config = configure_client(certs, key, root_store, keep_alive);
     let connection = connect_to_endpoint(config, addr).await?;
 
     Ok(connection)

@@ -7,7 +7,9 @@ use anyhow::{bail, Context, Result};
 use quinn::{IdleTimeout, ServerConfig};
 use rcgen::generate_simple_self_signed;
 use rustls::{Certificate, PrivateKey};
+use rustls::server::AllowAnyAuthenticatedClient;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use crate::util::cert::{load_root_store};
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
@@ -19,13 +21,17 @@ pub struct ConfigOptions {
 }
 
 pub fn server_config(
+    ca: PathBuf,
     certs: Vec<Certificate>,
     key: PrivateKey,
     options: ConfigOptions,
 ) -> Result<ServerConfig> {
+    let root_store = load_root_store(&ca)?;
+    let client_cert_verifier = Arc::new(AllowAnyAuthenticatedClient::new(root_store));
+
     let mut server_crypto = rustls::ServerConfig::builder()
         .with_safe_defaults()
-        .with_no_client_auth()
+        .with_client_cert_verifier(client_cert_verifier)
         .with_single_cert(certs, key)?;
     server_crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
     if options.keylog {

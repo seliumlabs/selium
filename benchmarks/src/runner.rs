@@ -48,7 +48,8 @@ impl BenchmarkRunner {
         let server_handle = start_server();
 
         let connection = selium::client()
-            .with_certificate_authority("benchmarks/certs/ca.crt")?
+            .with_certificate_authority("certs/ca/first/ca.crt")?
+            .with_cert_and_key("certs/client/first/client.crt", "certs/client/first/client.key")?
             .connect(SERVER_ADDR)
             .await?;
 
