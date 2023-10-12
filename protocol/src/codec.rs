@@ -1,5 +1,5 @@
 use crate::Frame;
-use anyhow::{bail, Result};
+use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut, BytesMut};
 use std::mem::size_of;
 use tokio_util::codec::{Decoder, Encoder};
@@ -15,7 +15,7 @@ pub struct MessageCodec;
 impl Encoder<Frame> for MessageCodec {
     type Error = anyhow::Error;
 
-    fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<()> {
+    fn encode(&mut self, item: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let length = item.get_length()?;
         validate_payload_length(length)?;
 
@@ -34,7 +34,7 @@ impl Decoder for MessageCodec {
     type Error = anyhow::Error;
     type Item = Frame;
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if src.len() < RESERVED_SIZE {
             return Ok(None);
         }
@@ -64,11 +64,11 @@ impl Decoder for MessageCodec {
 
 fn validate_payload_length(length: u64) -> Result<()> {
     if length > MAX_MESSAGE_SIZE as u64 {
-        bail!(
+        Err(anyhow!(
             "Payload size ({} bytes) is greater than maximum allowed size ({} bytes)",
             length,
-            MAX_MESSAGE_SIZE
-        )
+            MAX_MESSAGE_SIZE,
+        ))
     } else {
         Ok(())
     }
