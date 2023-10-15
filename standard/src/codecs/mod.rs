@@ -1,4 +1,5 @@
-//! A collection of codecs to encode/decode messages into various formats.
+//! Client codec implementations for commonly used serialization formats, including UTF-8 encoded 
+//! strings, and various binary formats, such as bincode.
 //!
 //! In `Selium`, messages are sent over the wire in a binary format, and thus, the server has no
 //! indication of, or any desire to make sense of the data. This is perfectly suitable for the
@@ -28,7 +29,6 @@
 //!
 //! [MessageEncoder](crate::traits::codec::MessageEncoder) exposes a single method to implementors,
 //! [encode](crate::traits::codec::MessageEncoder::encode).
-
 //!
 //! # Decoder
 //!
