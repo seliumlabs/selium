@@ -1,13 +1,16 @@
 //! Much of this code was borrowed with many thanks from the Quinn project:
 //! https://github.com/quinn-rs/quinn/blob/main/quinn/examples/server.rs
 
-use std::{fs, path::PathBuf, sync::Arc};
-
 use anyhow::{bail, Context, Result};
 use quinn::{IdleTimeout, ServerConfig};
 use rustls::server::AllowAnyAuthenticatedClient;
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
@@ -47,8 +50,8 @@ pub fn server_config(
     Ok(server_config)
 }
 
-fn load_key(path: &PathBuf) -> Result<PrivateKey> {
-    let key = fs::read(path.clone()).context("failed to read private key")?;
+fn load_key(path: &Path) -> Result<PrivateKey> {
+    let key = fs::read(path).context("failed to read private key")?;
     let key = if path.extension().map_or(false, |x| x == "der") {
         PrivateKey(key)
     } else {
@@ -70,8 +73,8 @@ fn load_key(path: &PathBuf) -> Result<PrivateKey> {
     Ok(key)
 }
 
-fn load_certs(path: &PathBuf) -> Result<Vec<Certificate>> {
-    let cert_chain = fs::read(path.clone()).context("failed to read certificate chain")?;
+fn load_certs(path: &Path) -> Result<Vec<Certificate>> {
+    let cert_chain = fs::read(path).context("failed to read certificate chain")?;
 
     let cert_chain = if path.extension().map_or(false, |x| x == "der") {
         vec![Certificate(cert_chain)]

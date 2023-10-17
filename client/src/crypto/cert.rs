@@ -1,12 +1,15 @@
 use anyhow::{bail, Context, Result};
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub type KeyPair = (Vec<Certificate>, PrivateKey);
 
-fn load_key(path: &PathBuf) -> Result<PrivateKey> {
-    let key = fs::read(path.clone()).context("failed to read private key")?;
+fn load_key(path: &Path) -> Result<PrivateKey> {
+    let key = fs::read(path).context("failed to read private key")?;
     let key = if path.extension().map_or(false, |x| x == "der") {
         PrivateKey(key)
     } else {
@@ -28,8 +31,8 @@ fn load_key(path: &PathBuf) -> Result<PrivateKey> {
     Ok(key)
 }
 
-fn load_certs(path: &PathBuf) -> Result<Vec<Certificate>> {
-    let cert_chain = fs::read(path.clone()).context("failed to read certificate chain")?;
+fn load_certs(path: &Path) -> Result<Vec<Certificate>> {
+    let cert_chain = fs::read(path).context("failed to read certificate chain")?;
 
     let cert_chain = if path.extension().map_or(false, |x| x == "der") {
         vec![Certificate(cert_chain)]
@@ -54,9 +57,9 @@ fn load_certs(path: &PathBuf) -> Result<Vec<Certificate>> {
 ///
 /// * `ca_file` - The filepath to the CA file.
 ///
-pub(crate) fn load_root_store(ca_file: &PathBuf) -> Result<RootCertStore> {
+pub(crate) fn load_root_store(ca_file: PathBuf) -> Result<RootCertStore> {
     let mut store = RootCertStore::empty();
-    let certs = load_certs(ca_file)?;
+    let certs = load_certs(&ca_file)?;
     store.add_parsable_certificates(&certs);
 
     if store.is_empty() {
@@ -76,8 +79,8 @@ pub(crate) fn load_root_store(ca_file: &PathBuf) -> Result<RootCertStore> {
 /// * `cert_file` - The filepath to the certificate file.
 /// * `key_file` - The filepath to the private key file.
 ///
-pub fn load_keypair(cert_file: &PathBuf, key_file: &PathBuf) -> Result<KeyPair> {
-    let certs = load_certs(cert_file)?;
-    let private_key = load_key(key_file)?;
+pub fn load_keypair(cert_file: PathBuf, key_file: PathBuf) -> Result<KeyPair> {
+    let certs = load_certs(&cert_file)?;
+    let private_key = load_key(&key_file)?;
     Ok((certs, private_key))
 }

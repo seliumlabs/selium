@@ -111,7 +111,7 @@ impl ClientBuilder<ClientWantsRootCert> {
         self,
         ca_path: T,
     ) -> Result<ClientBuilder<ClientWantsCertAndKey>> {
-        let root_store = load_root_store(&ca_path.into())?;
+        let root_store = load_root_store(ca_path.into())?;
         let state = ClientWantsCertAndKey {
             keep_alive: self.state.keep_alive,
             root_store,
@@ -126,7 +126,7 @@ impl ClientBuilder<ClientWantsCertAndKey> {
         cert_file: T,
         key_file: T,
     ) -> Result<ClientBuilder<ClientWantsConnect>> {
-        let (certs, key) = load_keypair(&cert_file.into(), &key_file.into())?;
+        let (certs, key) = load_keypair(cert_file.into(), key_file.into())?;
         let state = ClientWantsConnect {
             keep_alive: self.state.keep_alive,
             root_store: self.state.root_store,
