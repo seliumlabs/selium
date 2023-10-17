@@ -80,3 +80,8 @@ required-features = ["std-codec", "std-compression"]
 name = "decompression"
 path = "examples/decompression.rs"
 required-features = ["std-codec", "std-compression"]
+
+[[example]]
+name = "batching_and_compression"
+path = "examples/batching_and_compression.rs"
+required-features = ["std-compression"]
