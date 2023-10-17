@@ -1,4 +1,4 @@
-use crate::crypto::cert::{load_root_store, load_keypair};
+use crate::crypto::cert::{load_keypair, load_root_store};
 use crate::traits::TryIntoU64;
 use crate::utils::client::establish_connection;
 use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsDecoder};

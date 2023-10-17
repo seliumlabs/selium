@@ -45,7 +45,10 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
     let connection = selium::client()
         .keep_alive(5_000)?
         .with_certificate_authority("../certs/client/ca.der")?
-        .with_cert_and_key("../certs/client/localhost.der", "../certs/client/localhost.key.der")?
+        .with_cert_and_key(
+            "../certs/client/localhost.der",
+            "../certs/client/localhost.key.der",
+        )?
         .connect(SERVER_ADDR)
         .await?;
 
@@ -103,7 +106,10 @@ async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>
     let connection = selium::client()
         .keep_alive(5_000)?
         .with_certificate_authority("../certs/client/ca.der")?
-        .with_cert_and_key("../certs/client/localhost.der", "../certs/client/localhost.key.der")?
+        .with_cert_and_key(
+            "../certs/client/localhost.der",
+            "../certs/client/localhost.key.der",
+        )?
         .connect(SERVER_ADDR)
         .await?;
 

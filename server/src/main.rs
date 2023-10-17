@@ -46,10 +46,18 @@ struct CertGroup {
     #[clap(long, default_value = "certs/server/ca.der")]
     ca: PathBuf,
     /// TLS private key
-    #[clap(short = 'k', long = "key", default_value = "certs/server/localhost.key.der")]
+    #[clap(
+        short = 'k',
+        long = "key",
+        default_value = "certs/server/localhost.key.der"
+    )]
     key: PathBuf,
     /// TLS certificate
-    #[clap(short = 'c', long = "cert", default_value = "certs/server/localhost.der")]
+    #[clap(
+        short = 'c',
+        long = "cert",
+        default_value = "certs/server/localhost.der"
+    )]
     cert: PathBuf,
 }
 

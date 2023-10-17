@@ -28,7 +28,7 @@ fn start_server() -> Child {
             "--key",
             "certs/server/localhost.key.der",
             "--ca",
-            "certs/server/ca.der"
+            "certs/server/ca.der",
         ])
         .spawn()
         .expect("Failed to start server")
