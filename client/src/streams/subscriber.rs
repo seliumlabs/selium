@@ -34,8 +34,7 @@ impl StreamBuilder<SubscriberWantsDecoder> {
     /// received over the wire.
     ///
     /// A decoder can be any type implementing
-    /// [MessageDecoder](crate::traits::MessageDecoder). See [codecs](crate::codecs) for a list of
-    /// codecs available in `Selium`, along with tutorials for creating your own decoders.
+    /// [MessageDecoder](crate::std::traits::codec::MessageDecoder). 
     pub fn with_decoder<D, Item>(self, decoder: D) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
         let state = SubscriberWantsOpen {
             common: self.state.common,

@@ -4,6 +4,9 @@ use bytes::Bytes;
 use lz4_flex::frame::FrameDecoder;
 use std::io::Read;
 
+/// Decompression half of lz4 implementation.
+///
+/// `Lz4Decomp` implements [Decompress], and can be constructed for use with a `Subscriber` stream.
 #[derive(Debug)]
 pub struct Lz4Decomp;
 

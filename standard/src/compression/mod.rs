@@ -1,5 +1,6 @@
 //! Implementations for many widely used compression algorithms, including
-//! DEFLATE, lz4, zstd and brotli.
+//! [DEFLATE](crate::compression::deflate), [lz4](crate::compression::lz4),
+//! [zstd](crate::compression::zstd) and [brotli](crate::compression::brotli).
 //!
 //! `Selium Labs` makes a best effort to include support for a generous selection of
 //! popular and effective compression algorithms and implementations. These offerings
@@ -11,59 +12,64 @@
 //! a level of flexibility is still afforded to users, by allowing specific properties of
 //! applicable algorithms, such as the compression level, to be configured via a high-level
 //! interface. Certain algorithms may also feature popular implementations, which can be toggled,
-//! such as the gzip and zlib implementations derived from the DEFLATE algorithm.
+//! such as the `gzip` and `zlib` implementations derived from the `DEFLATE` algorithm.
 //!
 //! # Support for custom implementations
 //!
 //! Is there a popular compression algorithm that we've missed? One option is to raise a request
-//! via the Selium monorepo issue register. However, if you require immediate support, or if you
-//! perhaps use a proprietary compression algorithm that you'd either like to remain closed-source,
-//! or is simply too niche to be added to the Selium Standard offerings, you can quickly, and
-//! easily add support via the `Compression` and `Decompression` traits in the traits module.
+//! via the [`Selium` monorepo issue register](https://github.com/seliumlabs/selium/issues). However,
+//! if you require immediate support, or if you perhaps use a proprietary compression algorithm that
+//! you'd either like to remain closed-source, or is simply too niche to be added to the `Selium Standard`
+//! offerings, you can quickly and easily add support via the [Compress](crate::traits::compression::Compress) and
+//! [Decompress](crate::traits::compression::Decompress) traits in the traits module.
 //!
 //! The `Selium` client's stream builders expect any type that implements the respective traits, be
-//! it `Compress` for a `Publisher` stream, or `Decompress` for a `Subscriber` stream. The
-//! standard compression algorithms also implement these traits.
+//! it [Compress](crate::traits::compression::Compress) for a `Publisher` stream, or
+//! [Decompress](crate::traits::compression::Decompress) for a `Subscriber` stream. The standard compression
+//! algorithms also implement these traits.
 //!
 //! ## Example
 //!
 //! As a contrived example, we'll add an implementation for one of the simplest and most classic
-//! compression algorithms, Run-Length Encoding (RLE). Using a sequence of characters, for example,
-//! you would take an input string of `AAAAABBBCCCCCCDDAA`, and produce a new sequence of `A5B3C6A2`.
+//! compression algorithms, [Run-Length Encoding (RLE)](https://en.wikipedia.org/wiki/Run-length_encoding). Using a sequence
+//! of characters, for example, you would take an input string of `AAAAABBBCCCCCCDDAA`, and produce a new sequence of `A5B3C6A2`.
 //!
-//! To begin, let's create a new unit struct called `RunLengthEncoder` that derives `Clone` (to
-//! allow `Publisher` streams using the struct to be cloned/forked):
+//! To begin, let's create a new unit struct called `RunLengthEncoder` that derives [Clone] (to
+//! allow `Publisher` streams using the struct to be cloned/forked).
 //!
 //! ```
 //! #[derive(Clone)]
 //! pub struct RunLengthEncoder;
 //! ```
 //!
-//! Next, we'll implement the `Compress` trait for our new type:
+//! Next, we'll implement the [Compress](crate::traits::compression::Compress) trait for our new type:
 //!
 //! ```
 //! # #[derive(Clone)]
 //! # pub struct RunLengthEncoder;
-//! # use anyhow::{Result, Context};
-//! # use bytes::{Bytes, BytesMut};
+//! # use anyhow::{bail, Result, Context};
+//! # use bytes::{Buf, BufMut, Bytes, BytesMut};
 //! # use selium_std::traits::compression::Compress;
 //! impl Compress for RunLengthEncoder {
-//!   fn compress(&self, input: Bytes) -> Result<Bytes> {
+//!   fn compress(&self, mut input: Bytes) -> Result<Bytes> {
 //!       // Make sure we have at least one byte in the input sequence.
-//!       let first = input.first().context("Cannot compress empty sequence.")?;
+//!       if input.len() == 0 {
+//!           bail!("Cannot compress empty sequence.");
+//!       }
 //!
-//!       let buffer = BytesMut::new();
+//!       let first = input.get_u8();
+//!
+//!       // Put the first byte into a buffer to start tallying
+//!       let mut buffer = BytesMut::from(&[first][..]);
+//!
 //!       let mut occurrences = 1u8;
-//!
-//!       // Put the first byte into the buffer to start tallying
-//!       buffer.put_u8(first);
 //!
 //!       for byte in input {
 //!           // Get the last byte we inserted into the buffer.
 //!           // Safety: We know this should never panic.
 //!           let last_byte = buffer.last().unwrap();
 //!
-//!           if last_byte == byte {
+//!           if *last_byte == byte {
 //!               // If we've encountered the same byte again, increment the
 //!               // occurrences tally.
 //!               occurrences += 1;  
@@ -71,7 +77,7 @@
 //!               // Otherwise, put the last number of occurrences to complete
 //!               // the pair, and then put the next byte to start tallying
 //!               // occurrences again.
-//!               buffer.extend_from_slice(&[occurrences, *byte]) ;
+//!               buffer.extend_from_slice(&[occurrences, byte]) ;
 //!               occurrences = 1;
 //!           }
 //!       }
@@ -80,30 +86,30 @@
 //!       // buffer to finalise the sequence.
 //!       buffer.put_u8(occurrences);
 //!
-//!       Ok(buffer)
+//!       Ok(buffer.into())
 //!   }
 //! }
 //! ```
 //!
-//! Finally, implement `Decompress` for `RunLengthEncoder` to handle the decompression side of the
-//! equation.
+//! Finally, implement [Decompress](crate::traits::compression::Decompress) for `RunLengthEncoder` to handle the decompression
+//! side of the equation.
 //!
 //! ```
 //! # #[derive(Clone)]
 //! # pub struct RunLengthEncoder;
-//! # use anyhow::{Result, Context};
-//! # use bytes::{Bytes, BytesMut};
+//! # use anyhow::{bail, Result, Context};
+//! # use bytes::{Buf, Bytes, BytesMut};
 //! # use selium_std::traits::compression::Decompress;
 //! impl Decompress for RunLengthEncoder {
-//!     fn decompress(&self, input: Bytes) -> Result<Bytes> {
+//!     fn decompress(&self, mut input: Bytes) -> Result<Bytes> {
 //!         // Make sure we have an even amount of bytes in the sequence
-//!         if !(input.len() & 1) {
+//!         if input.len() & 1 == 0 {
 //!             bail!("Invalid RLE sequence");
 //!         }
 //!
 //!         let mut output = BytesMut::new();
 //!
-//!         for i in input.len() / 2 {
+//!         for i in 0..input.len() / 2 {
 //!            // Pop the byte representing the number of occurrences
 //!            let occurrences = input.get_u8();
 //!
@@ -112,7 +118,7 @@
 //!
 //!            // Unpack the compressed byte into the output `occurrences`
 //!            // amount of times
-//!            output.extend_from_slice(vec![occurrences; byte]);
+//!            output.extend_from_slice(&vec![byte; occurrences as usize]);
 //!         }
 //!
 //!         Ok(output.into())
@@ -124,50 +130,52 @@
 //!
 //!
 //! ```
-//! use bytes:{Bytes, BytesMut};
-//! use anyhow::{Result, Context};
-//! use bytes::{Bytes, BytesMut};
-//! use selium_std::traits::compression::Decompress;
+//! use anyhow::{bail, Result, Context};
+//! use bytes::{Buf, BufMut, Bytes, BytesMut};
+//! use selium_std::traits::compression::{Compress, Decompress};
 //!
 //! #[derive(Clone)]
 //! pub struct RunLengthEncoder;
 //!
 //! impl Compress for RunLengthEncoder {
-//!   fn compress(&self, input: Bytes) -> Result<Bytes> {
-//!       let first = input.first().context("Cannot compress empty sequence.")?;
-//!       let buffer = BytesMut::new();
-//!       let mut occurrences = 1u8;
+//!   fn compress(&self, mut input: Bytes) -> Result<Bytes> {
+//!       if input.len() == 0 {
+//!           bail!("Cannot compress empty sequence.");
+//!       }
 //!
-//!       buffer.put_u8(first);
+//!       let first = input.get_u8();
+//!       let mut buffer = BytesMut::from(&[first][..]);
+//!       let mut occurrences = 1u8;
 //!
 //!       for byte in input {
 //!           let last_byte = buffer.last().unwrap();
 //!
-//!           if last_byte == byte {
+//!           if *last_byte == byte {
 //!               occurrences += 1;  
 //!           } else {
-//!               buffer.extend_from_slice(&[occurrences, *byte]) ;
+//!               buffer.extend_from_slice(&[occurrences, byte]) ;
 //!               occurrences = 1;
 //!           }
 //!       }
 //!
 //!       buffer.put_u8(occurrences);
 //!
-//!       Ok(buffer)
+//!       Ok(buffer.into())
 //!   }
+//! }
 //!
 //! impl Decompress for RunLengthEncoder {
-//!     fn decompress(&self, input: Bytes) -> Result<Bytes> {
-//!         if !(input.len() & 1) {
+//!     fn decompress(&self, mut input: Bytes) -> Result<Bytes> {
+//!         if input.len() & 1 > 0 {
 //!             bail!("Invalid RLE sequence");
 //!         }
 //!
 //!         let mut output = BytesMut::new();
 //!
-//!         for i in input.len() / 2 {
-//!            let occurrences = input.get_u8();
+//!         for i in 0..input.len() / 2 {
 //!            let byte = input.get_u8();
-//!            output.extend_from_slice(vec![occurrences; byte]);
+//!            let occurrences = input.get_u8();
+//!            output.extend_from_slice(&vec![byte; occurrences as usize]);
 //!         }
 //!
 //!         Ok(output.into())
@@ -176,21 +184,21 @@
 //!
 //! fn main() {
 //!     let input = Bytes::from("AAAAAAAABBBBCCCCCDDEAA");
-//!     let expected = Bytes::from("A8B4C5D2E1A2");
+//!     let expected = Bytes::from("A\x08B\x04C\x05D\x02E\x01A\x02");
 //!     let encoder = RunLengthEncoder;
 //!
 //!     let compressed = encoder.compress(input.clone()).unwrap();
 //!     assert_eq!(compressed, expected);
 //!
-//!     let decompressed = encoder.decompress(compressed);
+//!     let decompressed = encoder.decompress(compressed).unwrap();
 //!     assert_eq!(decompressed, input);
 //! }
 //! ```
 //!
-//! Now your `RunLengthEncoder` type can be used with Selium streams, which will automatically
-//! compress/decompress messages for you, by hooking into the `Compress` and `Decompress`
-//! implementations.
-//!
+//! The `RunLengthEncoder` type can now be used with `Selium` streams, which will automatically
+//! compress/decompress messages by hooking into the
+//! [Compress](crate::traits::compression::Compress) and
+//! [Decompress](crate::traits::compression::Decompress) implementations.
 
 pub mod brotli;
 pub mod deflate;

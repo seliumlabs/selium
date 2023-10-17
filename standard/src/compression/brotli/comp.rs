@@ -1,8 +1,3 @@
-//! Adds support for brotli, a lossless data compression algorithm developed by Google.
-//!
-//! Adapts the [brotli] crate, a popular implementation of the brotli compression algorithm built
-//! in Rust, into Selium.
-
 use crate::traits::compression::{Compress, CompressionLevel};
 use anyhow::Result;
 use brotli::enc::backward_references::BrotliEncoderMode;
@@ -11,12 +6,21 @@ use brotli::enc::BrotliEncoderParams;
 use bytes::Bytes;
 use std::io::Write;
 
+/// Highest compression level available for Brotli.
 pub const HIGHEST_COMPRESSION: i32 = 11;
+
+/// Recommended compression level for Brotli.
 pub const RECOMMENDED_COMPRESSION: i32 = 6;
+
+/// Fastest compression level available for Brotli.
 pub const FASTEST_COMPRESSION: i32 = 1;
 
 const BUFFER_SIZE: usize = 4096;
 
+/// Compression half of Brotli implementation.
+///
+/// `BrotliComp` implements [Compress], and can be constructed for use with a `Publisher`
+/// stream.
 #[derive(Debug, Default)]
 pub struct BrotliComp {
     params: BrotliEncoderParams,

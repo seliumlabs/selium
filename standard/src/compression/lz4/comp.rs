@@ -4,6 +4,9 @@ use bytes::Bytes;
 use lz4_flex::frame::FrameEncoder;
 use std::io::Write;
 
+/// Compression half of lz4 implementation.
+///
+/// `Lz4Comp` implements [Compress], and can be constructed for use with a `Publisher` stream.
 #[derive(Debug)]
 pub struct Lz4Comp;
 

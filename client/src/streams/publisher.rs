@@ -38,8 +38,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
     /// to being sent over the wire.
     ///
     /// An encoder can be any type implementing
-    /// [MessageEncoder](crate::traits::MessageEncoder). See [codecs](crate::codecs) for a list of
-    /// codecs available in `Selium`, along with tutorials for creating your own encoders.
+    /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
     pub fn with_encoder<E, Item>(self, encoder: E) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
         let state = PublisherWantsOpen {
             common: self.state.common,

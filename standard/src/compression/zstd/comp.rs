@@ -2,9 +2,18 @@ use crate::traits::compression::{Compress, CompressionLevel};
 use anyhow::Result;
 use bytes::Bytes;
 
-const HIGHEST_COMPRESSION: i32 = 9;
-const FASTEST_COMPRESSION: i32 = 1;
+/// Highest compression level available for zstd.
+pub const HIGHEST_COMPRESSION: i32 = 9;
 
+/// Recommended compression level for zstd.
+pub const RECOMMENDED_COMPRESSION: i32 = zstd::DEFAULT_COMPRESSION_LEVEL;
+
+/// Fastest compression level available for zstd.
+pub const FASTEST_COMPRESSION: i32 = 1;
+
+/// Compression half of zstd implementation.
+///
+/// `ZstdComp` implements [Compress], and can be constructed for use with a `Publisher` stream.
 #[derive(Debug)]
 pub struct ZstdComp {
     level: i32,
@@ -19,7 +28,7 @@ impl Default for ZstdComp {
 impl ZstdComp {
     pub fn new() -> Self {
         ZstdComp {
-            level: zstd::DEFAULT_COMPRESSION_LEVEL,
+            level: RECOMMENDED_COMPRESSION,
         }
     }
 }
@@ -31,7 +40,7 @@ impl CompressionLevel for ZstdComp {
     }
 
     fn balanced(mut self) -> Self {
-        self.level = zstd::DEFAULT_COMPRESSION_LEVEL;
+        self.level = RECOMMENDED_COMPRESSION;
         self
     }
 
