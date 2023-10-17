@@ -10,7 +10,7 @@ use std::path::Path;
 fn generate_ca_cert() -> Result<Certificate> {
     let cert = CertificateBuilder::ca()
         .country_name("AU")
-        .organization_name("Selium Testing")
+        .organization_name("Selium")
         .valid_for_days(5)
         .build()?;
 
@@ -58,9 +58,9 @@ impl CertGen {
     fn write_to_filesystem(&self, path: &Path, keypair: &KeyPair) -> Result<()> {
         fs::create_dir_all(path)?;
 
-        write_file(&path.join("ca.crt"), &self.ca)?;
-        write_file(&path.join("localhost.crt"), &keypair.0)?;
-        write_file(&path.join("localhost.key"), &keypair.1)?;
+        write_file(&path.join("ca.der"), &self.ca)?;
+        write_file(&path.join("localhost.der"), &keypair.0)?;
+        write_file(&path.join("localhost.key.der"), &keypair.1)?;
 
         Ok(())
     }

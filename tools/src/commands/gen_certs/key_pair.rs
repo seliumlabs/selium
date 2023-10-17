@@ -17,7 +17,7 @@ impl KeyPair {
 
     fn build(builder: CertificateBuilder, ca: &Certificate) -> Result<Self> {
         let cert = builder
-            .common_name("client.localhost")
+            .common_name("selium.com")
             .valid_for_days(5)
             .build()?;
 

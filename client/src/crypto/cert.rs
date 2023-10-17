@@ -1,12 +1,47 @@
 use anyhow::{bail, Context, Result};
-use rustls::{Certificate, RootCertStore};
-use rustls_pemfile::certs;
-use std::{fs::File, io::BufReader, path::PathBuf};
+use rustls::{Certificate, PrivateKey, RootCertStore};
+use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use std::{fs, path::PathBuf};
 
-fn load_certs(cert_file: &PathBuf) -> Result<Vec<Certificate>> {
-    certs(&mut BufReader::new(File::open(cert_file)?))
-        .with_context(|| format!("Failed to load valid certificates from {cert_file:?}"))
-        .map(|mut certs| certs.drain(..).map(Certificate).collect())
+pub type KeyPair = (Vec<Certificate>, PrivateKey);
+
+fn load_key(path: &PathBuf) -> Result<PrivateKey> {
+    let key = fs::read(path.clone()).context("failed to read private key")?;
+    let key = if path.extension().map_or(false, |x| x == "der") {
+        PrivateKey(key)
+    } else {
+        let pkcs8 = pkcs8_private_keys(&mut &*key).context("malformed PKCS #8 private key")?;
+        match pkcs8.into_iter().next() {
+            Some(x) => PrivateKey(x),
+            None => {
+                let rsa = rsa_private_keys(&mut &*key).context("malformed PKCS #1 private key")?;
+                match rsa.into_iter().next() {
+                    Some(x) => PrivateKey(x),
+                    None => {
+                        bail!("no private keys found");
+                    }
+                }
+            }
+        }
+    };
+
+    Ok(key)
+}
+
+fn load_certs(path: &PathBuf) -> Result<Vec<Certificate>> {
+    let cert_chain = fs::read(path.clone()).context("failed to read certificate chain")?;
+
+    let cert_chain = if path.extension().map_or(false, |x| x == "der") {
+        vec![Certificate(cert_chain)]
+    } else {
+        certs(&mut &*cert_chain)
+            .context("invalid PEM-encoded certificate")?
+            .into_iter()
+            .map(Certificate)
+            .collect()
+    };
+
+    Ok(cert_chain)
 }
 
 /// Creates and returns a RootCertStore via certificates parsed from the provided
@@ -29,4 +64,20 @@ pub(crate) fn load_root_store(ca_file: &PathBuf) -> Result<RootCertStore> {
     }
 
     Ok(store)
+}
+
+/// Extracts a public/private key pair from the provided filepaths.
+///
+/// This function will fail if no valid certificates or private key can be
+/// successfully parsed from the input files.
+///
+/// # Arguments
+///
+/// * `cert_file` - The filepath to the certificate file.
+/// * `key_file` - The filepath to the private key file.
+///
+pub fn load_keypair(cert_file: &PathBuf, key_file: &PathBuf) -> Result<KeyPair> {
+    let certs = load_certs(cert_file)?;
+    let private_key = load_key(key_file)?;
+    Ok((certs, private_key))
 }

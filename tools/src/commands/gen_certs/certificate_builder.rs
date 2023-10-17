@@ -2,7 +2,7 @@ use super::validity_range::ValidityRange;
 use anyhow::Result;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DnType, DnValue, ExtendedKeyUsagePurpose,
-    IsCa, KeyUsagePurpose,
+    IsCa, KeyUsagePurpose, SanType,
 };
 
 pub struct CertificateBuilder {
@@ -66,7 +66,12 @@ impl CertificateBuilder {
     fn entity(purpose: ExtendedKeyUsagePurpose) -> Self {
         let mut params = CertificateParams::new(vec![]);
 
+        params
+            .subject_alt_names
+            .push(SanType::DnsName("localhost".to_owned()));
+
         params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+        params.use_authority_key_identifier_extension = true;
         params.extended_key_usages.push(purpose);
 
         Self { params }
