@@ -21,7 +21,6 @@ pub struct ConfigOptions {
 }
 
 pub fn server_config(
-    ca: PathBuf,
     certs: Vec<Certificate>,
     key: PrivateKey,
     options: ConfigOptions,
@@ -33,6 +32,7 @@ pub fn server_config(
         .with_safe_defaults()
         .with_client_cert_verifier(client_cert_verifier)
         .with_single_cert(certs, key)?;
+
     server_crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
     if options.keylog {
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());

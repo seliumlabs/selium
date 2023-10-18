@@ -39,14 +39,14 @@ struct UserArgs {
     /// Can be called multiple times to increase output
     #[clap(flatten)]
     verbose: Verbosity,
-    /// path to CA certificate
-    #[clap(long)]
-    ca: PathBuf,
 }
 
 #[derive(Args, Debug)]
 #[group(required = true)]
 struct CertGroup {
+    /// CA certificate
+    #[clap(long)]
+    ca: Option<PathBuf>,
     /// TLS private key
     #[clap(short = 'k', long = "key", requires = "cert")]
     key: Option<PathBuf>,
