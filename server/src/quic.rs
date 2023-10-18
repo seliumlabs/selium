@@ -1,13 +1,12 @@
 //! Much of this code was borrowed with many thanks from the Quinn project:
 //! https://github.com/quinn-rs/quinn/blob/main/quinn/examples/server.rs
 
-use std::{fs, path::PathBuf, sync::Arc};
-
 use anyhow::{bail, Context, Result};
 use quinn::{IdleTimeout, ServerConfig};
-use rcgen::generate_simple_self_signed;
-use rustls::{Certificate, PrivateKey};
+use rustls::server::AllowAnyAuthenticatedClient;
+use rustls::{Certificate, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use std::{fs, path::Path, sync::Arc};
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
@@ -19,14 +18,18 @@ pub struct ConfigOptions {
 }
 
 pub fn server_config(
+    root_store: RootCertStore,
     certs: Vec<Certificate>,
     key: PrivateKey,
     options: ConfigOptions,
 ) -> Result<ServerConfig> {
+    let client_cert_verifier = Arc::new(AllowAnyAuthenticatedClient::new(root_store));
+
     let mut server_crypto = rustls::ServerConfig::builder()
         .with_safe_defaults()
-        .with_no_client_auth()
+        .with_client_cert_verifier(client_cert_verifier)
         .with_single_cert(certs, key)?;
+
     server_crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
     if options.keylog {
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -43,9 +46,10 @@ pub fn server_config(
     Ok(server_config)
 }
 
-pub fn read_certs(cert_path: PathBuf, key_path: PathBuf) -> Result<(Vec<Certificate>, PrivateKey)> {
-    let key = fs::read(key_path.clone()).context("failed to read private key")?;
-    let key = if key_path.extension().map_or(false, |x| x == "der") {
+fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
+    let path = path.as_ref();
+    let key = fs::read(path).context("failed to read private key")?;
+    let key = if path.extension().map_or(false, |x| x == "der") {
         PrivateKey(key)
     } else {
         let pkcs8 = pkcs8_private_keys(&mut &*key).context("malformed PKCS #8 private key")?;
@@ -62,8 +66,15 @@ pub fn read_certs(cert_path: PathBuf, key_path: PathBuf) -> Result<(Vec<Certific
             }
         }
     };
-    let cert_chain = fs::read(cert_path.clone()).context("failed to read certificate chain")?;
-    let cert_chain = if cert_path.extension().map_or(false, |x| x == "der") {
+
+    Ok(key)
+}
+
+fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
+    let path = path.as_ref();
+    let cert_chain = fs::read(path).context("failed to read certificate chain")?;
+
+    let cert_chain = if path.extension().map_or(false, |x| x == "der") {
         vec![Certificate(cert_chain)]
     } else {
         certs(&mut &*cert_chain)
@@ -73,22 +84,27 @@ pub fn read_certs(cert_path: PathBuf, key_path: PathBuf) -> Result<(Vec<Certific
             .collect()
     };
 
-    Ok((cert_chain, key))
+    Ok(cert_chain)
 }
 
-pub fn generate_self_signed_cert() -> Result<(Vec<Certificate>, PrivateKey)> {
-    let cert = generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let key = PrivateKey(cert.serialize_private_key_der());
+pub fn read_certs<T: AsRef<Path>>(
+    cert_path: T,
+    key_path: T,
+) -> Result<(Vec<Certificate>, PrivateKey)> {
+    let certs = load_certs(cert_path)?;
+    let key = load_key(key_path)?;
+    Ok((certs, key))
+}
 
-    eprintln!(
-        "Warning! Using a self-signed certificate does not protect from
-        person-in-the-middle attacks."
-    );
+pub fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStore> {
+    let ca_file = ca_file.as_ref();
+    let mut store = RootCertStore::empty();
+    let certs = load_certs(ca_file)?;
+    store.add_parsable_certificates(&certs);
 
-    println!(
-        "Your self-signed certificate public key is:\n{}",
-        cert.serialize_pem()?
-    );
+    if store.is_empty() {
+        bail!("No valid certs found in file {ca_file:?}");
+    }
 
-    Ok((vec![Certificate(cert.serialize_der()?)], key))
+    Ok(store)
 }

@@ -1,13 +1,17 @@
 use anyhow::Result;
 use futures::SinkExt;
 use selium::prelude::*;
-use selium::std::codecs::StringCodec;
+use selium_std::codecs::StringCodec;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let connection = selium::client()
         .keep_alive(5_000)?
-        .with_certificate_authority("certs/ca.crt")?
+        .with_certificate_authority("../certs/client/ca.der")?
+        .with_cert_and_key(
+            "../certs/client/localhost.der",
+            "../certs/client/localhost.key.der",
+        )?
         .connect("127.0.0.1:7001")
         .await?;
 

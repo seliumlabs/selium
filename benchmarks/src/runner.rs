@@ -24,9 +24,11 @@ fn start_server() -> Child {
             "--bind-addr",
             SERVER_ADDR,
             "--cert",
-            "benchmarks/certs/ca.crt",
+            "certs/server/localhost.der",
             "--key",
-            "benchmarks/certs/ca.key",
+            "certs/server/localhost.key.der",
+            "--ca",
+            "certs/server/ca.der",
         ])
         .spawn()
         .expect("Failed to start server")
@@ -48,7 +50,11 @@ impl BenchmarkRunner {
         let server_handle = start_server();
 
         let connection = selium::client()
-            .with_certificate_authority("benchmarks/certs/ca.crt")?
+            .with_certificate_authority("certs/client/ca.der")?
+            .with_cert_and_key(
+                "certs/client/localhost.der",
+                "certs/client/localhost.key.der",
+            )?
             .connect(SERVER_ADDR)
             .await?;
 

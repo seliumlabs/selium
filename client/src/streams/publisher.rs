@@ -1,6 +1,5 @@
 use super::builder::{StreamBuilder, StreamCommon};
 use crate::batching::{BatchConfig, MessageBatch};
-use crate::std::traits::codec::MessageEncoder;
 use crate::traits::{Open, Operations, Retain, TryIntoU64};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,6 +8,7 @@ use futures::{Sink, SinkExt};
 use quinn::Connection;
 use selium_protocol::utils::encode_message_batch;
 use selium_protocol::{BiStream, Frame, PublisherPayload};
+use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -213,7 +213,8 @@ where
     ///
     /// Returns [Err] if the stream fails to close gracefully.
     pub async fn finish(mut self) -> Result<()> {
-        self.close().await
+        self.flush_batch()?;
+        self.stream.finish().await
     }
 
     fn send_single(&mut self, mut bytes: Bytes) -> Result<()> {
@@ -237,6 +238,16 @@ where
         let frame = Frame::BatchMessage(bytes);
         self.stream.start_send_unpin(frame)?;
         batch.update_last_run(now);
+
+        Ok(())
+    }
+
+    fn flush_batch(&mut self) -> Result<()> {
+        if let Some(batch) = self.batch.as_ref() {
+            if !batch.is_empty() {
+                self.send_batch(Instant::now())?;
+            }
+        }
 
         Ok(())
     }
@@ -279,12 +290,6 @@ where
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
-        if let Some(batch) = self.batch.as_ref() {
-            if !batch.is_empty() {
-                self.send_batch(Instant::now())?;
-            }
-        }
-
         self.stream.poll_close_unpin(cx)
     }
 }
