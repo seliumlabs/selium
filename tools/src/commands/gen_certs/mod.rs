@@ -7,6 +7,7 @@ use crate::cli::GenCertsArgs;
 use crate::commands::gen_certs::cert_gen::CertGen;
 use crate::traits::CommandRunner;
 use anyhow::Result;
+use colored::*;
 
 pub struct GenCertsRunner {
     args: GenCertsArgs,
@@ -21,11 +22,12 @@ impl From<GenCertsArgs> for GenCertsRunner {
 impl CommandRunner for GenCertsRunner {
     fn run(self) -> Result<()> {
         eprintln!(
-            "Warning! Using a self-signed certificate does not protect from
-        person-in-the-middle attacks."
+            "{}",
+            "Warning! Using a self-signed certificate does not protect from person-in-the-middle attacks.".yellow()
         );
 
-        CertGen::generate()?.output(self.args)?;
+        let cert_gen = CertGen::generate()?;
+        cert_gen.output(self.args)?;
 
         Ok(())
     }

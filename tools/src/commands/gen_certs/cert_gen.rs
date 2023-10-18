@@ -1,6 +1,7 @@
 use super::{certificate_builder::CertificateBuilder, key_pair::KeyPair};
 use crate::cli::GenCertsArgs;
 use anyhow::Result;
+use colored::*;
 use rcgen::Certificate;
 use std::fs::{self, File};
 use std::io::Write;
@@ -16,6 +17,17 @@ fn generate_ca_cert() -> Result<Certificate> {
     Ok(cert)
 }
 
+fn write_file(filename: &Path, contents: &[u8]) -> Result<()> {
+    File::create(filename)?.write_all(contents)?;
+
+    println!(
+        "{}",
+        format!("Successfully created {}", filename.display()).green()
+    );
+
+    Ok(())
+}
+
 pub struct CertGen {
     pub ca: Vec<u8>,
     pub client: KeyPair,
@@ -24,6 +36,8 @@ pub struct CertGen {
 
 impl CertGen {
     pub fn generate() -> Result<Self> {
+        println!("Generating certificates...");
+
         let ca = generate_ca_cert()?;
         let client = KeyPair::client(&ca)?;
         let server = KeyPair::server(&ca)?;
@@ -33,6 +47,8 @@ impl CertGen {
     }
 
     pub fn output(&self, args: GenCertsArgs) -> Result<()> {
+        println!("Writing certs to filesystem...");
+
         self.write_to_filesystem(&args.client_out_path, &self.client)?;
         self.write_to_filesystem(&args.server_out_path, &self.server)?;
 
@@ -42,9 +58,9 @@ impl CertGen {
     fn write_to_filesystem(&self, path: &Path, keypair: &KeyPair) -> Result<()> {
         fs::create_dir_all(path)?;
 
-        File::create(path.join("ca.crt"))?.write_all(&self.ca)?;
-        File::create(path.join("localhost.crt"))?.write_all(&keypair.0)?;
-        File::create(path.join("localhost.key"))?.write_all(&keypair.1)?;
+        write_file(&path.join("ca.crt"), &self.ca)?;
+        write_file(&path.join("localhost.crt"), &keypair.0)?;
+        write_file(&path.join("localhost.key"), &keypair.1)?;
 
         Ok(())
     }
