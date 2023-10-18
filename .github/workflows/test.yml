@@ -43,6 +43,13 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Generate self-signed certs
+        working-directory: ./tools
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: gen-certs
+
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:
