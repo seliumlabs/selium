@@ -5,7 +5,7 @@ use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsD
 use anyhow::Result;
 use quinn::{Connection, VarInt};
 use rustls::{Certificate, PrivateKey, RootCertStore};
-use std::path::PathBuf;
+use std::path::Path;
 
 /// The default `keep_alive` interval for a client connection.
 pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
@@ -107,11 +107,11 @@ impl ClientBuilder<ClientWantsRootCert> {
     ///
     /// Returns [Err] if the provided `ca_path` argument does not refer to a file containing a
     /// valid certificate.
-    pub fn with_certificate_authority<T: Into<PathBuf>>(
+    pub fn with_certificate_authority<T: AsRef<Path>>(
         self,
         ca_path: T,
     ) -> Result<ClientBuilder<ClientWantsCertAndKey>> {
-        let root_store = load_root_store(ca_path.into())?;
+        let root_store = load_root_store(ca_path)?;
         let state = ClientWantsCertAndKey {
             keep_alive: self.state.keep_alive,
             root_store,
@@ -121,12 +121,12 @@ impl ClientBuilder<ClientWantsRootCert> {
 }
 
 impl ClientBuilder<ClientWantsCertAndKey> {
-    pub fn with_cert_and_key<T: Into<PathBuf>>(
+    pub fn with_cert_and_key<T: AsRef<Path>>(
         self,
         cert_file: T,
         key_file: T,
     ) -> Result<ClientBuilder<ClientWantsConnect>> {
-        let (certs, key) = load_keypair(cert_file.into(), key_file.into())?;
+        let (certs, key) = load_keypair(cert_file, key_file)?;
         let state = ClientWantsConnect {
             keep_alive: self.state.keep_alive,
             root_store: self.state.root_store,

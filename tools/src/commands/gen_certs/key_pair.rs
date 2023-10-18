@@ -2,6 +2,8 @@ use super::certificate_builder::CertificateBuilder;
 use anyhow::Result;
 use rcgen::Certificate;
 
+const COMMON_NAME: &str = "selium.io";
+
 pub struct KeyPair(pub Vec<u8>, pub Vec<u8>);
 
 impl KeyPair {
@@ -16,10 +18,7 @@ impl KeyPair {
     }
 
     fn build(builder: CertificateBuilder, ca: &Certificate) -> Result<Self> {
-        let cert = builder
-            .common_name("selium.com")
-            .valid_for_days(5)
-            .build()?;
+        let cert = builder.common_name(COMMON_NAME).valid_for_days(5).build()?;
 
         let signed_cert = cert.serialize_der_with_signer(ca)?;
         let key = cert.serialize_private_key_der();

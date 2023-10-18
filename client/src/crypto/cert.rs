@@ -1,14 +1,12 @@
 use anyhow::{bail, Context, Result};
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 pub type KeyPair = (Vec<Certificate>, PrivateKey);
 
-fn load_key(path: &Path) -> Result<PrivateKey> {
+fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
+    let path = path.as_ref();
     let key = fs::read(path).context("failed to read private key")?;
     let key = if path.extension().map_or(false, |x| x == "der") {
         PrivateKey(key)
@@ -31,9 +29,9 @@ fn load_key(path: &Path) -> Result<PrivateKey> {
     Ok(key)
 }
 
-fn load_certs(path: &Path) -> Result<Vec<Certificate>> {
+fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
+    let path = path.as_ref();
     let cert_chain = fs::read(path).context("failed to read certificate chain")?;
-
     let cert_chain = if path.extension().map_or(false, |x| x == "der") {
         vec![Certificate(cert_chain)]
     } else {
@@ -57,13 +55,14 @@ fn load_certs(path: &Path) -> Result<Vec<Certificate>> {
 ///
 /// * `ca_file` - The filepath to the CA file.
 ///
-pub(crate) fn load_root_store(ca_file: PathBuf) -> Result<RootCertStore> {
+pub(crate) fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStore> {
+    let ca_file = ca_file.as_ref();
     let mut store = RootCertStore::empty();
-    let certs = load_certs(&ca_file)?;
+    let certs = load_certs(ca_file)?;
     store.add_parsable_certificates(&certs);
 
     if store.is_empty() {
-        bail!("No valid certs found in file {ca_file:?}");
+        bail!("No valid certs found in file {:?}", ca_file);
     }
 
     Ok(store)
@@ -79,8 +78,8 @@ pub(crate) fn load_root_store(ca_file: PathBuf) -> Result<RootCertStore> {
 /// * `cert_file` - The filepath to the certificate file.
 /// * `key_file` - The filepath to the private key file.
 ///
-pub fn load_keypair(cert_file: PathBuf, key_file: PathBuf) -> Result<KeyPair> {
-    let certs = load_certs(&cert_file)?;
-    let private_key = load_key(&key_file)?;
+pub fn load_keypair<T: AsRef<Path>>(cert_file: T, key_file: T) -> Result<KeyPair> {
+    let certs = load_certs(cert_file)?;
+    let private_key = load_key(key_file)?;
     Ok((certs, private_key))
 }
