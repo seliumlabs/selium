@@ -1,6 +1,6 @@
 [package]
 name = "selium-server"
-version = "0.1.0"
+version = "0.2.0"
 description = """
 selium-server is the server-side bin for Selium, an extremely developer friendly, composable
 messaging platform with zero build time configuration.

@@ -3,3 +3,10 @@
 ## v0.1.0
 
 - Initial release of Selium
+
+## v0.2.0
+
+- Added opt-in message batching functionality
+- Added opt-in compression for Publisher and Subscriber streams
+- Message payload size limit (1MB) is now enforced on wire protocol
+- Implemented QUIC Mutual TLS
