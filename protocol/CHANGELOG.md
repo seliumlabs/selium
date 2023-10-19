@@ -2,4 +2,4 @@
 
 ## v0.1.0
 
-- Initial release of Selium
+- Initial release of selium-protocol
