@@ -38,8 +38,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
     /// to being sent over the wire.
     ///
     /// An encoder can be any type implementing
-    /// [MessageEncoder](crate::traits::MessageEncoder). See [codecs](crate::codecs) for a list of
-    /// codecs available in `Selium`, along with tutorials for creating your own encoders.
+    /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
     pub fn with_encoder<E, Item>(self, encoder: E) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
         let state = PublisherWantsOpen {
             common: self.state.common,
@@ -57,6 +56,13 @@ impl StreamBuilder<PublisherWantsEncoder> {
 }
 
 impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
+    /// Specifies the compression implementation a [Publisher](crate::Publisher) uses for
+    /// compressing encoded messages prior being sent over the wire.
+    ///
+    /// If message batching is enabled for the stream, the message batch will be compressed as a
+    /// single unit, rather than each message being compressed individually.
+    ///
+    /// A compressor can be any type implementing [Compress](crate::std::traits::compression::Compress).
     pub fn with_compression<T>(mut self, comp: T) -> StreamBuilder<PublisherWantsOpen<E, Item>>
     where
         T: Compress + Send + Sync + 'static,
@@ -65,6 +71,13 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
         self
     }
 
+    /// Enables message batching for a [Publisher](crate::Publisher) stream.
+    ///
+    /// Relies on the specified [BatchConfig](crate::batching::BatchConfig) to tune the batching
+    /// algorithm.
+    ///
+    /// When opted in for a stream, batching will happen automatically without any
+    /// additional intervention.
     pub fn with_batching(
         mut self,
         config: BatchConfig,

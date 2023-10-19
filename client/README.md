@@ -3,6 +3,17 @@
 This is the client library for the Selium platform. Clients of the Selium server should
 implement this library to send data to and/or receive data from the server.
 
+## Running the Examples
+
+Before running the examples, you should generate a set of self-signed certificates to use for authenticating 
+the client and server via mTLS.
+
+You can do so via the `selium-tools` binary included in the workspace:
+
+```bash
+$ cargo run --bin selium-tools gen-certs
+```
+
 ## Getting Started
 
 Once you've started a Selium server ([see the server's `README.md`](../server/README.md)
@@ -19,7 +30,8 @@ use std::time::Duration;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connection = selium::client()
-        .with_certificate_authority("/path/to/server.crt")? // your Selium server's cert
+        .with_certificate_authority("/path/to/ca.der")? // your Selium server's cert
+        .with_cert_and_key("/path/to/cert.der", "/path/to/key.der")?
         .connect("127.0.0.1:7001") // your Selium server's address
         .await?;
 

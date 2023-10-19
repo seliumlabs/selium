@@ -1305,18 +1305,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "selium-dev-tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "colored",
- "rcgen",
- "rustls",
- "time",
-]
-
-[[package]]
 name = "selium-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1378,6 +1366,18 @@ dependencies = [
  "futures",
  "selium",
  "tokio",
+]
+
+[[package]]
+name = "selium-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "colored",
+ "rcgen",
+ "rustls",
+ "time",
 ]
 
 [[package]]

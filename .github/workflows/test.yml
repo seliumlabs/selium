@@ -44,9 +44,10 @@ jobs:
           override: true
 
       - name: Generate self-signed certs
-        run: |
-          cd tools
-          cargo run gen-certs
+        uses: actions-rs/cargo@v1
+        with:
+          command: run 
+          args: --bin selium-tools gen-certs
 
       - name: Run cargo test
         uses: actions-rs/cargo@v1

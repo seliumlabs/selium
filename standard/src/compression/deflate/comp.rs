@@ -5,6 +5,9 @@ use flate2::write::{GzEncoder, ZlibEncoder};
 use flate2::Compression;
 use std::io::Write;
 
+/// Compression half of DEFLATE implementation.
+///
+/// `DeflateComp` implements [Compress], and can be constructed for use with a `Publisher` stream.
 #[derive(Default)]
 pub struct DeflateComp {
     library: DeflateLibrary,
@@ -12,6 +15,9 @@ pub struct DeflateComp {
 }
 
 impl DeflateComp {
+    /// Constructs a new `DeflateComp` instance, using the provided [DeflateLibrary] variant. This
+    /// constructor is used directly by the `gzip` and `zlib` associated functions, so it is recommended to use
+    /// either of those to construct an instance.
     pub fn new(library: DeflateLibrary) -> Self {
         Self {
             library,
@@ -19,10 +25,14 @@ impl DeflateComp {
         }
     }
 
+    /// Constructs a new `DeflateComp` instance, using `gzip`as the preferred implementation of the DEFLATE
+    /// algorithm.
     pub fn gzip() -> Self {
         DeflateComp::new(DeflateLibrary::Gzip)
     }
 
+    /// Constructs a new `DeflateComp` instance, using `zlib` as the preferred implementation of the DEFLATE
+    /// algorithm.
     pub fn zlib() -> Self {
         DeflateComp::new(DeflateLibrary::Zlib)
     }

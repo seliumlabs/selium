@@ -11,7 +11,7 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        name: [protocol, standard, client, server]
+        name: [protocol, standard, client, server, tools]
         include:
           - name: protocol
             display: protocol
@@ -25,6 +25,10 @@ jobs:
           - name: server
             display: Server
             repo: selium-server
+          - name: tools
+            display: Tools
+            repo: selium-tools
+      
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

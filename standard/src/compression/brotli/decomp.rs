@@ -6,6 +6,10 @@ use std::io::Read;
 
 const BUFFER_SIZE: usize = 4096;
 
+/// Decompression half of Brotli implementation.
+///
+/// `BrotliDecomp` implements [Decompress], and can be constructed for use with a `Subscriber`
+/// stream.
 #[derive(Debug)]
 pub struct BrotliDecomp;
 

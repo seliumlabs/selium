@@ -16,6 +16,7 @@ pub struct ClientWantsRootCert {
     keep_alive: u64,
 }
 
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct ClientWantsCertAndKey {
     keep_alive: u64,
@@ -36,7 +37,7 @@ pub struct ClientWantsConnect {
 /// The [ClientBuilder] uses a type-level Finite State Machine to assure that a [Client] cannot
 /// be constructed with an invalid state. For example, the [connect](ClientBuilder::connect) method
 /// will not be in-scope unless the [ClientBuilder] is in a pre-connection state, which is achieved
-/// by first configuring the root store.
+/// by first configuring the root store and keypair.
 ///
 /// **NOTE:** The [ClientBuilder] type is not intended to be used directly. Use the [client]
 /// function to construct a [ClientBuilder] in its initial state.
@@ -100,8 +101,7 @@ impl ClientBuilder<ClientWantsRootCert> {
     /// Attempts to load a valid CA certificate from the filesystem, and creates a root cert store
     /// to use with authenticating the QUIC connection.
     ///
-    /// Following this method, the [ClientBuilder] will be in a pre-connection state, so any
-    /// additional configuration must take place before invoking this method.
+    /// Certificates can be encoded in either a Base64 ASCII (.pem) or binary (.der) format.
     ///
     /// # Errors
     ///
@@ -121,6 +121,22 @@ impl ClientBuilder<ClientWantsRootCert> {
 }
 
 impl ClientBuilder<ClientWantsCertAndKey> {
+    /// Attempts to load a valid keypair from the filesystem to use with authenticating the QUIC connection.
+    ///
+    /// Keypairs can be encoded in either a Base64 ASCII (.pem) or binary (.der) format.
+    ///
+    /// Following this method, the [ClientBuilder] will be in a pre-connection state, so any
+    /// additional configuration must take place before invoking this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns [Err] under the following conditions:
+    ///
+    /// - The provided `cert_file` argument does not refer to a file containing a
+    /// valid certificate.
+    ///
+    /// - The provided `key_file` argument does not refer to a file containing a
+    /// valid PKCS-8 private key.
     pub fn with_cert_and_key<T: AsRef<Path>>(
         self,
         cert_file: T,

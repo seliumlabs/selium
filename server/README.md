@@ -13,14 +13,21 @@ Server, its usage is very straightforward.
 
 #### Start a test server
 
-To start a server as quickly as possible **_for testing_**, you can use the `--self-signed`
-flag. This will do exactly what you think it will, and generate its own TLS certificate.
+To start a server as quickly as possible **_for testing_**, you can use generate a set of self-signed
+certificates with the `selium-tools` CLI.
 
 >Note that using this option in production will leave clients exposed to
 person-in-the-middle attacks!
 
 ```bash
-$ selium-server --bind-addr=127.0.0.1:7001 --self-signed
+$ cargo install selium-tools
+$ cargo run --bin selium-tools gen-certs
+```
+
+Then you can start a selium-server!
+
+```bash
+$ selium-server --bind-addr=127.0.0.1:7001
 ```
 
 Running this command will create a new server instance that listens on the loopback
@@ -37,7 +44,7 @@ instances where this is not possible, a third party CA provider like
 Here is a minimal example to start a production-ready instance of `selium-server`:
 
 ```bash
-$ selium-server --bind-addr=0.0.0.0:7001 --key /path/to/server.key --cert /path/to/server.crt
+$ selium-server --bind-addr=0.0.0.0:7001 --ca /path/to/ca.der --key /path/to/key.der --cert /path/to/cert.der
 ```
 
 Running this command will create a new server instance that listens on the public
@@ -63,12 +70,12 @@ Usage: selium-server [OPTIONS] --bind-addr <BIND_ADDR> <--key <KEY>|--cert <CERT
 Options:
   -a, --bind-addr <BIND_ADDR>
           Address to bind this server to
+      --ca <CERT>
+          TLS CA certificate
   -k, --key <KEY>
           TLS private key
   -c, --cert <CERT>
           TLS certificate
-      --self-signed
-          Autogenerate server cert (NOTE: This should only be used for testing!)
       --stateless-retry
           Enable stateless retries
       --keylog

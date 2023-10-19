@@ -17,10 +17,10 @@ pub enum Commands {
 #[derive(Args)]
 pub struct GenCertsArgs {
     /// Output path for server certs
-    #[clap(short = 's', default_value = "../certs/server/")]
+    #[clap(short = 's', default_value = "certs/server/")]
     pub server_out_path: PathBuf,
 
     /// Output path for client certs
-    #[clap(short = 'c', default_value = "../certs/client/")]
+    #[clap(short = 'c', default_value = "certs/client/")]
     pub client_out_path: PathBuf,
 }

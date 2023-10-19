@@ -2,7 +2,7 @@ use super::BatchConfig;
 use bytes::Bytes;
 use std::time::Instant;
 
-pub struct MessageBatch {
+pub(crate) struct MessageBatch {
     batch: Vec<Bytes>,
     config: BatchConfig,
     last_run: Instant,

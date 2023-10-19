@@ -1,4 +1,5 @@
-//! A collection of codecs to encode/decode messages into various formats.
+//! Client codec implementations for commonly used serialization formats, including UTF-8 encoded
+//! strings, and various binary formats, such as bincode.
 //!
 //! In `Selium`, messages are sent over the wire in a binary format, and thus, the server has no
 //! indication of, or any desire to make sense of the data. This is perfectly suitable for the
@@ -8,12 +9,10 @@
 //! into bytes that the server can work with, and decode messages into a format that is useful to
 //! consumers.
 //!
-//! Codecs are almost never used directly, but are provided as a configuration option while
-//! constructing a [Subscriber](crate::Subscriber) or [Publisher](crate::Publisher) stream. The
-//! [Subscriber](crate::Subscriber) or [Publisher](crate::Publisher) will then call the underlying
+//! Codecs are almost never used directly, but are provided as a configuration option while constructing
+//! a `Subscriber` or `Publisher` stream. The `Subscriber` or `Publisher` will then call the underlying
 //! [encode](crate::traits::codec::MessageEncoder::encode) or [decode](crate::traits::codec::MessageDecoder::decode)
-//! method in their respective [Sink](futures::Sink) or [Stream](futures::Stream) implementations when
-//! producing or consuming messages.
+//! method in their respective `Sink` or `Stream` implementations when producing or consuming messages.
 //!
 //! # Encoder
 //!
@@ -28,7 +27,6 @@
 //!
 //! [MessageEncoder](crate::traits::codec::MessageEncoder) exposes a single method to implementors,
 //! [encode](crate::traits::codec::MessageEncoder::encode).
-
 //!
 //! # Decoder
 //!
