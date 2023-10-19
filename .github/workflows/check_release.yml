@@ -14,7 +14,7 @@ jobs:
     name: Check Changelog Entry
     strategy:
       matrix:
-        name: [client, server]
+        name: [client, server, tools, protocol, standard]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
