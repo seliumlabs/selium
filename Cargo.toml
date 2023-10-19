@@ -1,5 +1,5 @@
 [workspace]
-members = ["client", "server", "common", "tests"]
+members = ["client", "server", "protocol", "tests", "benchmarks", "standard", "tools"]
 
 [workspace.package]
 edition = "2021"

@@ -1,9 +1,8 @@
 use anyhow::Result;
 use futures::SinkExt;
-use selium::codecs::BincodeCodec;
 use selium::prelude::*;
+use selium::std::codecs::BincodeCodec;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StockEvent {
@@ -24,16 +23,17 @@ impl StockEvent {
 async fn main() -> Result<()> {
     let connection = selium::client()
         .keep_alive(5_000)?
-        .with_certificate_authority("certs/ca.crt")?
+        .with_certificate_authority("../certs/client/ca.der")?
+        .with_cert_and_key(
+            "../certs/client/localhost.der",
+            "../certs/client/localhost.key.der",
+        )?
         .connect("127.0.0.1:7001")
         .await?;
 
     let mut publisher = connection
         .publisher("/acmeco/stocks")
         .with_encoder(BincodeCodec::default())
-        // Coming soon...
-        // .map("/acmeco/forge_numbers.wasm")
-        // .retain(Duration::from_secs(600))?
         .open()
         .await?;
 

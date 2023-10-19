@@ -11,17 +11,35 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
+<<<<<<< HEAD
         name: [common, client, server]
         include:
           - name: common
             display: Common
             repo: selium-common
+=======
+        name: [protocol, standard, client, server, tools]
+        include:
+          - name: protocol
+            display: protocol
+            repo: selium-protocol
+          - name: standard
+            display: Standard
+            repo: selium-std
+>>>>>>> main
           - name: client
             display: Client
             repo: selium
           - name: server
             display: Server
             repo: selium-server
+<<<<<<< HEAD
+=======
+          - name: tools
+            display: Tools
+            repo: selium-tools
+      
+>>>>>>> main
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

@@ -19,6 +19,7 @@ configuration.
 
 ## Getting Started
 
+
 ### Hello World
 
 First, create a new Cargo project:
@@ -41,7 +42,8 @@ use std::error::Error;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let connection = selium::client()
-        .with_certificate_authority("server.crt")?
+        .with_certificate_authority("certs/client/ca.der")?
+        .with_cert_and_key("certs/client/localhost.der", "certs/client/localhost.key.der")?
         .connect("127.0.0.1:7001")
         .await?;
     let connection_c = connection.clone();
@@ -70,21 +72,67 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-Next, open a new terminal window and start a new Selium server:
+For the purpose of testing, developing Selium, or otherwise jumping straight into the action, you can use the `selium-tools` CLI to generate a set of self-signed certificates for use with mTLS.
+
+To do so, install the `selium-tools` binary, and then run the `gen-certs` command. By default, `gen-certs` will output the certs to `certs/client/*` and `certs/server/*`. You can override these paths using the `-s` and `-c` arguments respectively.
 
 ```bash
-$ cargo install selium-server
-$ cargo run --bin selium-server -- --bind-addr=127.0.0.1:7001 --self-signed
+$ cargo install selium-tools
+$ cargo run --bin selium-tools gen-certs
 ```
 
-Copy the certificate from stdout and paste the contents into a new file called
-`hello-world/server.crt`.
+Next, open a new terminal window and start a new Selium server, providing the certificates generated in the previous step.
+
+```bash
+$ cargo install selium-tools
+$ cargo install selium-server
+$ cargo run --bin selium-server -- \
+  --bind-addr=127.0.0.1:7001 \
+  --ca certs/server/ca.der \
+  --cert certs/server/localhost.der \
+  --key certs/server/localhost.key.der
+```
 
 Finally, in our original terminal window, run the client:
 
 ```bash
 $ cargo run
 ```
+
+### Running Benchmarks
+
+Included in the repository is a `benchmarks` binary containing end-to-end benchmarks for the publisher/subscriber clients. 
+
+These benchmarks measure the performance of both encoding/decoding message payloads on the client, as well the responsiveness of the 
+Selium server.
+
+To run the benchmarks with the default options, execute the following commands:
+
+```bash
+$ cd benchmarks
+$ cargo run --release
+```
+
+This will run the benchmarks with default values provided for the benchmark configuration arguments, which should produce a summary 
+similar to the following:
+
+```bash
+$ cargo run --release
+
+Benchmark Results
+---------------------
+Number of Messages: 1,000,000
+Number of Streams: 10
+Message Size (Bytes): 32
+
+| Duration             | Total Transferred    | Avg. Throughput      | Avg. Latency         |
+| 1.3476 Secs          | 30.52 MB             | 22.65 MB/s           | 1347.56 ns           |
+```
+
+If the default configuration is not sufficient, execute the following command to see a list of benchmark arguments. 
+```bash
+$ cargo run -- --help
+``` 
 
 ### Next Steps
 

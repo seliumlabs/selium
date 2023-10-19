@@ -6,7 +6,7 @@ use env_logger::Builder;
 use futures::{channel::mpsc::Sender, SinkExt, StreamExt};
 use log::{error, info};
 use quinn::{IdleTimeout, VarInt};
-use selium_common::{protocol::Frame, types::BiStream};
+use selium_protocol::{BiStream, Frame};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 use tokio_stream::StreamNotifyClose;
@@ -41,17 +41,24 @@ struct UserArgs {
 }
 
 #[derive(Args, Debug)]
-#[group(required = true)]
 struct CertGroup {
+    /// CA certificate
+    #[clap(long, default_value = "certs/server/ca.der")]
+    ca: PathBuf,
     /// TLS private key
-    #[clap(short = 'k', long = "key", requires = "cert")]
-    key: Option<PathBuf>,
+    #[clap(
+        short = 'k',
+        long = "key",
+        default_value = "certs/server/localhost.key.der"
+    )]
+    key: PathBuf,
     /// TLS certificate
-    #[clap(short = 'c', long = "cert", requires = "key")]
-    cert: Option<PathBuf>,
-    /// Autogenerate server cert (NOTE: This should only be used for testing!)
-    #[clap(long = "self-signed", conflicts_with = "cert")]
-    self_signed: bool,
+    #[clap(
+        short = 'c',
+        long = "cert",
+        default_value = "certs/server/localhost.der"
+    )]
+    cert: PathBuf,
 }
 
 #[tokio::main]
@@ -66,20 +73,16 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let (certs, key) = if let (Some(cert_path), Some(key_path)) = (args.cert.cert, args.cert.key) {
-        quic::read_certs(cert_path, key_path)?
-    } else if args.cert.self_signed {
-        quic::generate_self_signed_cert()?
-    } else {
-        // Clap ensures that either --cert + --key or --self-signed are present
-        unreachable!();
-    };
+    let root_store = quic::load_root_store(args.cert.ca)?;
+    let (certs, key) = quic::read_certs(args.cert.cert, args.cert.key)?;
+
     let opts = quic::ConfigOptions {
         keylog: args.keylog,
         stateless_retry: args.stateless_retry,
         max_idle_timeout: IdleTimeout::from(VarInt::from_u32(args.max_idle_timeout)),
     };
-    let config = quic::server_config(certs, key, opts)?;
+
+    let config = quic::server_config(root_store, certs, key, opts)?;
     let endpoint = quinn::Endpoint::server(config, args.bind_addr)?;
 
     // Create hash to store message ordering data

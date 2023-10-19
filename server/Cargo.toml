@@ -1,6 +1,6 @@
 [package]
 name = "selium-server"
-version = "0.1.0"
+version = "0.2.0"
 description = """
 selium-server is the server-side bin for Selium, an extremely developer friendly, composable
 messaging platform with zero build time configuration.
@@ -17,22 +17,22 @@ categories.workspace = true
 
 [dependencies]
 anyhow = "1.0"
-bytes = "1.4"
-clap = { version = "4.3", features = ["derive"] }
+bytes = "1.5"
+clap = { version = "4.4", features = ["derive"] }
 clap-verbosity-flag = "2.0"
 env_logger = "0.10.0"
 futures = "0.3"
 hex = "0.4"
 hmac-sha512 = "1.1"
-log = "0.4.19"
+log = "0.4.20"
 pin-project-lite = "0.2"
 quinn = "0.10"
 rcgen = { version = "0.11", features = ["pem"] }
 rustls = "0.21"
 rustls-pemfile = "1.0"
-selium-common = { version = "0.1", path = "../common" }
+selium-protocol = { version = "0.1", path = "../protocol" }
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.29", features = [
+tokio = { version = "1.33", features = [
     "macros",
     "net",
     "rt-multi-thread",

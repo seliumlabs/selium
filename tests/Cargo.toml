@@ -6,5 +6,5 @@ edition = "2021"
 [dev-dependencies]
 anyhow = "1.0"
 futures = "0.3"
-selium = { path = "../client" }
-tokio = { version = "1.29", features = ["macros"] }
+selium = { path = "../client", features = ["std"] }
+tokio = { version = "1.33", features = ["macros"] }

@@ -1,7 +1,7 @@
 mod client;
 mod streams;
 
-pub mod codecs;
+pub mod batching;
 pub(crate) mod crypto;
 pub mod prelude;
 pub mod traits;
@@ -9,3 +9,9 @@ pub(crate) mod utils;
 
 pub use client::*;
 pub use streams::*;
+
+#[cfg(feature = "std")]
+pub mod std {
+    //! Re-exports [selium_std] modules.
+    pub use selium_std::*;
+}

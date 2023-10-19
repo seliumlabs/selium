@@ -1,14 +1,22 @@
 use super::builder::{StreamBuilder, StreamCommon};
-use crate::traits::{MessageEncoder, Open, Operations, Retain, SeliumCodec, TryIntoU64};
+use crate::batching::{BatchConfig, MessageBatch};
+use crate::traits::{Open, Operations, Retain, TryIntoU64};
 use anyhow::Result;
 use async_trait::async_trait;
+use bytes::Bytes;
 use futures::{Sink, SinkExt};
 use quinn::Connection;
-use selium_common::protocol::{Frame, PublisherPayload};
-use selium_common::types::BiStream;
+use selium_protocol::utils::encode_message_batch;
+use selium_protocol::{BiStream, Frame, PublisherPayload};
+use selium_std::traits::codec::MessageEncoder;
+use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Instant;
+
+type Comp = Arc<dyn Compress + Send + Sync>;
 
 #[doc(hidden)]
 #[derive(Debug)]
@@ -17,10 +25,11 @@ pub struct PublisherWantsEncoder {
 }
 
 #[doc(hidden)]
-#[derive(Debug)]
 pub struct PublisherWantsOpen<E, Item> {
     common: StreamCommon,
     encoder: E,
+    compression: Option<Comp>,
+    batch_config: Option<BatchConfig>,
     _marker: PhantomData<Item>,
 }
 
@@ -29,12 +38,13 @@ impl StreamBuilder<PublisherWantsEncoder> {
     /// to being sent over the wire.
     ///
     /// An encoder can be any type implementing
-    /// [MessageEncoder](crate::traits::MessageEncoder). See [codecs](crate::codecs) for a list of
-    /// codecs available in `Selium`, along with tutorials for creating your own encoders.
+    /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
     pub fn with_encoder<E, Item>(self, encoder: E) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
         let state = PublisherWantsOpen {
             common: self.state.common,
             encoder,
+            compression: None,
+            batch_config: None,
             _marker: PhantomData,
         };
 
@@ -45,20 +55,46 @@ impl StreamBuilder<PublisherWantsEncoder> {
     }
 }
 
-impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>>
-where
-    E: MessageEncoder<Item>,
-{
+impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
+    /// Specifies the compression implementation a [Publisher](crate::Publisher) uses for
+    /// compressing encoded messages prior being sent over the wire.
+    ///
+    /// If message batching is enabled for the stream, the message batch will be compressed as a
+    /// single unit, rather than each message being compressed individually.
+    ///
+    /// A compressor can be any type implementing [Compress](crate::std::traits::compression::Compress).
+    pub fn with_compression<T>(mut self, comp: T) -> StreamBuilder<PublisherWantsOpen<E, Item>>
+    where
+        T: Compress + Send + Sync + 'static,
+    {
+        self.state.compression = Some(Arc::new(comp));
+        self
+    }
+
+    /// Enables message batching for a [Publisher](crate::Publisher) stream.
+    ///
+    /// Relies on the specified [BatchConfig](crate::batching::BatchConfig) to tune the batching
+    /// algorithm.
+    ///
+    /// When opted in for a stream, batching will happen automatically without any
+    /// additional intervention.
+    pub fn with_batching(
+        mut self,
+        config: BatchConfig,
+    ) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
+        self.state.batch_config = Some(config);
+        self
+    }
+}
+
+impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>> {
     fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
         self.state.common.retain(policy)?;
         Ok(self)
     }
 }
 
-impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>>
-where
-    E: MessageEncoder<Item> + SeliumCodec,
-{
+impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>> {
     fn map(mut self, module_path: &str) -> Self {
         self.state.common.map(module_path);
         self
@@ -73,8 +109,8 @@ where
 #[async_trait]
 impl<E, Item> Open for StreamBuilder<PublisherWantsOpen<E, Item>>
 where
-    E: MessageEncoder<Item> + Send + Clone,
-    Item: Send,
+    E: MessageEncoder<Item> + Clone + Send + Unpin,
+    Item: Unpin + Send,
 {
     type Output = Publisher<E, Item>;
 
@@ -85,7 +121,14 @@ where
             operations: self.state.common.operations,
         };
 
-        let publisher = Publisher::spawn(self.connection, headers, self.state.encoder).await?;
+        let publisher = Publisher::spawn(
+            self.connection,
+            headers,
+            self.state.encoder,
+            self.state.compression,
+            self.state.batch_config,
+        )
+        .await?;
 
         Ok(publisher)
     }
@@ -108,16 +151,28 @@ pub struct Publisher<E, Item> {
     stream: BiStream,
     headers: PublisherPayload,
     encoder: E,
+    compression: Option<Comp>,
+    batch: Option<MessageBatch>,
+    batch_config: Option<BatchConfig>,
     _marker: PhantomData<Item>,
 }
 
 impl<E, Item> Publisher<E, Item>
 where
-    E: MessageEncoder<Item> + Clone,
+    E: MessageEncoder<Item> + Clone + Send + Unpin,
+    Item: Unpin,
 {
-    async fn spawn(connection: Connection, headers: PublisherPayload, encoder: E) -> Result<Self> {
+    async fn spawn(
+        connection: Connection,
+        headers: PublisherPayload,
+        encoder: E,
+        compression: Option<Comp>,
+        batch_config: Option<BatchConfig>,
+    ) -> Result<Self> {
         let mut stream = BiStream::try_from_connection(&connection).await?;
+        let batch = batch_config.as_ref().map(|c| MessageBatch::from(c.clone()));
         let frame = Frame::RegisterPublisher(headers.clone());
+
         stream.send(frame).await?;
 
         Ok(Self {
@@ -125,6 +180,10 @@ where
             stream,
             headers,
             encoder,
+            compression,
+            batch,
+            batch_config,
+
             _marker: PhantomData,
         })
     }
@@ -146,6 +205,8 @@ where
             self.connection.clone(),
             self.headers.clone(),
             self.encoder.clone(),
+            self.compression.clone(),
+            self.batch_config.clone(),
         )
         .await?;
 
@@ -165,24 +226,76 @@ where
     ///
     /// Returns [Err] if the stream fails to close gracefully.
     pub async fn finish(mut self) -> Result<()> {
+        self.flush_batch()?;
         self.stream.finish().await
+    }
+
+    fn send_single(&mut self, mut bytes: Bytes) -> Result<()> {
+        if let Some(comp) = &self.compression {
+            bytes = comp.compress(bytes)?;
+        }
+
+        self.stream.start_send_unpin(Frame::Message(bytes))
+    }
+
+    fn send_batch(&mut self, now: Instant) -> Result<()> {
+        let batch = self.batch.as_mut().unwrap();
+
+        let messages = batch.drain();
+        let mut bytes = encode_message_batch(messages);
+
+        if let Some(comp) = &self.compression {
+            bytes = comp.compress(bytes)?;
+        }
+
+        let frame = Frame::BatchMessage(bytes);
+        self.stream.start_send_unpin(frame)?;
+        batch.update_last_run(now);
+
+        Ok(())
+    }
+
+    fn flush_batch(&mut self) -> Result<()> {
+        if let Some(batch) = self.batch.as_ref() {
+            if !batch.is_empty() {
+                self.send_batch(Instant::now())?;
+            }
+        }
+
+        Ok(())
     }
 }
 
 impl<E, Item> Sink<Item> for Publisher<E, Item>
 where
-    E: MessageEncoder<Item> + Send + Unpin,
+    E: MessageEncoder<Item> + Clone + Send + Unpin,
     Item: Unpin,
 {
     type Error = anyhow::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        if let Some(batch) = self.batch.as_ref() {
+            let now = Instant::now();
+
+            if batch.is_ready(now) {
+                self.send_batch(now)?;
+            }
+
+            return Poll::Ready(Ok(()));
+        }
+
         self.stream.poll_ready_unpin(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
         let bytes = self.encoder.encode(item)?;
-        self.stream.start_send_unpin(Frame::Message(bytes))
+
+        if let Some(batch) = self.batch.as_mut() {
+            batch.push(bytes);
+            Ok(())
+        } else {
+            self.send_single(bytes)
+        }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {

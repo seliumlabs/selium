@@ -4,7 +4,8 @@ use std::{
 };
 
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
-use selium::{codecs::StringCodec, prelude::*, Subscriber};
+use selium::std::codecs::StringCodec;
+use selium::{prelude::*, Subscriber};
 
 const SERVER_ADDR: &'static str = "127.0.0.1:7001";
 
@@ -43,8 +44,12 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 
     let connection = selium::client()
         .keep_alive(5_000)?
-        .with_certificate_authority("certs/ca.crt")?
-        .connect("127.0.0.1:7001")
+        .with_certificate_authority("../certs/client/ca.der")?
+        .with_cert_and_key(
+            "../certs/client/localhost.der",
+            "../certs/client/localhost.key.der",
+        )?
+        .connect(SERVER_ADDR)
         .await?;
 
     let mut publisher = connection
@@ -56,13 +61,13 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 
     publisher
         .send_all(&mut iter(vec![
-            Ok("foo"),
-            Ok("bar"),
-            Ok("foo"),
-            Ok("bar"),
-            Ok("foo"),
-            Ok("bar"),
-            Ok("foo"),
+            Ok("foo".to_owned()),
+            Ok("bar".to_owned()),
+            Ok("foo".to_owned()),
+            Ok("bar".to_owned()),
+            Ok("foo".to_owned()),
+            Ok("bar".to_owned()),
+            Ok("foo".to_owned()),
         ]))
         .await?;
 
@@ -100,7 +105,11 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
 async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>, Box<dyn Error>> {
     let connection = selium::client()
         .keep_alive(5_000)?
-        .with_certificate_authority("certs/ca.crt")?
+        .with_certificate_authority("../certs/client/ca.der")?
+        .with_cert_and_key(
+            "../certs/client/localhost.der",
+            "../certs/client/localhost.key.der",
+        )?
         .connect(SERVER_ADDR)
         .await?;
 
@@ -117,13 +126,17 @@ fn start_server() -> Child {
     Command::new(env!("CARGO"))
         .args([
             "run",
+            "--bin",
+            "selium-server",
             "--",
             "--bind-addr",
             SERVER_ADDR,
             "--cert",
-            "tests/certs/ca.crt",
+            "certs/server/localhost.der",
             "--key",
-            "tests/certs/ca.key",
+            "certs/server/localhost.key.der",
+            "--ca",
+            "certs/server/ca.der",
             "-vvvv",
         ])
         .current_dir("..")
