@@ -182,17 +182,15 @@
 //!     }
 //! }
 //!
-//! fn main() {
-//!     let input = Bytes::from("AAAAAAAABBBBCCCCCDDEAA");
-//!     let expected = Bytes::from("A\x08B\x04C\x05D\x02E\x01A\x02");
-//!     let encoder = RunLengthEncoder;
+//! let input = Bytes::from("AAAAAAAABBBBCCCCCDDEAA");
+//! let expected = Bytes::from("A\x08B\x04C\x05D\x02E\x01A\x02");
+//! let encoder = RunLengthEncoder;
 //!
-//!     let compressed = encoder.compress(input.clone()).unwrap();
-//!     assert_eq!(compressed, expected);
+//! let compressed = encoder.compress(input.clone()).unwrap();
+//! assert_eq!(compressed, expected);
 //!
-//!     let decompressed = encoder.decompress(compressed).unwrap();
-//!     assert_eq!(decompressed, input);
-//! }
+//! let decompressed = encoder.decompress(compressed).unwrap();
+//! assert_eq!(decompressed, input);
 //! ```
 //!
 //! The `RunLengthEncoder` type can now be used with `Selium` streams, which will automatically
