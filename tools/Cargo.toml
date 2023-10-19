@@ -1,8 +1,10 @@
 [package]
 name = "selium-tools"
 version = "0.1.0"
-about = "A CLI application containing tools for Selium developers"
-
+description = """
+A CLI application containing tools for Selium developers"
+"""
+include = ["src/**/*"]
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
