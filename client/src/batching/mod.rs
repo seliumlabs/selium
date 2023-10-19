@@ -28,9 +28,9 @@
 //! # Subscriber
 //!
 //! No stream configuration is required to enable message batching for a
-//! [Publisher](crate::Publisher) stream. As message batches are recieved over the wire in a
+//! [Subscriber](crate::Subscriber) stream. As message batches are recieved over the wire in a
 //! [Frame::BatchMessage](selium_protocol::Frame::BatchMessage) frame, the
-//! [Stream](futures::Stream) implementation for the [Publisher](crate::Publisher) stream will
+//! [Stream](futures::Stream) implementation for the [Subscriber](crate::Subscriber) stream will
 //! decompress the batch payload (if specified), and then unpack the batch and deliver each message
 //! individually.
 
