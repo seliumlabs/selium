@@ -19,6 +19,7 @@ configuration.
 
 ## Getting Started
 
+
 ### Hello World
 
 First, create a new Cargo project:
@@ -41,7 +42,8 @@ use std::error::Error;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let connection = selium::client()
-        .with_certificate_authority("server.crt")?
+        .with_certificate_authority("certs/client/ca.der")?
+        .with_cert_and_key("certs/client/localhost.der", "certs/client/localhost.key.der")?
         .connect("127.0.0.1:7001")
         .await?;
     let connection_c = connection.clone();
@@ -70,15 +72,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-Next, open a new terminal window and start a new Selium server:
+For the purpose of testing, developing Selium, or otherwise jumping straight into the action, you can use the `selium-tools` CLI to generate a set of self-signed certificates for use with mTLS.
+
+To do so, install the `selium-tools` binary, and then run the `gen-certs` command. By default, `gen-certs` will output the certs to `certs/client/*` and `certs/server/*`. You can override these paths using the `-s` and `-c` arguments respectively.
 
 ```bash
-$ cargo install selium-server
-$ cargo run --bin selium-server -- --bind-addr=127.0.0.1:7001 --self-signed
+$ cargo install selium-tools
+$ cargo run --bin selium-tools gen-certs
 ```
 
-Copy the certificate from stdout and paste the contents into a new file called
-`hello-world/server.crt`.
+Next, open a new terminal window and start a new Selium server, providing the certificates generated in the previous step.
+
+```bash
+$ cargo install selium-tools
+$ cargo install selium-server
+$ cargo run --bin selium-server -- \
+  --bind-addr=127.0.0.1:7001 \
+  --ca certs/server/ca.der \
+  --cert certs/server/localhost.der \
+  --key certs/server/localhost.key.der
+```
 
 Finally, in our original terminal window, run the client:
 

@@ -51,6 +51,11 @@ impl StreamBuilder<SubscriberWantsDecoder> {
 }
 
 impl<D, Item> StreamBuilder<SubscriberWantsOpen<D, Item>> {
+    /// Specifies the decompression implementation a [Subscriber](crate::Subscriber) uses for
+    /// decompressing messages received over the wire prior to decoding.
+    ///
+    /// A decompressor can be any type implementing
+    /// [Decompress](crate::std::traits::compression::Decompress).
     pub fn with_decompression<T>(mut self, decomp: T) -> StreamBuilder<SubscriberWantsOpen<D, Item>>
     where
         T: Decompress + Send + Sync + 'static,

@@ -12,5 +12,6 @@ pub use streams::*;
 
 #[cfg(feature = "std")]
 pub mod std {
+    //! Re-exports [selium_std] modules.
     pub use selium_std::*;
 }
