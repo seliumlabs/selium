@@ -99,7 +99,7 @@ impl ClientBuilder<ClientWantsRootCert> {
     }
 
     /// Attempts to load a valid CA certificate from the filesystem, and creates a root cert store
-    /// to use with authenticating the QUIC connection. 
+    /// to use with authenticating the QUIC connection.
     ///
     /// Certificates can be encoded in either a Base64 ASCII (.pem) or binary (.der) format.
     ///

@@ -74,10 +74,10 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
     /// Enables message batching for a [Publisher](crate::Publisher) stream.
     ///
     /// Relies on the specified [BatchConfig](crate::batching::BatchConfig) to tune the batching
-    /// algorithm. 
+    /// algorithm.
     ///
     /// When opted in for a stream, batching will happen automatically without any
-    /// additional intervention. 
+    /// additional intervention.
     pub fn with_batching(
         mut self,
         config: BatchConfig,

@@ -34,7 +34,7 @@ impl StreamBuilder<SubscriberWantsDecoder> {
     /// received over the wire.
     ///
     /// A decoder can be any type implementing
-    /// [MessageDecoder](crate::std::traits::codec::MessageDecoder). 
+    /// [MessageDecoder](crate::std::traits::codec::MessageDecoder).
     pub fn with_decoder<D, Item>(self, decoder: D) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
         let state = SubscriberWantsOpen {
             common: self.state.common,

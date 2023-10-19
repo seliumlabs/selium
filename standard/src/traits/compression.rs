@@ -18,7 +18,7 @@ pub trait Decompress {
 pub trait CompressionLevel {
     /// Sets the compression level to the highest possible level for the algorithm/implementation.
     fn highest_ratio(self) -> Self;
-    /// Sets the compression level to a balance between speed and size. 
+    /// Sets the compression level to a balance between speed and size.
     ///
     /// Typically set to the default compression level for the specific algorithm/implementation.
     fn balanced(self) -> Self;
