@@ -1279,6 +1279,7 @@ dependencies = [
  "futures",
  "num-format",
  "selium",
+ "selium-server",
  "tokio",
 ]
 
@@ -1341,8 +1342,10 @@ name = "selium-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "futures",
  "selium",
+ "selium-server",
  "tokio",
 ]
 

@@ -1,23 +1,19 @@
-use std::{
-    error::Error,
-    process::{Child, Command},
-};
-
+use anyhow::Result;
+use clap::Parser;
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use selium::std::codecs::StringCodec;
 use selium::{prelude::*, Subscriber};
+use selium_server::args::UserArgs;
+use selium_server::server::Server;
 
 const SERVER_ADDR: &'static str = "127.0.0.1:7001";
 
 #[tokio::test]
-async fn test_pub_sub() {
-    let mut handle = start_server();
+async fn test_pub_sub() -> Result<()> {
+    start_server()?;
 
-    let result = run().await;
+    let messages = run().await?;
 
-    handle.kill().unwrap();
-
-    let messages = result.unwrap();
     assert_eq!(messages[0], Some("foo".to_owned()));
     assert_eq!(messages[1], Some("bar".to_owned()));
     assert_eq!(messages[2], Some("foo".to_owned()));
@@ -34,9 +30,11 @@ async fn test_pub_sub() {
     assert_eq!(messages[13], Some("foo".to_owned()));
     assert!(messages[14].is_none());
     assert!(messages[15].is_none());
+
+    Ok(())
 }
 
-async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
+async fn run() -> Result<[Option<String>; 16]> {
     let mut subscriber1 = start_subscriber("/acmeco/stocks").await?;
     let mut subscriber2 = start_subscriber("/acmeco/stocks").await?;
     let subscriber3 = start_subscriber("/acmeco/something_else").await?;
@@ -102,7 +100,7 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
     ])
 }
 
-async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>, Box<dyn Error>> {
+async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>> {
     let connection = selium::client()
         .keep_alive(5_000)?
         .with_certificate_authority("../certs/client/ca.der")?
@@ -122,24 +120,23 @@ async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>
         .await?)
 }
 
-fn start_server() -> Child {
-    Command::new(env!("CARGO"))
-        .args([
-            "run",
-            "--bin",
-            "selium-server",
-            "--",
-            "--bind-addr",
-            SERVER_ADDR,
-            "--cert",
-            "certs/server/localhost.der",
-            "--key",
-            "certs/server/localhost.key.der",
-            "--ca",
-            "certs/server/ca.der",
-            "-vvvv",
-        ])
-        .current_dir("..")
-        .spawn()
-        .expect("Failed to start server")
+fn start_server() -> Result<()> {
+    let args = UserArgs::parse_from([
+        "",
+        "--cert",
+        "../certs/server/localhost.der",
+        "--key",
+        "../certs/server/localhost.key.der",
+        "--ca",
+        "../certs/server/ca.der",
+        "-vvvv",
+    ]);
+
+    let server = Server::try_from(args)?;
+
+    tokio::spawn(async move {
+        server.listen().await.expect("Failed to spawn server");
+    });
+
+    Ok(())
 }
