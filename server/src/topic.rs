@@ -1,9 +1,4 @@
-use std::{
-    fmt::Debug,
-    pin::Pin,
-    task::{Context, Poll},
-};
-
+use crate::sink::FanoutMany;
 use anyhow::Result;
 use futures::{
     channel::mpsc::{self, Receiver, Sender},
@@ -11,9 +6,12 @@ use futures::{
 };
 use log::error;
 use pin_project_lite::pin_project;
+use std::{
+    fmt::Debug,
+    pin::Pin,
+    task::{Context, Poll},
+};
 use tokio_stream::StreamMap;
-
-use crate::sink::FanoutMany;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 

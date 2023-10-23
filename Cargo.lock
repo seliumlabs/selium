@@ -1276,7 +1276,7 @@ dependencies = [
 
 [[package]]
 name = "selium"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1301,6 +1301,7 @@ dependencies = [
  "futures",
  "num-format",
  "selium",
+ "selium-server",
  "tokio",
 ]
 
@@ -1319,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "selium-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1363,8 +1364,10 @@ name = "selium-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "futures",
  "selium",
+ "selium-server",
  "tokio",
 ]
 
