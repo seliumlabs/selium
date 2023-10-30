@@ -11,4 +11,4 @@ selium-server = { path = "../server" }
 tokio = { version = "1.33", features = ["macros"] }
 
 [dependencies]
-clap = "4.4.6"
+clap = "4.4.7"
