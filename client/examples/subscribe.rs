@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::StreamExt;
 use selium::prelude::*;
-use selium_std::codecs::StringCodec;
+use selium::std::codecs::StringCodec;
 
 #[tokio::main]
 async fn main() -> Result<()> {

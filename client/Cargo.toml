@@ -38,7 +38,7 @@ chrono = ["dep:chrono"]
 std-compression = ["selium-std/compression"]
 std-traits = ["selium-std/traits"]
 std-codec = ["selium-std/codec"]
-std = ["std-compression", "std-codec"]
+std = ["std-compression", "std-codec", "std-traits"]
 default = ["std-traits"]
 
 [[example]]
