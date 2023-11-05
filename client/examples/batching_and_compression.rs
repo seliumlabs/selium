@@ -5,7 +5,7 @@ use selium::prelude::*;
 use selium::std::codecs::StringCodec;
 use selium::std::compression::deflate::DeflateComp;
 use selium::std::traits::compression::CompressionLevel;
-use selium_std::compression::deflate::DeflateDecomp;
+use selium::std::compression::deflate::DeflateDecomp;
 
 #[tokio::main]
 async fn main() -> Result<()> {

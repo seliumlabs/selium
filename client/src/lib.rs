@@ -10,7 +10,11 @@ pub(crate) mod utils;
 pub use client::*;
 pub use streams::*;
 
-#[cfg(feature = "std")]
+#[cfg(any(
+    feature = "std-compression",
+    feature = "std-codec",
+    feature = "std-traits"
+))]
 pub mod std {
     //! Re-exports [selium_std] modules.
     pub use selium_std::*;
