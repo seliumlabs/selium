@@ -5,8 +5,7 @@ implement this library to send data to and/or receive data from the server.
 
 ## Running the Examples
 
-Before running the examples, you should generate a set of self-signed certificates to use for authenticating 
-the client and server via mTLS.
+Before running the examples, you should generate a set of self-signed certificates to use for authenticating the client and server via mTLS.
 
 You can do so via the `selium-tools` binary included in the workspace:
 
@@ -23,25 +22,26 @@ Here's a minimal example:
 
 ```rust
 use futures::SinkExt;
-use selium::codecs::StringCodec;
-use selium::prelude::*;
-use std::time::Duration;
+use selium::{prelude::*, std::codecs::StringCodec};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connection = selium::client()
-        .with_certificate_authority("/path/to/ca.der")? // your Selium server's cert
-        .with_cert_and_key("/path/to/cert.der", "/path/to/key.der")?
-        .connect("127.0.0.1:7001") // your Selium server's address
+        .with_certificate_authority("certs/client/ca.der")?
+        .with_cert_and_key(
+            "certs/client/localhost.der",
+            "certs/client/localhost.key.der",
+        )?
+        .connect("127.0.0.1:7001")
         .await?;
 
     let mut publisher = connection
-        .publisher("/some/topic") // choose a topic to group similar messages together
-        .with_encoder(StringCodec) // allows you to exchange string messages between clients
-        .open() // opens a new stream for sending data
+        .publisher("/some/topic")
+        .with_encoder(StringCodec)
+        .open()
         .await?;
 
-    publisher.send("Hello, world!").await?;
+    publisher.send("Hello, world!".into()).await?;
     publisher.finish().await?;
 
     Ok(())

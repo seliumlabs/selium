@@ -25,48 +25,50 @@ configuration.
 First, create a new Cargo project:
 
 ```bash
-$ cargo new --bin hello-world
-$ cd hello-world/
+$ cargo new --bin hello-selium
+$ cd hello-selium
 $ cargo add futures
-$ cargo add selium
-$ cargo add -F macros,rt-multi-thread tokio
+$ cargo add -F std selium
+$ cargo add -F macros,rt tokio
 ```
 
 Copy the following code into `hello-world/src/main.rs`:
 
 ```rust
 use futures::{SinkExt, StreamExt};
-use selium::{codecs::StringCodec, prelude::*};
-use std::error::Error;
+use selium::{prelude::*, std::codecs::StringCodec};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connection = selium::client()
-        .with_certificate_authority("certs/client/ca.der")?
-        .with_cert_and_key("certs/client/localhost.der", "certs/client/localhost.key.der")?
-        .connect("127.0.0.1:7001")
+        .with_certificate_authority("certs/client/ca.der")? // your Selium cert authority
+        .with_cert_and_key(
+            "certs/client/localhost.der",
+            "certs/client/localhost.key.der",
+        )? // your client certificates
+        .connect("127.0.0.1:7001") // your Selium server's address
         .await?;
-    let connection_c = connection.clone();
+
+    let mut publisher = connection
+        .publisher("/some/topic") // choose a topic to group similar messages together
+        .with_encoder(StringCodec) // allows you to exchange string messages between clients
+        .open() // opens a new stream for sending data
+        .await?;
 
     let mut subscriber = connection
-        .subscriber("/hello/world")
-        .with_decoder(StringCodec)
-        .open()
+        .subscriber("/some/topic") // subscribe to the publisher's topic
+        .with_decoder(StringCodec) // use the same codec as the publisher
+        .open() // opens a new stream for receiving data
         .await?;
 
-    tokio::spawn(async move {
-        let mut publisher = connection_c
-            .publisher("/hello/world")
-            .with_encoder(StringCodec)
-            .open()
-            .await
-            .unwrap();
+    // Send a message and close the publisher
+    publisher.send("Hello, world!".into()).await?;
+    publisher.finish().await?;
 
-        publisher.send("Hello, world!").await.unwrap();
-        publisher.finish().await.unwrap();
-    });
-
-    println!("{}", subscriber.next().await.unwrap()?);
+    // Receive the message
+    if let Some(Ok(message)) = subscriber.next().await {
+        println!("Received message: {message}");
+    }
 
     Ok(())
 }
