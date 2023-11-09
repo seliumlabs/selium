@@ -1,5 +1,5 @@
-use crate::traits::{ShutdownStream, ShutdownSink};
-use crate::{Frame, MessageCodec, error_codes};
+use crate::traits::{ShutdownSink, ShutdownStream};
+use crate::{error_codes, Frame, MessageCodec};
 use anyhow::Result;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};
@@ -93,5 +93,5 @@ impl ShutdownSink for BiStream {
 impl ShutdownStream for BiStream {
     fn shutdown_stream(&mut self) {
         let _ = self.read().stop(error_codes::SHUTDOWN_IN_PROGRESS);
-    } 
+    }
 }

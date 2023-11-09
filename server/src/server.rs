@@ -7,13 +7,13 @@ use futures::future::join_all;
 use futures::stream::FuturesUnordered;
 use futures::{SinkExt, StreamExt};
 use log::{error, info};
-use quinn::{Endpoint, IdleTimeout, VarInt, Connecting};
+use quinn::{Connecting, Endpoint, IdleTimeout, VarInt};
 use selium_protocol::error_codes;
 use selium_protocol::{BiStream, Frame};
-use tokio::task::JoinHandle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 type TopicChannel = Sender<Socket<BiStream, BiStream>>;
 type SharedTopics = Arc<Mutex<HashMap<String, TopicChannel>>>;
@@ -66,10 +66,11 @@ impl Server {
         topics.values_mut().for_each(|t| t.close_channel());
         join_all(topic_handles.iter_mut()).await;
 
-        self.endpoint.close(error_codes::SHUTDOWN, b"Scheduled shutdown.");
+        self.endpoint
+            .close(error_codes::SHUTDOWN, b"Scheduled shutdown.");
         self.endpoint.wait_idle().await;
 
-        Ok(())  
+        Ok(())
     }
 }
 
@@ -93,11 +94,19 @@ impl TryFrom<UserArgs> for Server {
         let topics = Arc::new(Mutex::new(HashMap::new()));
         let topic_handles = Arc::new(Mutex::new(FuturesUnordered::new()));
 
-        Ok(Self { topics, topic_handles, endpoint })
+        Ok(Self {
+            topics,
+            topic_handles,
+            endpoint,
+        })
     }
 }
 
-async fn handle_connection(topics: SharedTopics, topic_handles: SharedTopicHandles, conn: quinn::Connecting) -> Result<()> {
+async fn handle_connection(
+    topics: SharedTopics,
+    topic_handles: SharedTopicHandles,
+    conn: quinn::Connecting,
+) -> Result<()> {
     let connection = conn.await?;
     info!(
         "Connection {} - {}",
