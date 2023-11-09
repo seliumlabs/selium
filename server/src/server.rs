@@ -2,36 +2,74 @@ use crate::args::UserArgs;
 use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
 use crate::topic::{Socket, Topic};
 use anyhow::{anyhow, bail, Context, Result};
-use futures::{channel::mpsc::Sender, SinkExt, StreamExt};
+use futures::channel::mpsc::Sender;
+use futures::future::join_all;
+use futures::stream::FuturesUnordered;
+use futures::{SinkExt, StreamExt};
 use log::{error, info};
-use quinn::{Endpoint, IdleTimeout, VarInt};
+use quinn::{Endpoint, IdleTimeout, VarInt, Connecting};
+use selium_protocol::error_codes;
 use selium_protocol::{BiStream, Frame};
+use tokio::task::JoinHandle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio_stream::StreamNotifyClose;
 
-type TopicChannel = Sender<Socket<StreamNotifyClose<BiStream>, BiStream>>;
+type TopicChannel = Sender<Socket<BiStream, BiStream>>;
 type SharedTopics = Arc<Mutex<HashMap<String, TopicChannel>>>;
+type SharedTopicHandles = Arc<Mutex<FuturesUnordered<JoinHandle<()>>>>;
 
 pub struct Server {
     topics: SharedTopics,
+    topic_handles: SharedTopicHandles,
     endpoint: Endpoint,
 }
 
 impl Server {
     pub async fn listen(&self) -> Result<()> {
-        while let Some(conn) = self.endpoint.accept().await {
-            info!("connection incoming");
-            let topics_clone = self.topics.clone();
-            tokio::spawn(async move {
-                if let Err(e) = handle_connection(topics_clone, conn).await {
-                    error!("connection failed: {:?}", e);
+        loop {
+            tokio::select! {
+                Some(conn) = self.endpoint.accept() => {
+                    self.connect(conn).await?;
+                },
+                Ok(()) = tokio::signal::ctrl_c() => {
+                    self.shutdown().await?;
+                    break;
                 }
-            });
+            }
         }
 
         Ok(())
+    }
+
+    async fn connect(&self, conn: Connecting) -> Result<()> {
+        info!("connection incoming");
+        let topics_clone = self.topics.clone();
+        let topic_handles = self.topic_handles.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = handle_connection(topics_clone, topic_handles, conn).await {
+                error!("connection failed: {:?}", e);
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        info!("Shutdown signal received: preparing to gracefully shutdown.");
+        self.endpoint.reject_new_connections();
+
+        let mut topics = self.topics.lock().await;
+        let mut topic_handles = self.topic_handles.lock().await;
+
+        topics.values_mut().for_each(|t| t.close_channel());
+        join_all(topic_handles.iter_mut()).await;
+
+        self.endpoint.close(error_codes::SHUTDOWN, b"Scheduled shutdown.");
+        self.endpoint.wait_idle().await;
+
+        Ok(())  
     }
 }
 
@@ -53,12 +91,13 @@ impl TryFrom<UserArgs> for Server {
 
         // Create hash to store message ordering data
         let topics = Arc::new(Mutex::new(HashMap::new()));
+        let topic_handles = Arc::new(Mutex::new(FuturesUnordered::new()));
 
-        Ok(Self { topics, endpoint })
+        Ok(Self { topics, topic_handles, endpoint })
     }
 }
 
-async fn handle_connection(topics: SharedTopics, conn: quinn::Connecting) -> Result<()> {
+async fn handle_connection(topics: SharedTopics, topic_handles: SharedTopicHandles, conn: quinn::Connecting) -> Result<()> {
     let connection = conn.await?;
     info!(
         "Connection {} - {}",
@@ -90,9 +129,10 @@ async fn handle_connection(topics: SharedTopics, conn: quinn::Connecting) -> Res
         };
 
         let topics_clone = topics.clone();
+        let topic_handles_clone = topic_handles.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(topics_clone, stream).await {
+            if let Err(e) = handle_stream(topics_clone, topic_handles_clone, stream).await {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -101,6 +141,7 @@ async fn handle_connection(topics: SharedTopics, conn: quinn::Connecting) -> Res
 
 async fn handle_stream(
     topics: Arc<Mutex<HashMap<String, TopicChannel>>>,
+    topic_handles: SharedTopicHandles,
     mut stream: BiStream,
 ) -> Result<()> {
     // Receive header
@@ -112,8 +153,9 @@ async fn handle_stream(
         let mut ts = topics.lock().await;
         if !ts.contains_key(topic_name) {
             let (fut, tx) = Topic::pair();
-            tokio::spawn(fut);
+            let topic = tokio::spawn(fut);
 
+            topic_handles.lock().await.push(topic);
             ts.insert(topic_name.to_owned(), tx);
         }
 
@@ -121,7 +163,7 @@ async fn handle_stream(
 
         match frame {
             Frame::RegisterPublisher(_) => {
-                tx.send(Socket::Stream(StreamNotifyClose::new(stream)))
+                tx.send(Socket::Stream(stream))
                     .await
                     .context("Failed to add Publisher sink")?;
             }
