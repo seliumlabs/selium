@@ -1,4 +1,5 @@
-use crate::{Frame, MessageCodec};
+use crate::traits::{ShutdownSink, ShutdownStream};
+use crate::{error_codes, Frame, MessageCodec};
 use anyhow::Result;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};
@@ -26,6 +27,14 @@ impl BiStream {
 
     pub fn get_send_stream_id(&self) -> StreamId {
         self.write.get_ref().id()
+    }
+
+    pub fn read(&mut self) -> &mut RecvStream {
+        self.read.get_mut()
+    }
+
+    pub fn write(&mut self) -> &mut SendStream {
+        self.write.get_mut()
     }
 
     pub async fn finish(&mut self) -> Result<()> {
@@ -72,5 +81,17 @@ impl Stream for BiStream {
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.read.size_hint()
+    }
+}
+
+impl ShutdownSink for BiStream {
+    fn shutdown_sink(&mut self) {
+        let _ = self.write().reset(error_codes::SHUTDOWN_IN_PROGRESS);
+    }
+}
+
+impl ShutdownStream for BiStream {
+    fn shutdown_stream(&mut self) {
+        let _ = self.read().stop(error_codes::SHUTDOWN_IN_PROGRESS);
     }
 }
