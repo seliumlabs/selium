@@ -11,8 +11,8 @@ use selium_protocol::utils::encode_message_batch;
 use selium_protocol::{BiStream, Frame, PublisherPayload};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
+use tokio::sync::MutexGuard;
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -159,6 +159,7 @@ pub struct Publisher<E, Item> {
     compression: Option<Comp>,
     batch: Option<MessageBatch>,
     batch_config: Option<BatchConfig>,
+    buffer: Option<Item>,
     _marker: PhantomData<Item>,
 }
 
@@ -176,10 +177,8 @@ where
         batch_config: Option<BatchConfig>,
     ) -> Result<KeepAlive<Self, Item>> {
         let batch = batch_config.as_ref().map(|c| MessageBatch::from(c.clone()));
-
         let lock = connection.lock().await;
-        let stream = Self::open_stream(lock.deref(), headers.clone()).await?;
-        drop(lock);
+        let stream = Self::open_stream(lock, headers.clone()).await?;
 
         let publisher = Self {
             connection,
@@ -189,6 +188,7 @@ where
             compression,
             batch,
             batch_config,
+            buffer: None,
             backoff_strategy: backoff_strategy.clone(),
             _marker: PhantomData,
         };
@@ -240,10 +240,12 @@ where
     }
 
     async fn open_stream(
-        connection: &ClientConnection,
+        connection: MutexGuard<'_, ClientConnection>,
         headers: PublisherPayload,
     ) -> Result<BiStream> {
         let mut stream = BiStream::try_from_connection(connection.conn()).await?;
+        drop(connection);
+
         let frame = Frame::RegisterPublisher(headers);
         stream.send(frame).await?;
 
@@ -338,7 +340,7 @@ where
         Box::pin(async move {
             let mut connection = connection.lock().await;
             connection.reconnect().await?;
-            Self::open_stream(connection.deref(), headers).await
+            Self::open_stream(connection, headers).await
         })
     }
 

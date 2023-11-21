@@ -10,8 +10,8 @@ use selium_protocol::utils::decode_message_batch;
 use selium_protocol::{BiStream, Frame, SubscriberPayload};
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
+use tokio::sync::MutexGuard;
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -146,9 +146,8 @@ where
         decompression: Option<Decomp>,
     ) -> Result<KeepAlive<Self, Item>> {
         let lock = connection.lock().await;
-        let mut stream = Self::open_stream(lock.deref(), headers.clone()).await?;
+        let mut stream = Self::open_stream(lock, headers.clone()).await?;
         stream.finish().await?;
-        drop(lock);
 
         let subscriber = Self {
             connection,
@@ -164,10 +163,12 @@ where
     }
 
     async fn open_stream(
-        connection: &ClientConnection,
+        connection: MutexGuard<'_, ClientConnection>,
         headers: SubscriberPayload,
     ) -> Result<BiStream> {
         let mut stream = BiStream::try_from_connection(connection.conn()).await?;
+        drop(connection);
+
         let frame = Frame::RegisterSubscriber(headers);
         stream.send(frame).await?;
 
@@ -245,7 +246,7 @@ where
         Box::pin(async move {
             let mut lock = connection.lock().await;
             lock.reconnect().await?;
-            Self::open_stream(lock.deref(), headers).await
+            Self::open_stream(lock, headers).await
         })
     }
 
