@@ -2,9 +2,12 @@ mod client;
 mod streams;
 
 pub mod batching;
-pub(crate) mod crypto;
+pub mod keep_alive;
 pub mod prelude;
 pub mod traits;
+
+pub(crate) mod connection;
+pub(crate) mod crypto;
 pub(crate) mod utils;
 
 pub use client::*;
