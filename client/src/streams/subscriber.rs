@@ -1,15 +1,17 @@
-use crate::traits::{Open, Operations, Retain, TryIntoU64};
+use crate::keep_alive::{KeepAlive, BackoffStrategy, AttemptFut};
+use crate::traits::{Open, Operations, Retain, TryIntoU64, KeepAliveStream};
+use crate::connection::{ClientConnection, SharedConnection};
 use crate::{StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, Stream, StreamExt};
-use quinn::Connection;
 use selium_protocol::utils::decode_message_batch;
 use selium_protocol::{BiStream, Frame, SubscriberPayload};
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
 use std::marker::PhantomData;
+use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -46,6 +48,7 @@ impl StreamBuilder<SubscriberWantsDecoder> {
         StreamBuilder {
             state,
             connection: self.connection,
+            backoff_strategy: self.backoff_strategy,
         }
     }
 }
@@ -87,10 +90,10 @@ impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>> {
 #[async_trait]
 impl<D, Item> Open for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
-    D: MessageDecoder<Item> + Send,
-    Item: Send,
+    D: MessageDecoder<Item> + Send + Unpin,
+    Item: Send + Unpin,
 {
-    type Output = Subscriber<D, Item>;
+    type Output = KeepAlive<Subscriber<D, Item>, Item>;
 
     async fn open(self) -> Result<Self::Output> {
         let headers = SubscriberPayload {
@@ -101,6 +104,7 @@ where
 
         let subscriber = Subscriber::spawn(
             self.connection,
+            self.backoff_strategy,
             headers,
             self.state.decoder,
             self.state.decompression,
@@ -120,7 +124,9 @@ where
 /// **Note:** The Subscriber struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
 pub struct Subscriber<D, Item> {
+    connection: SharedConnection,
     stream: BiStream,
+    headers: SubscriberPayload,
     decoder: D,
     decompression: Option<Decomp>,
     message_batch: Option<Vec<Bytes>>,
@@ -129,27 +135,40 @@ pub struct Subscriber<D, Item> {
 
 impl<D, Item> Subscriber<D, Item>
 where
-    D: MessageDecoder<Item>,
+    D: MessageDecoder<Item> + Send + Unpin,
+    Item: Unpin + Send,
 {
     async fn spawn(
-        connection: Connection,
+        connection: SharedConnection,
+        backoff_strategy: BackoffStrategy,
         headers: SubscriberPayload,
         decoder: D,
         decompression: Option<Decomp>,
-    ) -> Result<Self> {
-        let mut stream = BiStream::try_from_connection(&connection).await?;
-        let frame = Frame::RegisterSubscriber(headers);
-
-        stream.send(frame).await?;
+    ) -> Result<KeepAlive<Self, Item>> {
+        let lock = connection.lock().await;
+        let mut stream = Self::open_stream(lock.deref(), headers.clone()).await?;
         stream.finish().await?;
+        drop(lock);
 
-        Ok(Self {
+        let subscriber = Self {
+            connection,
             stream,
+            headers,
             decoder,
             message_batch: None,
             decompression,
             _marker: PhantomData,
-        })
+        };
+
+        Ok(KeepAlive::new(subscriber, backoff_strategy))
+    }
+
+    async fn open_stream(connection: &ClientConnection, headers: SubscriberPayload) -> Result<BiStream> {
+        let mut stream = BiStream::try_from_connection(connection.conn()).await?;
+        let frame = Frame::RegisterSubscriber(headers);
+        stream.send(frame).await?;
+
+        Ok(stream)
     }
 
     fn decode_message(&mut self, bytes: Bytes) -> Poll<Option<Result<Item>>> {
@@ -164,7 +183,7 @@ where
 impl<D, Item> Stream for Subscriber<D, Item>
 where
     D: MessageDecoder<Item> + Send + Unpin,
-    Item: Unpin,
+    Item: Send + Unpin,
 {
     type Item = Result<Item>;
 
@@ -211,3 +230,32 @@ where
         self.stream.size_hint()
     }
 }
+
+impl <D, Item> KeepAliveStream for Subscriber<D, Item>
+where
+    D: MessageDecoder<Item> + Send + Unpin,
+    Item: Unpin + Send,
+{
+    type Headers = SubscriberPayload;
+
+    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers) -> AttemptFut {
+        Box::pin(async move {
+            let mut lock = connection.lock().await;
+            lock.reconnect().await?;
+            Self::open_stream(&lock.deref(), headers).await
+        })
+    }
+
+    fn on_reconnect(&mut self, stream: BiStream) {
+       self.stream = stream; 
+    }
+
+    fn get_connection(&self) -> SharedConnection {
+       self.connection.clone() 
+    }
+
+    fn get_headers(&self) -> Self::Headers {
+       self.headers.clone() 
+    }
+}
+

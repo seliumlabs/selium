@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use selium::keep_alive::KeepAlive;
 use selium::std::codecs::StringCodec;
 use selium::{prelude::*, Subscriber};
 use selium_server::args::UserArgs;
@@ -100,7 +101,7 @@ async fn run() -> Result<[Option<String>; 16]> {
     ])
 }
 
-async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>> {
+async fn start_subscriber(topic: &str) -> Result<KeepAlive<Subscriber<StringCodec, String>, String>> {
     let connection = selium::client()
         .keep_alive(5_000)?
         .with_certificate_authority("../certs/client/ca.der")?

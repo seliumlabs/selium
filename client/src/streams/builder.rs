@@ -1,6 +1,5 @@
-use crate::traits::TryIntoU64;
+use crate::{connection::SharedConnection, keep_alive::BackoffStrategy, traits::TryIntoU64};
 use anyhow::Result;
-use quinn::Connection;
 use selium_protocol::Operation;
 
 /// The default `retention_policy` setting for messages.
@@ -22,7 +21,8 @@ pub const RETENTION_POLICY_DEFAULT: u64 = 0;
 #[derive(Debug)]
 pub struct StreamBuilder<T> {
     pub(crate) state: T,
-    pub(crate) connection: Connection,
+    pub(crate) connection: SharedConnection,
+    pub(crate) backoff_strategy: BackoffStrategy,
 }
 
 #[doc(hidden)]

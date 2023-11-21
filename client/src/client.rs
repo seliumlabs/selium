@@ -1,11 +1,13 @@
 use crate::crypto::cert::{load_keypair, load_root_store};
+use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
-use crate::utils::client::establish_connection;
+use crate::connection::{ConnectionOptions, ClientConnection, SharedConnection};
 use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsDecoder};
 use anyhow::Result;
-use quinn::{Connection, VarInt};
 use rustls::{Certificate, PrivateKey, RootCertStore};
+use tokio::sync::Mutex;
 use std::path::Path;
+use std::sync::Arc;
 
 /// The default `keep_alive` interval for a client connection.
 pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
@@ -14,12 +16,23 @@ pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
 #[derive(Debug)]
 pub struct ClientWantsRootCert {
     keep_alive: u64,
+    backoff_strategy: BackoffStrategy,
+}
+
+impl Default for ClientWantsRootCert {
+    fn default() -> Self {
+        Self {
+            keep_alive: KEEP_ALIVE_DEFAULT,
+            backoff_strategy: BackoffStrategy::default(),
+        }
+    }
 }
 
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct ClientWantsCertAndKey {
     keep_alive: u64,
+    backoff_strategy: BackoffStrategy,
     root_store: RootCertStore,
 }
 
@@ -27,6 +40,7 @@ pub struct ClientWantsCertAndKey {
 #[derive(Debug)]
 pub struct ClientWantsConnect {
     keep_alive: u64,
+    backoff_strategy: BackoffStrategy,
     root_store: RootCertStore,
     certs: Vec<Certificate>,
     key: PrivateKey,
@@ -54,9 +68,7 @@ pub struct ClientBuilder<T> {
 /// ```
 pub fn client() -> ClientBuilder<ClientWantsRootCert> {
     ClientBuilder {
-        state: ClientWantsRootCert {
-            keep_alive: KEEP_ALIVE_DEFAULT,
-        },
+        state: ClientWantsRootCert::default()
     }
 }
 
@@ -98,6 +110,11 @@ impl ClientBuilder<ClientWantsRootCert> {
         Ok(self)
     }
 
+    pub fn backoff_strategy(mut self, strategy: BackoffStrategy) -> Self {
+        self.state.backoff_strategy = strategy;
+        self
+    }
+
     /// Attempts to load a valid CA certificate from the filesystem, and creates a root cert store
     /// to use with authenticating the QUIC connection.
     ///
@@ -114,6 +131,7 @@ impl ClientBuilder<ClientWantsRootCert> {
         let root_store = load_root_store(ca_path)?;
         let state = ClientWantsCertAndKey {
             keep_alive: self.state.keep_alive,
+            backoff_strategy: self.state.backoff_strategy,
             root_store,
         };
         Ok(ClientBuilder { state })
@@ -145,6 +163,7 @@ impl ClientBuilder<ClientWantsCertAndKey> {
         let (certs, key) = load_keypair(cert_file, key_file)?;
         let state = ClientWantsConnect {
             keep_alive: self.state.keep_alive,
+            backoff_strategy: self.state.backoff_strategy,
             root_store: self.state.root_store,
             certs,
             key,
@@ -166,24 +185,17 @@ impl ClientBuilder<ClientWantsConnect> {
     /// [SocketAddr](std::net::SocketAddr).
     /// - If the connection cannot be established.
     pub async fn connect(self, addr: &str) -> Result<Client> {
-        let connection = establish_connection(
-            addr,
-            self.state.certs,
-            self.state.key,
-            &self.state.root_store,
-            self.state.keep_alive,
-        )
-        .await?;
+        let options = ConnectionOptions::new(
+            self.state.certs.as_slice(), 
+            self.state.key, 
+            self.state.root_store, 
+            self.state.keep_alive
+        );
 
-        tokio::spawn({
-            let connection = connection.clone();
-            async move {
-                tokio::signal::ctrl_c().await.unwrap();
-                connection.close(VarInt::from_u32(0), b"Client forcefully closed connection");
-            }
-        });
-
-        Ok(Client { connection })
+        let connection = ClientConnection::connect(addr, options).await?;
+        let connection = Arc::new(Mutex::new(connection));
+      
+        Ok(Client { connection, backoff_strategy: self.state.backoff_strategy })
     }
 }
 
@@ -199,7 +211,8 @@ impl ClientBuilder<ClientWantsConnect> {
 /// [ClientBuilder], following a successfully established connection to the `Selium` server.
 #[derive(Clone)]
 pub struct Client {
-    connection: Connection,
+    connection: SharedConnection,
+    backoff_strategy: BackoffStrategy,
 }
 
 impl Client {
@@ -208,6 +221,7 @@ impl Client {
     pub fn subscriber(&self, topic: &str) -> StreamBuilder<SubscriberWantsDecoder> {
         StreamBuilder {
             connection: self.connection.clone(),
+            backoff_strategy: self.backoff_strategy.clone(),
             state: SubscriberWantsDecoder {
                 common: StreamCommon::new(topic),
             },
@@ -219,6 +233,7 @@ impl Client {
     pub fn publisher(&self, topic: &str) -> StreamBuilder<PublisherWantsEncoder> {
         StreamBuilder {
             connection: self.connection.clone(),
+            backoff_strategy: self.backoff_strategy.clone(),
             state: PublisherWantsEncoder {
                 common: StreamCommon::new(topic),
             },
