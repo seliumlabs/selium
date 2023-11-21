@@ -83,20 +83,12 @@ where
 
     // TODO: This needs to match on explicit RecvStream errors
     fn is_stream_disconnected(&self, result: &Result<Item>) -> bool {
-        if let Err(_) = result {
-            true
-        } else {
-            false
-        }
+        result.is_err()
     }
 
     // TODO: This needs to match on explicit SendStream errors
     fn is_sink_disconnected(&self, result: &Poll<Result<()>>) -> bool {
-        if let Poll::Ready(Err(_)) = result {
-            true
-        } else {
-            false
-        }
+        matches!(result, Poll::Ready(Err(_)))
     }
 }
 

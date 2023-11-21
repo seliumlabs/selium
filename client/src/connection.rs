@@ -40,7 +40,7 @@ impl ClientConnection {
     pub async fn connect(host: &str, options: ConnectionOptions) -> Result<Self> {
         let client_config = configure_client(options);
         let host = get_socket_addrs(host)?;
-        let connection = connect_to_endpoint(host.clone(), client_config.clone()).await?;
+        let connection = connect_to_endpoint(host, client_config.clone()).await?;
 
         Ok(Self { 
             host, 
@@ -55,7 +55,7 @@ impl ClientConnection {
 
     pub async fn reconnect(&mut self) -> Result<()> {
         if self.connection.close_reason().is_some() {
-            let connection = connect_to_endpoint(self.host.clone(), self.client_config.clone()).await?;
+            let connection = connect_to_endpoint(self.host, self.client_config.clone()).await?;
             self.connection = connection;
         }
 

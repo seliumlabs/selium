@@ -177,7 +177,7 @@ where
         let batch = batch_config.as_ref().map(|c| MessageBatch::from(c.clone()));
 
         let lock = connection.lock().await;
-        let stream = Self::open_stream(&lock.deref(), headers.clone()).await?;
+        let stream = Self::open_stream(lock.deref(), headers.clone()).await?;
         drop(lock);
 
         let publisher = Self { 
@@ -239,7 +239,7 @@ where
     }
 
     async fn open_stream(connection: &ClientConnection, headers: PublisherPayload) -> Result<BiStream> {
-        let mut stream = BiStream::try_from_connection(&connection.conn()).await?;
+        let mut stream = BiStream::try_from_connection(connection.conn()).await?;
         let frame = Frame::RegisterPublisher(headers);
         stream.send(frame).await?;
 

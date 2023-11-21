@@ -33,19 +33,10 @@ impl Default for BackoffStrategyState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct BackoffStrategy {
     strategy_type: Strategy,
     state: BackoffStrategyState,
-}
-
-impl Default for BackoffStrategy {
-    fn default() -> Self {
-        Self {
-            strategy_type: Strategy::default(),
-            state: BackoffStrategyState::default(),
-        }
-    }
 }
 
 impl BackoffStrategy {

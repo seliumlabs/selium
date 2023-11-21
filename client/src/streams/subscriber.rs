@@ -242,7 +242,7 @@ where
         Box::pin(async move {
             let mut lock = connection.lock().await;
             lock.reconnect().await?;
-            Self::open_stream(&lock.deref(), headers).await
+            Self::open_stream(lock.deref(), headers).await
         })
     }
 
