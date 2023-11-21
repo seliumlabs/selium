@@ -1282,6 +1282,7 @@ dependencies = [
  "chrono",
  "futures",
  "quinn",
+ "rand",
  "rustls",
  "rustls-pemfile",
  "selium-protocol",
