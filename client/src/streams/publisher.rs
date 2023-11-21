@@ -1,8 +1,8 @@
 use super::builder::{StreamBuilder, StreamCommon};
 use crate::batching::{BatchConfig, MessageBatch};
-use crate::keep_alive::{KeepAlive, BackoffStrategy, AttemptFut};
-use crate::traits::{Open, Operations, Retain, TryIntoU64, KeepAliveStream};
 use crate::connection::{ClientConnection, SharedConnection};
+use crate::keep_alive::{AttemptFut, BackoffStrategy, KeepAlive};
+use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -43,7 +43,8 @@ impl StreamBuilder<PublisherWantsEncoder> {
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
     pub fn with_encoder<E, Item>(self, encoder: E) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
         let state = PublisherWantsOpen {
-            common: self.state.common, encoder,
+            common: self.state.common,
+            encoder,
             compression: None,
             batch_config: None,
             _marker: PhantomData,
@@ -180,7 +181,7 @@ where
         let stream = Self::open_stream(lock.deref(), headers.clone()).await?;
         drop(lock);
 
-        let publisher = Self { 
+        let publisher = Self {
             connection,
             stream,
             headers,
@@ -238,7 +239,10 @@ where
         self.stream.finish().await
     }
 
-    async fn open_stream(connection: &ClientConnection, headers: PublisherPayload) -> Result<BiStream> {
+    async fn open_stream(
+        connection: &ClientConnection,
+        headers: PublisherPayload,
+    ) -> Result<BiStream> {
         let mut stream = BiStream::try_from_connection(connection.conn()).await?;
         let frame = Frame::RegisterPublisher(headers);
         stream.send(frame).await?;
@@ -323,7 +327,7 @@ where
     }
 }
 
-impl <E, Item> KeepAliveStream for Publisher<E, Item>
+impl<E, Item> KeepAliveStream for Publisher<E, Item>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
     Item: Unpin + Send,
@@ -340,7 +344,7 @@ where
 
     fn on_reconnect(&mut self, stream: BiStream) {
         self.stream = stream;
-    } 
+    }
 
     fn get_connection(&self) -> SharedConnection {
         self.connection.clone()

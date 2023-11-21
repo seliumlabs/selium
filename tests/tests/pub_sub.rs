@@ -101,7 +101,9 @@ async fn run() -> Result<[Option<String>; 16]> {
     ])
 }
 
-async fn start_subscriber(topic: &str) -> Result<KeepAlive<Subscriber<StringCodec, String>, String>> {
+async fn start_subscriber(
+    topic: &str,
+) -> Result<KeepAlive<Subscriber<StringCodec, String>, String>> {
     let connection = selium::client()
         .keep_alive(5_000)?
         .with_certificate_authority("../certs/client/ca.der")?

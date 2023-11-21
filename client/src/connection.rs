@@ -2,9 +2,9 @@ use crate::utils::net::get_socket_addrs;
 use anyhow::Result;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::{Certificate, PrivateKey, RootCertStore};
-use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::{net::SocketAddr, time::Duration};
+use tokio::sync::Mutex;
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
 
@@ -19,7 +19,12 @@ pub struct ConnectionOptions {
 }
 
 impl ConnectionOptions {
-    pub fn new(certs: &[Certificate], key: PrivateKey, root_store: RootCertStore, keep_alive: u64) -> Self {
+    pub fn new(
+        certs: &[Certificate],
+        key: PrivateKey,
+        root_store: RootCertStore,
+        keep_alive: u64,
+    ) -> Self {
         Self {
             certs: certs.to_vec(),
             key,
@@ -42,10 +47,10 @@ impl ClientConnection {
         let host = get_socket_addrs(host)?;
         let connection = connect_to_endpoint(host, client_config.clone()).await?;
 
-        Ok(Self { 
-            host, 
-            connection, 
-            client_config, 
+        Ok(Self {
+            host,
+            connection,
+            client_config,
         })
     }
 
@@ -59,7 +64,7 @@ impl ClientConnection {
             self.connection = connection;
         }
 
-        Ok(())  
+        Ok(())
     }
 }
 
@@ -82,10 +87,7 @@ fn configure_client(options: ConnectionOptions) -> ClientConfig {
     config
 }
 
-async fn connect_to_endpoint(
-    addr: SocketAddr,
-    config: ClientConfig,
-) -> Result<Connection> {
+async fn connect_to_endpoint(addr: SocketAddr, config: ClientConfig) -> Result<Connection> {
     let mut endpoint = Endpoint::client("[::]:0".parse()?)?;
     endpoint.set_default_client_config(config);
     let connection = endpoint.connect(addr, "localhost")?.await?;

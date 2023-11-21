@@ -4,33 +4,34 @@ mod connection_status;
 pub use backoff_strategy::*;
 pub(crate) use connection_status::*;
 
-use crate::{Publisher, traits::KeepAliveStream};
-use anyhow::{Result, anyhow};
-use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, ready};
+use crate::{traits::KeepAliveStream, Publisher};
+use anyhow::{anyhow, Result};
+use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use selium_std::traits::codec::MessageEncoder;
 use std::{
+    marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll}, marker::PhantomData,
+    task::{Context, Poll},
 };
 
 pub struct KeepAlive<T, Item> {
     stream: T,
     backoff_strategy: BackoffStrategy,
     status: ConnectionStatus,
-    _marker: PhantomData<Item>
+    _marker: PhantomData<Item>,
 }
 
 impl<T, Item> KeepAlive<T, Item>
 where
     T: KeepAliveStream + Send + Unpin,
-    Item: Send + Unpin
+    Item: Send + Unpin,
 {
     pub fn new(stream: T, backoff_strategy: BackoffStrategy) -> Self {
         Self {
             stream,
             backoff_strategy,
             status: ConnectionStatus::Connected,
-            _marker: PhantomData
+            _marker: PhantomData,
         }
     }
 
@@ -92,7 +93,7 @@ where
     }
 }
 
-impl<E, Item> KeepAlive<Publisher<E, Item>, Item> 
+impl<E, Item> KeepAlive<Publisher<E, Item>, Item>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
     Item: Unpin + Send,
@@ -109,7 +110,7 @@ where
 impl<T, Item> Sink<Item> for KeepAlive<T, Item>
 where
     T: KeepAliveStream + Sink<Item, Error = anyhow::Error> + Send + Unpin,
-    Item: Clone + Unpin + Send
+    Item: Clone + Unpin + Send,
 {
     type Error = anyhow::Error;
 
@@ -174,15 +175,15 @@ where
     }
 }
 
-impl<T, Item> Stream for KeepAlive<T, Item> 
+impl<T, Item> Stream for KeepAlive<T, Item>
 where
     T: KeepAliveStream + Stream<Item = Result<Item>> + Send + Unpin,
-    Item: Unpin + Send
+    Item: Unpin + Send,
 {
     type Item = Result<Item>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-       match self.status {
+        match self.status {
             ConnectionStatus::Connected => {
                 let result = ready!(self.stream.poll_next_unpin(cx));
 
@@ -197,17 +198,16 @@ where
                     self.on_disconnect(cx);
                     Poll::Pending
                 }
-
-            },
+            }
             ConnectionStatus::Disconnected(_) => {
                 self.poll_reconnect(cx);
                 Poll::Pending
-            },
-            ConnectionStatus::Exhausted => Poll::Ready(Some(Err(anyhow!("Too many retries!"))))
-        } 
+            }
+            ConnectionStatus::Exhausted => Poll::Ready(Some(Err(anyhow!("Too many retries!")))),
+        }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-       self.stream.size_hint() 
+        self.stream.size_hint()
     }
 }

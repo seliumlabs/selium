@@ -1,9 +1,9 @@
-use std::time::Duration;
-use std::pin::Pin;
+use super::BackoffStrategy;
+use anyhow::Result;
 use futures::Future;
 use selium_protocol::BiStream;
-use anyhow::Result;
-use super::BackoffStrategy;
+use std::pin::Pin;
+use std::time::Duration;
 
 pub type AttemptsIterator = Box<dyn Iterator<Item = Duration> + Send>;
 pub type AttemptFut = Pin<Box<dyn Future<Output = Result<BiStream>> + Send>>;
@@ -36,6 +36,9 @@ impl From<BackoffStrategy> for ReconnectState {
     fn from(strategy: BackoffStrategy) -> Self {
         let attempts = Box::new(strategy.into_iter());
         let current_attempt = Box::pin(async { unreachable!() });
-        Self { attempts, current_attempt }
+        Self {
+            attempts,
+            current_attempt,
+        }
     }
 }

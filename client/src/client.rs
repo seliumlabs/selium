@@ -1,13 +1,13 @@
+use crate::connection::{ClientConnection, ConnectionOptions, SharedConnection};
 use crate::crypto::cert::{load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
-use crate::connection::{ConnectionOptions, ClientConnection, SharedConnection};
 use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsDecoder};
 use anyhow::Result;
 use rustls::{Certificate, PrivateKey, RootCertStore};
-use tokio::sync::Mutex;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// The default `keep_alive` interval for a client connection.
 pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
@@ -68,7 +68,7 @@ pub struct ClientBuilder<T> {
 /// ```
 pub fn client() -> ClientBuilder<ClientWantsRootCert> {
     ClientBuilder {
-        state: ClientWantsRootCert::default()
+        state: ClientWantsRootCert::default(),
     }
 }
 
@@ -186,16 +186,19 @@ impl ClientBuilder<ClientWantsConnect> {
     /// - If the connection cannot be established.
     pub async fn connect(self, addr: &str) -> Result<Client> {
         let options = ConnectionOptions::new(
-            self.state.certs.as_slice(), 
-            self.state.key, 
-            self.state.root_store, 
-            self.state.keep_alive
+            self.state.certs.as_slice(),
+            self.state.key,
+            self.state.root_store,
+            self.state.keep_alive,
         );
 
         let connection = ClientConnection::connect(addr, options).await?;
         let connection = Arc::new(Mutex::new(connection));
-      
-        Ok(Client { connection, backoff_strategy: self.state.backoff_strategy })
+
+        Ok(Client {
+            connection,
+            backoff_strategy: self.state.backoff_strategy,
+        })
     }
 }
 

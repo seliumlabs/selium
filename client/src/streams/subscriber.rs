@@ -1,6 +1,6 @@
-use crate::keep_alive::{KeepAlive, BackoffStrategy, AttemptFut};
-use crate::traits::{Open, Operations, Retain, TryIntoU64, KeepAliveStream};
 use crate::connection::{ClientConnection, SharedConnection};
+use crate::keep_alive::{AttemptFut, BackoffStrategy, KeepAlive};
+use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use crate::{StreamBuilder, StreamCommon};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -163,7 +163,10 @@ where
         Ok(KeepAlive::new(subscriber, backoff_strategy))
     }
 
-    async fn open_stream(connection: &ClientConnection, headers: SubscriberPayload) -> Result<BiStream> {
+    async fn open_stream(
+        connection: &ClientConnection,
+        headers: SubscriberPayload,
+    ) -> Result<BiStream> {
         let mut stream = BiStream::try_from_connection(connection.conn()).await?;
         let frame = Frame::RegisterSubscriber(headers);
         stream.send(frame).await?;
@@ -231,7 +234,7 @@ where
     }
 }
 
-impl <D, Item> KeepAliveStream for Subscriber<D, Item>
+impl<D, Item> KeepAliveStream for Subscriber<D, Item>
 where
     D: MessageDecoder<Item> + Send + Unpin,
     Item: Unpin + Send,
@@ -247,15 +250,14 @@ where
     }
 
     fn on_reconnect(&mut self, stream: BiStream) {
-       self.stream = stream; 
+        self.stream = stream;
     }
 
     fn get_connection(&self) -> SharedConnection {
-       self.connection.clone() 
+        self.connection.clone()
     }
 
     fn get_headers(&self) -> Self::Headers {
-       self.headers.clone() 
+        self.headers.clone()
     }
 }
-
