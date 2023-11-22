@@ -1,5 +1,5 @@
 use super::TryIntoU64;
-use anyhow::Result;
+use selium_std::errors::Result;
 use async_trait::async_trait;
 
 /// Provides an `open` method for [StreamBuilder](crate::StreamBuilder) implementations to

@@ -5,13 +5,13 @@ pub use backoff_strategy::*;
 pub(crate) use connection_status::*;
 
 use crate::{traits::KeepAliveStream, Publisher};
-use anyhow::{anyhow, Result};
+use selium_std::errors::{Result, SeliumError};
 use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use selium_std::traits::codec::MessageEncoder;
 use std::{
     marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll}, io,
 };
 
 pub struct KeepAlive<T, Item> {
@@ -82,14 +82,18 @@ where
         }
     }
 
-    // TODO: This needs to match on explicit RecvStream errors
-    fn is_stream_disconnected(&self, result: &Result<Item>) -> bool {
-        result.is_err()
+    fn is_disconnect_error(err: &io::Error) -> bool {
+        matches!(err.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::NotConnected)
     }
 
-    // TODO: This needs to match on explicit SendStream errors
-    fn is_sink_disconnected(&self, result: &Poll<Result<()>>) -> bool {
-        matches!(result, Poll::Ready(Err(_)))
+    fn is_stream_disconnected(result: &Result<Item>) -> bool {
+        matches!(result,
+            Err(SeliumError::IoError(err)) if Self::is_disconnect_error(err))
+    }
+
+    fn is_sink_disconnected(result: &Poll<Result<()>>) -> bool {
+        matches!(result,
+            Poll::Ready(Err(SeliumError::IoError(err))) if Self::is_disconnect_error(err))
     }
 }
 
@@ -109,17 +113,17 @@ where
 
 impl<T, Item> Sink<Item> for KeepAlive<T, Item>
 where
-    T: KeepAliveStream + Sink<Item, Error = anyhow::Error> + Send + Unpin,
+    T: KeepAliveStream + Sink<Item, Error = SeliumError> + Send + Unpin,
     Item: Clone + Unpin + Send,
 {
-    type Error = anyhow::Error;
+    type Error = SeliumError;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         match self.status {
             ConnectionStatus::Connected => {
                 let result = self.stream.poll_ready_unpin(cx);
 
-                if self.is_sink_disconnected(&result) {
+                if Self::is_sink_disconnected(&result) {
                     self.on_disconnect(cx);
                     Poll::Pending
                 } else {
@@ -130,20 +134,20 @@ where
                 self.poll_reconnect(cx);
                 Poll::Pending
             }
-            ConnectionStatus::Exhausted => Poll::Ready(Err(anyhow!("Too many retries!"))),
+            ConnectionStatus::Exhausted => Poll::Ready(Err(SeliumError::TooManyRetries)),
         }
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
         self.stream.start_send_unpin(item)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         match self.status {
             ConnectionStatus::Connected => {
                 let result = self.stream.poll_flush_unpin(cx);
 
-                if self.is_sink_disconnected(&result) {
+                if Self::is_sink_disconnected(&result) {
                     self.on_disconnect(cx);
                     Poll::Pending
                 } else {
@@ -158,7 +162,7 @@ where
         }
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         match self.status {
             ConnectionStatus::Connected => {
                 let result = self.stream.poll_close_unpin(cx);
@@ -170,7 +174,7 @@ where
                 result
             }
             ConnectionStatus::Disconnected(_) => Poll::Pending,
-            ConnectionStatus::Exhausted => Poll::Ready(Err(anyhow!("Too many retries!"))),
+            ConnectionStatus::Exhausted => Poll::Ready(Err(SeliumError::TooManyRetries)),
         }
     }
 }
@@ -188,7 +192,7 @@ where
                 let result = ready!(self.stream.poll_next_unpin(cx));
 
                 if let Some(result) = result {
-                    if self.is_stream_disconnected(&result) {
+                    if Self::is_stream_disconnected(&result) {
                         self.on_disconnect(cx);
                         Poll::Pending
                     } else {
@@ -203,7 +207,7 @@ where
                 self.poll_reconnect(cx);
                 Poll::Pending
             }
-            ConnectionStatus::Exhausted => Poll::Ready(Some(Err(anyhow!("Too many retries!")))),
+            ConnectionStatus::Exhausted => Poll::Ready(Some(Err(SeliumError::TooManyRetries))),
         }
     }
 
@@ -211,3 +215,6 @@ where
         self.stream.size_hint()
     }
 }
+
+
+

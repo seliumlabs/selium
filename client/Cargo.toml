@@ -27,20 +27,18 @@ quinn = "0.10"
 rustls = "0.21"
 rustls-pemfile = "1.0"
 selium-protocol = { version = "0.1", path = "../protocol" }
-selium-std = { version = "0.1", optional = true, path = "../standard" }
+selium-std = { version = "0.1", path = "../standard" }
 tokio = { version = "1.33", features = ["full"] }
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = "0.8"
 serde = "1.0"
 
 [features]
 chrono = ["dep:chrono"]
 std-compression = ["selium-std/compression"]
-std-traits = ["selium-std/traits"]
 std-codec = ["selium-std/codec"]
-std = ["std-compression", "std-codec", "std-traits"]
-default = ["std-traits"]
+std = ["std-compression", "std-codec"]
 
 [[example]]
 name = "publish"

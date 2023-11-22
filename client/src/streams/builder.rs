@@ -1,6 +1,6 @@
 use crate::{connection::SharedConnection, keep_alive::BackoffStrategy, traits::TryIntoU64};
-use anyhow::Result;
 use selium_protocol::Operation;
+use selium_std::errors::Result;
 
 /// The default `retention_policy` setting for messages.
 pub const RETENTION_POLICY_DEFAULT: u64 = 0;

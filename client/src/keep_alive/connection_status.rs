@@ -1,5 +1,5 @@
 use super::BackoffStrategy;
-use anyhow::Result;
+use selium_std::errors::Result;
 use futures::Future;
 use selium_protocol::BiStream;
 use std::pin::Pin;

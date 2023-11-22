@@ -1,6 +1,6 @@
 use crate::Operation;
-use anyhow::{bail, Result};
 use bytes::{BufMut, Bytes, BytesMut};
+use selium_std::errors::SeliumError;
 use serde::{Deserialize, Serialize};
 
 const REGISTER_PUBLISHER: u8 = 0x0;
@@ -17,7 +17,7 @@ pub enum Frame {
 }
 
 impl Frame {
-    pub fn get_length(&self) -> Result<u64> {
+    pub fn get_length(&self) -> Result<u64, SeliumError> {
         let length = match self {
             Self::RegisterPublisher(payload) => bincode::serialized_size(payload)?,
             Self::RegisterSubscriber(payload) => bincode::serialized_size(payload)?,
@@ -46,7 +46,7 @@ impl Frame {
         }
     }
 
-    pub fn write_to_bytes(self, dst: &mut BytesMut) -> Result<()> {
+    pub fn write_to_bytes(self, dst: &mut BytesMut) -> Result<(), SeliumError> {
         match self {
             Frame::RegisterPublisher(payload) => bincode::serialize_into(dst.writer(), &payload)?,
             Frame::RegisterSubscriber(payload) => bincode::serialize_into(dst.writer(), &payload)?,
@@ -59,15 +59,15 @@ impl Frame {
 }
 
 impl TryFrom<(u8, BytesMut)> for Frame {
-    type Error = anyhow::Error;
+    type Error = SeliumError;
 
-    fn try_from((message_type, bytes): (u8, BytesMut)) -> Result<Self> {
+    fn try_from((message_type, bytes): (u8, BytesMut)) -> Result<Self, Self::Error> {
         let frame = match message_type {
             REGISTER_PUBLISHER => Frame::RegisterPublisher(bincode::deserialize(&bytes)?),
             REGISTER_SUBSCRIBER => Frame::RegisterSubscriber(bincode::deserialize(&bytes)?),
             MESSAGE => Frame::Message(bytes.into()),
             BATCH_MESSAGE => Frame::BatchMessage(bytes.into()),
-            _ => bail!("Unknown message type"),
+            _type => return Err(SeliumError::UnknownMessageType(_type)),
         };
 
         Ok(frame)

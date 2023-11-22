@@ -3,7 +3,7 @@ use crate::crypto::cert::{load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
 use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsDecoder};
-use anyhow::Result;
+use selium_std::errors::Result;
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use std::path::Path;
 use std::sync::Arc;

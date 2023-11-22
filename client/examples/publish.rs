@@ -1,4 +1,7 @@
+use std::time::Duration;
+
 use anyhow::Result;
+use futures::future::join_all;
 use futures::SinkExt;
 use selium::prelude::*;
 use selium::std::codecs::StringCodec;
@@ -15,14 +18,27 @@ async fn main() -> Result<()> {
         .connect("127.0.0.1:7001")
         .await?;
 
-    let mut publisher = connection
-        .publisher("/acmeco/stocks")
-        .with_encoder(StringCodec)
-        .open()
-        .await?;
+    let mut tasks = vec![];
 
-    publisher.send("Hello, world!".to_owned()).await?;
-    publisher.finish().await?;
+    for _ in 0..1 {
+        let mut publisher = connection
+            .publisher("/acmeco/stocks")
+            .with_encoder(StringCodec)
+            .open()
+            .await?;
+
+        let task = tokio::spawn(async move {
+            for i in 0..100 {
+                let message = format!("Hello - {i}");
+                publisher.send(message).await.unwrap();
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        tasks.push(task);
+    }
+
+    join_all(tasks).await;
 
     Ok(())
 }

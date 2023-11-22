@@ -3,20 +3,20 @@ use crate::batching::{BatchConfig, MessageBatch};
 use crate::connection::{ClientConnection, SharedConnection};
 use crate::keep_alive::{AttemptFut, BackoffStrategy, KeepAlive};
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
-use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Sink, SinkExt};
 use selium_protocol::utils::encode_message_batch;
 use selium_protocol::{BiStream, Frame, PublisherPayload};
+use selium_std::errors::{SeliumError, Result};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
-use tokio::sync::MutexGuard;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
+use tokio::sync::MutexGuard;
 
 type Comp = Arc<dyn Compress + Send + Sync>;
 
@@ -159,7 +159,6 @@ pub struct Publisher<E, Item> {
     compression: Option<Comp>,
     batch: Option<MessageBatch>,
     batch_config: Option<BatchConfig>,
-    buffer: Option<Item>,
     _marker: PhantomData<Item>,
 }
 
@@ -188,7 +187,6 @@ where
             compression,
             batch,
             batch_config,
-            buffer: None,
             backoff_strategy: backoff_strategy.clone(),
             _marker: PhantomData,
         };
@@ -254,10 +252,11 @@ where
 
     fn send_single(&mut self, mut bytes: Bytes) -> Result<()> {
         if let Some(comp) = &self.compression {
-            bytes = comp.compress(bytes)?;
+            bytes = comp.compress(bytes).map_err(|_| SeliumError::CompressionFailure)?;
         }
 
-        self.stream.start_send_unpin(Frame::Message(bytes))
+        let frame = Frame::Message(bytes);
+        self.stream.start_send_unpin(frame)
     }
 
     fn send_batch(&mut self, now: Instant) -> Result<()> {
@@ -267,7 +266,7 @@ where
         let mut bytes = encode_message_batch(messages);
 
         if let Some(comp) = &self.compression {
-            bytes = comp.compress(bytes)?;
+            bytes = comp.compress(bytes).map_err(|_| SeliumError::CompressionFailure)?;
         }
 
         let frame = Frame::BatchMessage(bytes);
@@ -293,7 +292,7 @@ where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
     Item: Unpin + Send,
 {
-    type Error = anyhow::Error;
+    type Error = SeliumError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
         if let Some(batch) = self.batch.as_ref() {
@@ -310,7 +309,7 @@ where
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
-        let bytes = self.encoder.encode(item)?;
+        let bytes = self.encoder.encode(item).map_err(|_| SeliumError::EncodeFailure)?;
 
         if let Some(batch) = self.batch.as_mut() {
             batch.push(bytes);

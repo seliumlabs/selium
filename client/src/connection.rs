@@ -1,5 +1,5 @@
 use crate::utils::net::get_socket_addrs;
-use anyhow::Result;
+use selium_std::errors::{Result, SeliumError};
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use std::sync::Arc;
@@ -7,6 +7,7 @@ use std::{net::SocketAddr, time::Duration};
 use tokio::sync::Mutex;
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
+const ENDPOINT_ADDRESS: &'static str = "[::]:0";
 
 pub type SharedConnection = Arc<Mutex<ClientConnection>>;
 
@@ -88,7 +89,11 @@ fn configure_client(options: ConnectionOptions) -> ClientConfig {
 }
 
 async fn connect_to_endpoint(addr: SocketAddr, config: ClientConfig) -> Result<Connection> {
-    let mut endpoint = Endpoint::client("[::]:0".parse()?)?;
+    let endpoint_addr = ENDPOINT_ADDRESS
+        .parse::<SocketAddr>()
+        .map_err(|err| SeliumError::ParseEndpointAddressError(err))?;
+
+    let mut endpoint = Endpoint::client(endpoint_addr)?;
     endpoint.set_default_client_config(config);
     let connection = endpoint.connect(addr, "localhost")?.await?;
 
