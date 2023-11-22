@@ -28,7 +28,7 @@ rustls = "0.21"
 rustls-pemfile = "1.0"
 selium-protocol = { version = "0.1", path = "../protocol" }
 selium-std = { version = "0.1", path = "../standard" }
-tokio = { version = "1.33", features = ["full"] }
+tokio = { version = "1.34", features = ["full"] }
 
 [dev-dependencies]
 rand = "0.8"
