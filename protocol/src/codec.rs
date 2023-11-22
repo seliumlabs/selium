@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn fails_to_encode_if_payload_too_large() {
-        const PAYLOAD: [u8; MAX_MESSAGE_SIZE + 1] = [0u8; MAX_MESSAGE_SIZE + 1];
+        const PAYLOAD: [u8; MAX_MESSAGE_SIZE as usize + 1] = [0u8; MAX_MESSAGE_SIZE as usize + 1];
 
         let frame = Frame::Message(Bytes::from_static(&PAYLOAD));
         let mut codec = MessageCodec;
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn fails_to_decode_if_payload_too_large() {
-        const PAYLOAD: [u8; MAX_MESSAGE_SIZE as usize + 1] = [0u8; MAX_MESSAGE_SIZE + 1];
+        const PAYLOAD: [u8; MAX_MESSAGE_SIZE as usize + 1] = [0u8; MAX_MESSAGE_SIZE as usize + 1];
 
         let mut codec = MessageCodec;
         let mut src = BytesMut::from(&PAYLOAD[..]);
