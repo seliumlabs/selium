@@ -1,29 +1,35 @@
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use selium_std::errors::{Result, SeliumError};
-use std::{fs, path::Path};
+use std::{fs, io, path::Path};
 
 pub type KeyPair = (Vec<Certificate>, PrivateKey);
 
 fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
     let path = path.as_ref();
-    let key =
-        fs::read(path).map_err(|_| SeliumError::InvalidKeys("failed to read private key."))?;
+    let key = fs::read(path)
+        .map_err(|err| SeliumError::InvalidKeys("failed to read private key.", err))?;
     let key = if path.extension().map_or(false, |x| x == "der") {
         PrivateKey(key)
     } else {
         let pkcs8 = pkcs8_private_keys(&mut &*key)
-            .map_err(|_| SeliumError::InvalidKeys("malformed PKCS #8 private key."))?;
+            .map_err(|err| SeliumError::InvalidKeys("malformed PKCS #8 private key.", err))?;
 
         match pkcs8.into_iter().next() {
             Some(x) => PrivateKey(x),
             None => {
-                let rsa = rsa_private_keys(&mut &*key)
-                    .map_err(|_| SeliumError::InvalidKeys("malformed PKCS #1 private key."))?;
+                let rsa = rsa_private_keys(&mut &*key).map_err(|err| {
+                    SeliumError::InvalidKeys("malformed PKCS #1 private key.", err)
+                })?;
                 match rsa.into_iter().next() {
                     Some(x) => PrivateKey(x),
                     None => {
-                        return Err(SeliumError::InvalidKeys("no private keys found in file."));
+                        let message = "no private keys found in file.";
+
+                        return Err(SeliumError::InvalidKeys(
+                            message,
+                            io::Error::new(io::ErrorKind::UnexpectedEof, message),
+                        ));
                     }
                 }
             }
@@ -37,13 +43,13 @@ fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
     let path = path.as_ref();
 
     let cert_chain = fs::read(path)
-        .map_err(|_| SeliumError::InvalidCerts("failed to read certificate chain."))?;
+        .map_err(|err| SeliumError::InvalidCerts("failed to read certificate chain.", err))?;
 
     let cert_chain = if path.extension().map_or(false, |x| x == "der") {
         vec![Certificate(cert_chain)]
     } else {
         certs(&mut &*cert_chain)
-            .map_err(|_| SeliumError::InvalidCerts("invalid PEM-encoded certificate."))?
+            .map_err(|err| SeliumError::InvalidCerts("invalid PEM-encoded certificate.", err))?
             .into_iter()
             .map(Certificate)
             .collect()

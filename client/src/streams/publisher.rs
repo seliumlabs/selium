@@ -298,7 +298,7 @@ where
 {
     type Error = SeliumError;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         if let Some(batch) = self.batch.as_ref() {
             let now = Instant::now();
 
@@ -312,7 +312,7 @@ where
         self.stream.poll_ready_unpin(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
+    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         let bytes = self
             .encoder
             .encode(item)
@@ -326,11 +326,11 @@ where
         }
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.stream.poll_flush_unpin(cx)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.stream.poll_close_unpin(cx)
     }
 }

@@ -1,6 +1,6 @@
 use crate::Operation;
 use bytes::{BufMut, Bytes, BytesMut};
-use selium_std::errors::SeliumError;
+use selium_std::errors::{Result, SeliumError};
 use serde::{Deserialize, Serialize};
 
 const REGISTER_PUBLISHER: u8 = 0x0;
@@ -17,7 +17,7 @@ pub enum Frame {
 }
 
 impl Frame {
-    pub fn get_length(&self) -> Result<u64, SeliumError> {
+    pub fn get_length(&self) -> Result<u64> {
         let length = match self {
             Self::RegisterPublisher(payload) => bincode::serialized_size(payload)?,
             Self::RegisterSubscriber(payload) => bincode::serialized_size(payload)?,
@@ -46,7 +46,7 @@ impl Frame {
         }
     }
 
-    pub fn write_to_bytes(self, dst: &mut BytesMut) -> Result<(), SeliumError> {
+    pub fn write_to_bytes(self, dst: &mut BytesMut) -> Result<()> {
         match self {
             Frame::RegisterPublisher(payload) => bincode::serialize_into(dst.writer(), &payload)?,
             Frame::RegisterSubscriber(payload) => bincode::serialize_into(dst.writer(), &payload)?,

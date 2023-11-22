@@ -118,11 +118,11 @@ where
 impl<T, Item> Sink<Item> for KeepAlive<T, Item>
 where
     T: KeepAliveStream + Sink<Item, Error = SeliumError> + Send + Unpin,
-    Item: Clone + Unpin + Send,
+    Item: Unpin + Send,
 {
     type Error = SeliumError;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.status {
             ConnectionStatus::Connected => {
                 let result = self.stream.poll_ready_unpin(cx);
@@ -142,11 +142,11 @@ where
         }
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
+    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         self.stream.start_send_unpin(item)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.status {
             ConnectionStatus::Connected => {
                 let result = self.stream.poll_flush_unpin(cx);
@@ -166,7 +166,7 @@ where
         }
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self.status {
             ConnectionStatus::Connected => {
                 let result = self.stream.poll_close_unpin(cx);

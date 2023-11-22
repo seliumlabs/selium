@@ -2,7 +2,7 @@ use quinn::{ConnectError, ConnectionError, WriteError};
 use std::net::AddrParseError;
 use thiserror::Error;
 
-pub type Result<T> = std::result::Result<T, SeliumError>;
+pub type Result<T, E = SeliumError> = std::result::Result<T, E>;
 
 #[derive(Error, Debug)]
 pub enum SeliumError {
@@ -36,11 +36,11 @@ pub enum SeliumError {
     #[error("Failed to serialize/deserialize message on protocol.")]
     ProtocolSerdeError(#[from] bincode::Error),
 
-    #[error("Failed to load keys from file: {0}")]
-    InvalidKeys(&'static str),
+    #[error("Failed to parse valid keys from file: {0}")]
+    InvalidKeys(&'static str, #[source] std::io::Error),
 
     #[error("Failed to load certs from file: {0}")]
-    InvalidCerts(&'static str),
+    InvalidCerts(&'static str, #[source] std::io::Error),
 
     #[error("No valid root cert found in file.")]
     InvalidRootCert,
@@ -57,6 +57,6 @@ pub enum SeliumError {
     #[error("Failed to parse millis from duration.")]
     ParseDurationMillis,
 
-    #[error("Unexpected IO error.")]
+    #[error(transparent)]
     IoError(#[from] std::io::Error),
 }

@@ -2,7 +2,7 @@ use crate::traits::{ShutdownSink, ShutdownStream};
 use crate::{error_codes, Frame, MessageCodec};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};
-use selium_std::errors::{Result, SeliumError};
+use selium_std::errors::{SeliumError, Result};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -55,25 +55,25 @@ impl From<(SendStream, RecvStream)> for BiStream {
 impl Sink<Frame> for BiStream {
     type Error = SeliumError;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.write.poll_ready_unpin(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<()> {
+    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         self.write.start_send_unpin(item)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.write.poll_flush_unpin(cx)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.write.poll_close_unpin(cx)
     }
 }
 
 impl Stream for BiStream {
-    type Item = Result<Frame>;
+    type Item = Result<Frame, SeliumError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.read.poll_next_unpin(cx)
