@@ -1,13 +1,14 @@
 use crate::traits::{ShutdownSink, ShutdownStream};
-use selium_std::errors::{Result, SeliumError};
 use crate::{error_codes, Frame, MessageCodec};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};
+use selium_std::errors::{Result, SeliumError};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-pub type ReadStream = FramedRead<RecvStream, MessageCodec>; pub type WriteStream = FramedWrite<SendStream, MessageCodec>;
+pub type ReadStream = FramedRead<RecvStream, MessageCodec>;
+pub type WriteStream = FramedWrite<SendStream, MessageCodec>;
 
 pub struct BiStream {
     write: WriteStream,

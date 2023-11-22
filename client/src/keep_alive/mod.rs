@@ -5,13 +5,14 @@ pub use backoff_strategy::*;
 pub(crate) use connection_status::*;
 
 use crate::{traits::KeepAliveStream, Publisher};
-use selium_std::errors::{Result, SeliumError};
 use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
+use selium_std::errors::{Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use std::{
+    io,
     marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll}, io,
+    task::{Context, Poll},
 };
 
 pub struct KeepAlive<T, Item> {
@@ -83,7 +84,10 @@ where
     }
 
     fn is_disconnect_error(err: &io::Error) -> bool {
-        matches!(err.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::NotConnected)
+        matches!(
+            err.kind(),
+            io::ErrorKind::ConnectionReset | io::ErrorKind::NotConnected
+        )
     }
 
     fn is_stream_disconnected(result: &Result<Item>) -> bool {
@@ -215,6 +219,3 @@ where
         self.stream.size_hint()
     }
 }
-
-
-

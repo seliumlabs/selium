@@ -7,8 +7,8 @@ pub type KeyPair = (Vec<Certificate>, PrivateKey);
 
 fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
     let path = path.as_ref();
-    let key = fs::read(path)
-        .map_err(|_| SeliumError::InvalidKeys("failed to read private key."))?;
+    let key =
+        fs::read(path).map_err(|_| SeliumError::InvalidKeys("failed to read private key."))?;
     let key = if path.extension().map_or(false, |x| x == "der") {
         PrivateKey(key)
     } else {
@@ -18,9 +18,8 @@ fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
         match pkcs8.into_iter().next() {
             Some(x) => PrivateKey(x),
             None => {
-                let rsa = rsa_private_keys(&mut &*key).map_err(|_| {
-                    SeliumError::InvalidKeys("malformed PKCS #1 private key.")
-                })?;
+                let rsa = rsa_private_keys(&mut &*key)
+                    .map_err(|_| SeliumError::InvalidKeys("malformed PKCS #1 private key."))?;
                 match rsa.into_iter().next() {
                     Some(x) => PrivateKey(x),
                     None => {

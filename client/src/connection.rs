@@ -1,7 +1,7 @@
 use crate::utils::net::get_socket_addrs;
-use selium_std::errors::{Result, SeliumError};
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::{Certificate, PrivateKey, RootCertStore};
+use selium_std::errors::{Result, SeliumError};
 use std::sync::Arc;
 use std::{net::SocketAddr, time::Duration};
 use tokio::sync::Mutex;

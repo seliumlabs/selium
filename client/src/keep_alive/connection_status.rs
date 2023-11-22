@@ -1,7 +1,7 @@
 use super::BackoffStrategy;
-use selium_std::errors::Result;
 use futures::Future;
 use selium_protocol::BiStream;
+use selium_std::errors::Result;
 use std::pin::Pin;
 use std::time::Duration;
 

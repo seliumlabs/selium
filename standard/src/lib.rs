@@ -27,5 +27,5 @@ pub mod codecs;
 #[cfg(feature = "compression")]
 pub mod compression;
 
-pub mod traits;
 pub mod errors;
+pub mod traits;

@@ -2,12 +2,12 @@ use crate::connection::{ClientConnection, SharedConnection};
 use crate::keep_alive::{AttemptFut, BackoffStrategy, KeepAlive};
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use crate::{StreamBuilder, StreamCommon};
-use selium_std::errors::{Result, SeliumError};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, Stream, StreamExt};
 use selium_protocol::utils::decode_message_batch;
 use selium_protocol::{BiStream, Frame, SubscriberPayload};
+use selium_std::errors::{Result, SeliumError};
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
 use std::marker::PhantomData;
@@ -179,7 +179,10 @@ where
         let mut mut_bytes = BytesMut::with_capacity(bytes.len());
         mut_bytes.extend_from_slice(&bytes);
 
-        let decoded = self.decoder.decode(&mut mut_bytes).map_err(|_| SeliumError::DecodeFailure)?;
+        let decoded = self
+            .decoder
+            .decode(&mut mut_bytes)
+            .map_err(|_| SeliumError::DecodeFailure)?;
         Poll::Ready(Some(Ok(decoded)))
     }
 }
@@ -209,7 +212,9 @@ where
             // immediately.
             Frame::Message(mut bytes) => {
                 if let Some(decomp) = &self.decompression {
-                    bytes = decomp.decompress(bytes).map_err(|_| SeliumError::DecompressionFailure)?;
+                    bytes = decomp
+                        .decompress(bytes)
+                        .map_err(|_| SeliumError::DecompressionFailure)?;
                 }
 
                 self.decode_message(bytes)
@@ -218,7 +223,9 @@ where
             // again to begin popping off messages.
             Frame::BatchMessage(mut bytes) => {
                 if let Some(decomp) = &self.decompression {
-                    bytes = decomp.decompress(bytes).map_err(|_| SeliumError::DecompressionFailure)?;
+                    bytes = decomp
+                        .decompress(bytes)
+                        .map_err(|_| SeliumError::DecompressionFailure)?;
                 }
 
                 let batch = decode_message_batch(bytes);
