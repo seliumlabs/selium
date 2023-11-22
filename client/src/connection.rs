@@ -7,7 +7,7 @@ use std::{net::SocketAddr, time::Duration};
 use tokio::sync::Mutex;
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
-const ENDPOINT_ADDRESS: &'static str = "[::]:0";
+const ENDPOINT_ADDRESS: &str = "[::]:0";
 
 pub type SharedConnection = Arc<Mutex<ClientConnection>>;
 
@@ -91,7 +91,7 @@ fn configure_client(options: ConnectionOptions) -> ClientConfig {
 async fn connect_to_endpoint(addr: SocketAddr, config: ClientConfig) -> Result<Connection> {
     let endpoint_addr = ENDPOINT_ADDRESS
         .parse::<SocketAddr>()
-        .map_err(|err| SeliumError::ParseEndpointAddressError(err))?;
+        .map_err(SeliumError::ParseEndpointAddressError)?;
 
     let mut endpoint = Endpoint::client(endpoint_addr)?;
     endpoint.set_default_client_config(config);
