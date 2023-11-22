@@ -2,7 +2,7 @@ use crate::traits::{ShutdownSink, ShutdownStream};
 use crate::{error_codes, Frame, MessageCodec};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};
-use selium_std::errors::{SeliumError, Result};
+use selium_std::errors::{Result, SeliumError};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::codec::{FramedRead, FramedWrite};
