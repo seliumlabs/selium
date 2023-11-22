@@ -19,11 +19,13 @@
 //!
 //! - `compression`: Enables all compression implementations.
 //! - `codec`: Enables all client codec implementations.
-//! - `traits`: Enabled all traits. Enabled by default.
+//! - `traits`: Enables all traits. Enabled by default.
+//! - `errors`: Enables all errors. Enabled by default.
 
 #[cfg(feature = "codec")]
 pub mod codecs;
 #[cfg(feature = "compression")]
 pub mod compression;
-#[cfg(feature = "traits")]
+
 pub mod traits;
+pub mod errors;

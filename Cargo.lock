@@ -1313,6 +1313,7 @@ dependencies = [
  "bytes",
  "futures",
  "quinn",
+ "selium-std",
  "serde",
  "tokio-util",
 ]
@@ -1354,7 +1355,9 @@ dependencies = [
  "fake",
  "flate2",
  "lz4_flex",
+ "quinn",
  "serde",
+ "thiserror",
  "zstd",
 ]
 
