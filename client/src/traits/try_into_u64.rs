@@ -39,8 +39,6 @@ impl TryIntoU64 for chrono::Duration {
     /// Because the [num_milliseconds](chrono::Duration::num_milliseconds) method
     /// returns an [i64], this conversion may fail due to negative values.
     fn try_into_u64(self) -> Result<u64> {
-        use anyhow::Context;
-
         self.num_milliseconds()
             .try_into()
             .map_err(|_| SeliumError::ParseDurationMillis)
