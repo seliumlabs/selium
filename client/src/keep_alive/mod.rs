@@ -6,7 +6,7 @@ pub(crate) use connection_status::*;
 
 use crate::{traits::KeepAliveStream, Publisher};
 use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
-use selium_std::errors::{Result, SeliumError};
+use selium_std::errors::{QuicError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use std::{
     io,
@@ -138,7 +138,7 @@ where
                 self.poll_reconnect(cx);
                 Poll::Pending
             }
-            ConnectionStatus::Exhausted => Poll::Ready(Err(SeliumError::TooManyRetries)),
+            ConnectionStatus::Exhausted => Poll::Ready(Err(QuicError::TooManyRetries)?),
         }
     }
 
@@ -178,7 +178,7 @@ where
                 result
             }
             ConnectionStatus::Disconnected(_) => Poll::Pending,
-            ConnectionStatus::Exhausted => Poll::Ready(Err(SeliumError::TooManyRetries)),
+            ConnectionStatus::Exhausted => Poll::Ready(Err(QuicError::TooManyRetries)?),
         }
     }
 }
@@ -211,7 +211,7 @@ where
                 self.poll_reconnect(cx);
                 Poll::Pending
             }
-            ConnectionStatus::Exhausted => Poll::Ready(Some(Err(SeliumError::TooManyRetries))),
+            ConnectionStatus::Exhausted => Poll::Ready(Some(Err(QuicError::TooManyRetries)?)),
         }
     }
 

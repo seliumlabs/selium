@@ -1,7 +1,7 @@
 use crate::utils::net::get_socket_addrs;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::{Certificate, PrivateKey, RootCertStore};
-use selium_std::errors::{Result, SeliumError};
+use selium_std::errors::{ParseEndpointAddressError, QuicError, Result};
 use std::sync::Arc;
 use std::{net::SocketAddr, time::Duration};
 use tokio::sync::Mutex;
@@ -37,19 +37,19 @@ impl ConnectionOptions {
 
 #[derive(Debug, Clone)]
 pub struct ClientConnection {
-    host: SocketAddr,
+    addr: SocketAddr,
     connection: Connection,
     client_config: ClientConfig,
 }
 
 impl ClientConnection {
-    pub async fn connect(host: &str, options: ConnectionOptions) -> Result<Self> {
+    pub async fn connect(addr: &str, options: ConnectionOptions) -> Result<Self> {
         let client_config = configure_client(options);
-        let host = get_socket_addrs(host)?;
-        let connection = connect_to_endpoint(host, client_config.clone()).await?;
+        let addr = get_socket_addrs(addr)?;
+        let connection = connect_to_endpoint(addr, client_config.clone()).await?;
 
         Ok(Self {
-            host,
+            addr,
             connection,
             client_config,
         })
@@ -61,7 +61,7 @@ impl ClientConnection {
 
     pub async fn reconnect(&mut self) -> Result<()> {
         if self.connection.close_reason().is_some() {
-            let connection = connect_to_endpoint(self.host, self.client_config.clone()).await?;
+            let connection = connect_to_endpoint(self.addr, self.client_config.clone()).await?;
             self.connection = connection;
         }
 
@@ -91,11 +91,15 @@ fn configure_client(options: ConnectionOptions) -> ClientConfig {
 async fn connect_to_endpoint(addr: SocketAddr, config: ClientConfig) -> Result<Connection> {
     let endpoint_addr = ENDPOINT_ADDRESS
         .parse::<SocketAddr>()
-        .map_err(SeliumError::ParseEndpointAddressError)?;
+        .map_err(ParseEndpointAddressError::InvalidAddress)?;
 
     let mut endpoint = Endpoint::client(endpoint_addr)?;
     endpoint.set_default_client_config(config);
-    let connection = endpoint.connect(addr, "localhost")?.await?;
+    let connection = endpoint
+        .connect(addr, "localhost")
+        .map_err(QuicError::ConnectError)?
+        .await
+        .map_err(QuicError::ConnectionError)?;
 
     Ok(connection)
 }

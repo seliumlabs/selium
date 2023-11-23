@@ -7,7 +7,7 @@ use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, Stream, StreamExt};
 use selium_protocol::utils::decode_message_batch;
 use selium_protocol::{BiStream, Frame, SubscriberPayload};
-use selium_std::errors::{Result, SeliumError};
+use selium_std::errors::{CodecError, Result};
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
 use std::marker::PhantomData;
@@ -182,7 +182,7 @@ where
         let decoded = self
             .decoder
             .decode(&mut mut_bytes)
-            .map_err(|_| SeliumError::DecodeFailure)?;
+            .map_err(CodecError::DecodeFailure)?;
         Poll::Ready(Some(Ok(decoded)))
     }
 }
@@ -214,7 +214,7 @@ where
                 if let Some(decomp) = &self.decompression {
                     bytes = decomp
                         .decompress(bytes)
-                        .map_err(|_| SeliumError::DecompressionFailure)?;
+                        .map_err(CodecError::DecompressFailure)?;
                 }
 
                 self.decode_message(bytes)
@@ -225,7 +225,7 @@ where
                 if let Some(decomp) = &self.decompression {
                     bytes = decomp
                         .decompress(bytes)
-                        .map_err(|_| SeliumError::DecompressionFailure)?;
+                        .map_err(CodecError::DecompressFailure)?;
                 }
 
                 let batch = decode_message_batch(bytes);

@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::{Sink, SinkExt};
 use selium_protocol::utils::encode_message_batch;
 use selium_protocol::{BiStream, Frame, PublisherPayload};
-use selium_std::errors::{Result, SeliumError};
+use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
@@ -252,9 +252,7 @@ where
 
     fn send_single(&mut self, mut bytes: Bytes) -> Result<()> {
         if let Some(comp) = &self.compression {
-            bytes = comp
-                .compress(bytes)
-                .map_err(|_| SeliumError::CompressionFailure)?;
+            bytes = comp.compress(bytes).map_err(CodecError::CompressFailure)?;
         }
 
         let frame = Frame::Message(bytes);
@@ -268,9 +266,7 @@ where
         let mut bytes = encode_message_batch(messages);
 
         if let Some(comp) = &self.compression {
-            bytes = comp
-                .compress(bytes)
-                .map_err(|_| SeliumError::CompressionFailure)?;
+            bytes = comp.compress(bytes).map_err(CodecError::CompressFailure)?;
         }
 
         let frame = Frame::BatchMessage(bytes);
@@ -316,7 +312,7 @@ where
         let bytes = self
             .encoder
             .encode(item)
-            .map_err(|_| SeliumError::EncodeFailure)?;
+            .map_err(CodecError::EncodeFailure)?;
 
         if let Some(batch) = self.batch.as_mut() {
             batch.push(bytes);

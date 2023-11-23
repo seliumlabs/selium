@@ -2,7 +2,7 @@ use crate::traits::{ShutdownSink, ShutdownStream};
 use crate::{error_codes, Frame, MessageCodec};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};
-use selium_std::errors::{Result, SeliumError};
+use selium_std::errors::{QuicError, Result, SeliumError};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -17,7 +17,10 @@ pub struct BiStream {
 
 impl BiStream {
     pub async fn try_from_connection(connection: &Connection) -> Result<Self> {
-        let stream = connection.open_bi().await?;
+        let stream = connection
+            .open_bi()
+            .await
+            .map_err(QuicError::ConnectionError)?;
         Ok(Self::from(stream))
     }
 
@@ -38,7 +41,11 @@ impl BiStream {
     }
 
     pub async fn finish(&mut self) -> Result<()> {
-        self.write.get_mut().finish().await?;
+        self.write
+            .get_mut()
+            .finish()
+            .await
+            .map_err(QuicError::WriteError)?;
         Ok(())
     }
 }

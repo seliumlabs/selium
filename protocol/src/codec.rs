@@ -1,7 +1,7 @@
 use crate::Frame;
 use anyhow::Result;
 use bytes::{Buf, BufMut, BytesMut};
-use selium_std::errors::SeliumError;
+use selium_std::errors::{ProtocolError, SeliumError};
 use std::mem::size_of;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -65,7 +65,7 @@ impl Decoder for MessageCodec {
 
 fn validate_payload_length(length: u64) -> Result<(), SeliumError> {
     if length > MAX_MESSAGE_SIZE {
-        Err(SeliumError::PayloadTooLarge(length, MAX_MESSAGE_SIZE))
+        Err(ProtocolError::PayloadTooLarge(length, MAX_MESSAGE_SIZE))?
     } else {
         Ok(())
     }
