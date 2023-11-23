@@ -1,6 +1,6 @@
 use crate::Operation;
-use anyhow::{bail, Result};
 use bytes::{BufMut, Bytes, BytesMut};
+use selium_std::errors::{ProtocolError, Result, SeliumError};
 use serde::{Deserialize, Serialize};
 
 const REGISTER_PUBLISHER: u8 = 0x0;
@@ -19,8 +19,12 @@ pub enum Frame {
 impl Frame {
     pub fn get_length(&self) -> Result<u64> {
         let length = match self {
-            Self::RegisterPublisher(payload) => bincode::serialized_size(payload)?,
-            Self::RegisterSubscriber(payload) => bincode::serialized_size(payload)?,
+            Self::RegisterPublisher(payload) => {
+                bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
+            }
+            Self::RegisterSubscriber(payload) => {
+                bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
+            }
             Self::Message(bytes) => bytes.len() as u64,
             Self::BatchMessage(bytes) => bytes.len() as u64,
         };
@@ -48,8 +52,10 @@ impl Frame {
 
     pub fn write_to_bytes(self, dst: &mut BytesMut) -> Result<()> {
         match self {
-            Frame::RegisterPublisher(payload) => bincode::serialize_into(dst.writer(), &payload)?,
-            Frame::RegisterSubscriber(payload) => bincode::serialize_into(dst.writer(), &payload)?,
+            Frame::RegisterPublisher(payload) => bincode::serialize_into(dst.writer(), &payload)
+                .map_err(ProtocolError::SerdeError)?,
+            Frame::RegisterSubscriber(payload) => bincode::serialize_into(dst.writer(), &payload)
+                .map_err(ProtocolError::SerdeError)?,
             Frame::Message(bytes) => dst.extend_from_slice(&bytes),
             Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes),
         }
@@ -59,15 +65,19 @@ impl Frame {
 }
 
 impl TryFrom<(u8, BytesMut)> for Frame {
-    type Error = anyhow::Error;
+    type Error = SeliumError;
 
-    fn try_from((message_type, bytes): (u8, BytesMut)) -> Result<Self> {
+    fn try_from((message_type, bytes): (u8, BytesMut)) -> Result<Self, Self::Error> {
         let frame = match message_type {
-            REGISTER_PUBLISHER => Frame::RegisterPublisher(bincode::deserialize(&bytes)?),
-            REGISTER_SUBSCRIBER => Frame::RegisterSubscriber(bincode::deserialize(&bytes)?),
+            REGISTER_PUBLISHER => Frame::RegisterPublisher(
+                bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
+            ),
+            REGISTER_SUBSCRIBER => Frame::RegisterSubscriber(
+                bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
+            ),
             MESSAGE => Frame::Message(bytes.into()),
             BATCH_MESSAGE => Frame::BatchMessage(bytes.into()),
-            _ => bail!("Unknown message type"),
+            _type => return Err(ProtocolError::UnknownMessageType(_type))?,
         };
 
         Ok(frame)

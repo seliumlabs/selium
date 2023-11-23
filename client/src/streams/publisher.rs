@@ -1,13 +1,14 @@
 use super::builder::{StreamBuilder, StreamCommon};
 use crate::batching::{BatchConfig, MessageBatch};
-use crate::traits::{Open, Operations, Retain, TryIntoU64};
-use anyhow::Result;
+use crate::connection::{ClientConnection, SharedConnection};
+use crate::keep_alive::{AttemptFut, BackoffStrategy, KeepAlive};
+use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Sink, SinkExt};
-use quinn::Connection;
 use selium_protocol::utils::encode_message_batch;
 use selium_protocol::{BiStream, Frame, PublisherPayload};
+use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
@@ -15,6 +16,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
+use tokio::sync::MutexGuard;
 
 type Comp = Arc<dyn Compress + Send + Sync>;
 
@@ -51,6 +53,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
         StreamBuilder {
             state,
             connection: self.connection,
+            backoff_strategy: self.backoff_strategy,
         }
     }
 }
@@ -112,7 +115,7 @@ where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
     Item: Unpin + Send,
 {
-    type Output = Publisher<E, Item>;
+    type Output = KeepAlive<Publisher<E, Item>, Item>;
 
     async fn open(self) -> Result<Self::Output> {
         let headers = PublisherPayload {
@@ -123,6 +126,7 @@ where
 
         let publisher = Publisher::spawn(
             self.connection,
+            self.backoff_strategy,
             headers,
             self.state.encoder,
             self.state.compression,
@@ -147,7 +151,8 @@ where
 /// **Note:** The Publisher struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
 pub struct Publisher<E, Item> {
-    connection: Connection,
+    connection: SharedConnection,
+    backoff_strategy: BackoffStrategy,
     stream: BiStream,
     headers: PublisherPayload,
     encoder: E,
@@ -160,22 +165,21 @@ pub struct Publisher<E, Item> {
 impl<E, Item> Publisher<E, Item>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin,
+    Item: Unpin + Send,
 {
     async fn spawn(
-        connection: Connection,
+        connection: SharedConnection,
+        backoff_strategy: BackoffStrategy,
         headers: PublisherPayload,
         encoder: E,
         compression: Option<Comp>,
         batch_config: Option<BatchConfig>,
-    ) -> Result<Self> {
-        let mut stream = BiStream::try_from_connection(&connection).await?;
+    ) -> Result<KeepAlive<Self, Item>> {
         let batch = batch_config.as_ref().map(|c| MessageBatch::from(c.clone()));
-        let frame = Frame::RegisterPublisher(headers.clone());
+        let lock = connection.lock().await;
+        let stream = Self::open_stream(lock, headers.clone()).await?;
 
-        stream.send(frame).await?;
-
-        Ok(Self {
+        let publisher = Self {
             connection,
             stream,
             headers,
@@ -183,9 +187,11 @@ where
             compression,
             batch,
             batch_config,
-
+            backoff_strategy: backoff_strategy.clone(),
             _marker: PhantomData,
-        })
+        };
+
+        Ok(KeepAlive::new(publisher, backoff_strategy))
     }
 
     /// Spawns a new [Publisher] stream with the same configuration as the current stream, without
@@ -200,9 +206,10 @@ where
     /// # Errors
     ///
     /// Returns [Err] if a new stream cannot be opened on the current client connection.
-    pub async fn duplicate(&self) -> Result<Self> {
+    pub async fn duplicate(&self) -> Result<KeepAlive<Self, Item>> {
         let publisher = Publisher::spawn(
             self.connection.clone(),
+            self.backoff_strategy.clone(),
             self.headers.clone(),
             self.encoder.clone(),
             self.compression.clone(),
@@ -230,12 +237,26 @@ where
         self.stream.finish().await
     }
 
+    async fn open_stream(
+        connection: MutexGuard<'_, ClientConnection>,
+        headers: PublisherPayload,
+    ) -> Result<BiStream> {
+        let mut stream = BiStream::try_from_connection(connection.conn()).await?;
+        drop(connection);
+
+        let frame = Frame::RegisterPublisher(headers);
+        stream.send(frame).await?;
+
+        Ok(stream)
+    }
+
     fn send_single(&mut self, mut bytes: Bytes) -> Result<()> {
         if let Some(comp) = &self.compression {
-            bytes = comp.compress(bytes)?;
+            bytes = comp.compress(bytes).map_err(CodecError::CompressFailure)?;
         }
 
-        self.stream.start_send_unpin(Frame::Message(bytes))
+        let frame = Frame::Message(bytes);
+        self.stream.start_send_unpin(frame)
     }
 
     fn send_batch(&mut self, now: Instant) -> Result<()> {
@@ -245,7 +266,7 @@ where
         let mut bytes = encode_message_batch(messages);
 
         if let Some(comp) = &self.compression {
-            bytes = comp.compress(bytes)?;
+            bytes = comp.compress(bytes).map_err(CodecError::CompressFailure)?;
         }
 
         let frame = Frame::BatchMessage(bytes);
@@ -269,11 +290,11 @@ where
 impl<E, Item> Sink<Item> for Publisher<E, Item>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin,
+    Item: Unpin + Send,
 {
-    type Error = anyhow::Error;
+    type Error = SeliumError;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         if let Some(batch) = self.batch.as_ref() {
             let now = Instant::now();
 
@@ -287,8 +308,11 @@ where
         self.stream.poll_ready_unpin(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<()> {
-        let bytes = self.encoder.encode(item)?;
+    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
+        let bytes = self
+            .encoder
+            .encode(item)
+            .map_err(CodecError::EncodeFailure)?;
 
         if let Some(batch) = self.batch.as_mut() {
             batch.push(bytes);
@@ -298,11 +322,39 @@ where
         }
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.stream.poll_flush_unpin(cx)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.stream.poll_close_unpin(cx)
+    }
+}
+
+impl<E, Item> KeepAliveStream for Publisher<E, Item>
+where
+    E: MessageEncoder<Item> + Clone + Send + Unpin,
+    Item: Unpin + Send,
+{
+    type Headers = PublisherPayload;
+
+    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers) -> AttemptFut {
+        Box::pin(async move {
+            let mut connection = connection.lock().await;
+            connection.reconnect().await?;
+            Self::open_stream(connection, headers).await
+        })
+    }
+
+    fn on_reconnect(&mut self, stream: BiStream) {
+        self.stream = stream;
+    }
+
+    fn get_connection(&self) -> SharedConnection {
+        self.connection.clone()
+    }
+
+    fn get_headers(&self) -> Self::Headers {
+        self.headers.clone()
     }
 }

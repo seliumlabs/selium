@@ -1,27 +1,29 @@
-use anyhow::{bail, Context, Result};
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use selium_std::errors::{CryptoError, Result};
 use std::{fs, path::Path};
 
 pub type KeyPair = (Vec<Certificate>, PrivateKey);
 
 fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
     let path = path.as_ref();
-    let key = fs::read(path).context("failed to read private key")?;
+    let key = fs::read(path).map_err(CryptoError::OpenKeyFileError)?;
     let key = if path.extension().map_or(false, |x| x == "der") {
         PrivateKey(key)
     } else {
-        let pkcs8 = pkcs8_private_keys(&mut &*key).context("malformed PKCS #8 private key")?;
+        let pkcs8 =
+            pkcs8_private_keys(&mut &*key).map_err(CryptoError::MalformedPKCS8PrivateKey)?;
+
         match pkcs8.into_iter().next() {
             Some(x) => PrivateKey(x),
             None => {
-                let rsa = rsa_private_keys(&mut &*key).context("malformed PKCS #1 private key")?;
-                match rsa.into_iter().next() {
-                    Some(x) => PrivateKey(x),
-                    None => {
-                        bail!("no private keys found");
-                    }
-                }
+                let rsa =
+                    rsa_private_keys(&mut &*key).map_err(CryptoError::MalformedPKCS1PrivateKey)?;
+
+                rsa.into_iter()
+                    .next()
+                    .map(PrivateKey)
+                    .ok_or(CryptoError::NoPrivateKeysFound)?
             }
         }
     };
@@ -31,12 +33,12 @@ fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
 
 fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
     let path = path.as_ref();
-    let cert_chain = fs::read(path).context("failed to read certificate chain")?;
+    let cert_chain = fs::read(path).map_err(CryptoError::OpenCertFileError)?;
     let cert_chain = if path.extension().map_or(false, |x| x == "der") {
         vec![Certificate(cert_chain)]
     } else {
         certs(&mut &*cert_chain)
-            .context("invalid PEM-encoded certificate")?
+            .map_err(CryptoError::InvalidPemCertificate)?
             .into_iter()
             .map(Certificate)
             .collect()
@@ -62,7 +64,7 @@ pub(crate) fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStor
     store.add_parsable_certificates(&certs);
 
     if store.is_empty() {
-        bail!("No valid certs found in file {:?}", ca_file);
+        return Err(CryptoError::InvalidRootCert.into());
     }
 
     Ok(store)

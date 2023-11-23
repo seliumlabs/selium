@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    publisher.send("Hello, world!".to_owned()).await?;
+    publisher.send("Hello, world!".to_owned()).await.unwrap();
     publisher.finish().await?;
 
     Ok(())

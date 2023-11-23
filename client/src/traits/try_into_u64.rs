@@ -1,4 +1,4 @@
-use anyhow::Result;
+use selium_std::errors::{Result, SeliumError};
 
 /// Provides a `try_into_u64` method to allow implementors to fallibly convert a suitable type to a
 /// [u64]
@@ -23,7 +23,9 @@ impl TryIntoU64 for std::time::Duration {
     /// returns a [u128], this conversion may fail due to potential data loss in the demotion of
     /// the integer.
     fn try_into_u64(self) -> Result<u64> {
-        Ok(self.as_millis().try_into()?)
+        self.as_millis()
+            .try_into()
+            .map_err(|_| SeliumError::ParseDurationMillis)
     }
 }
 
@@ -37,13 +39,8 @@ impl TryIntoU64 for chrono::Duration {
     /// Because the [num_milliseconds](chrono::Duration::num_milliseconds) method
     /// returns an [i64], this conversion may fail due to negative values.
     fn try_into_u64(self) -> Result<u64> {
-        use anyhow::Context;
-
-        let seconds = self
-            .num_milliseconds()
+        self.num_milliseconds()
             .try_into()
-            .context("Timestamp must be a non-negative integer")?;
-
-        Ok(seconds)
+            .map_err(|_| SeliumError::ParseDurationMillis)
     }
 }

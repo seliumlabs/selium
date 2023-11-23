@@ -1,8 +1,8 @@
 use crate::traits::{ShutdownSink, ShutdownStream};
 use crate::{error_codes, Frame, MessageCodec};
-use anyhow::Result;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};
+use selium_std::errors::{QuicError, Result, SeliumError};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -17,7 +17,10 @@ pub struct BiStream {
 
 impl BiStream {
     pub async fn try_from_connection(connection: &Connection) -> Result<Self> {
-        let stream = connection.open_bi().await?;
+        let stream = connection
+            .open_bi()
+            .await
+            .map_err(QuicError::ConnectionError)?;
         Ok(Self::from(stream))
     }
 
@@ -38,7 +41,11 @@ impl BiStream {
     }
 
     pub async fn finish(&mut self) -> Result<()> {
-        self.write.get_mut().finish().await?;
+        self.write
+            .get_mut()
+            .finish()
+            .await
+            .map_err(QuicError::WriteError)?;
         Ok(())
     }
 }
@@ -53,7 +60,7 @@ impl From<(SendStream, RecvStream)> for BiStream {
 }
 
 impl Sink<Frame> for BiStream {
-    type Error = anyhow::Error;
+    type Error = SeliumError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.write.poll_ready_unpin(cx)
@@ -73,7 +80,7 @@ impl Sink<Frame> for BiStream {
 }
 
 impl Stream for BiStream {
-    type Item = Result<Frame>;
+    type Item = Result<Frame, SeliumError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.read.poll_next_unpin(cx)
