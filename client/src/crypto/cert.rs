@@ -19,12 +19,11 @@ fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
             None => {
                 let rsa =
                     rsa_private_keys(&mut &*key).map_err(CryptoError::MalformedPKCS1PrivateKey)?;
-                match rsa.into_iter().next() {
-                    Some(x) => PrivateKey(x),
-                    None => {
-                        return Err(CryptoError::NoPrivateKeysFound)?;
-                    }
-                }
+
+                rsa.into_iter()
+                    .next()
+                    .map(PrivateKey)
+                    .ok_or(CryptoError::NoPrivateKeysFound)?
             }
         }
     };
@@ -65,7 +64,7 @@ pub(crate) fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStor
     store.add_parsable_certificates(&certs);
 
     if store.is_empty() {
-        return Err(CryptoError::InvalidRootCert)?;
+        return Err(CryptoError::InvalidRootCert.into());
     }
 
     Ok(store)
