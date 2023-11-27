@@ -1,21 +1,16 @@
+use std::{collections::HashMap, sync::Arc};
+
 use crate::args::UserArgs;
 use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
-use crate::topic::{Socket, Topic};
+use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
-use futures::channel::mpsc::Sender;
-use futures::future::join_all;
-use futures::stream::FuturesUnordered;
-use futures::{SinkExt, StreamExt};
+use futures::{future::join_all, stream::FuturesUnordered, StreamExt};
 use log::{error, info};
 use quinn::{Connecting, Endpoint, IdleTimeout, VarInt};
-use selium_protocol::error_codes;
-use selium_protocol::{BiStream, Frame};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
+use selium_protocol::{error_codes, BiStream, Frame, ReadHalf, WriteHalf};
+use tokio::{sync::Mutex, task::JoinHandle};
 
-type TopicChannel = Sender<Socket<BiStream, BiStream>>;
+type TopicChannel = Sender<ReadHalf, WriteHalf>;
 type SharedTopics = Arc<Mutex<HashMap<String, TopicChannel>>>;
 type SharedTopicHandles = Arc<Mutex<FuturesUnordered<JoinHandle<()>>>>;
 
@@ -161,25 +156,49 @@ async fn handle_stream(
         // Spawn new topic if it doesn't exist yet
         let mut ts = topics.lock().await;
         if !ts.contains_key(topic_name) {
-            let (fut, tx) = Topic::pair();
-            let topic = tokio::spawn(fut);
+            match frame {
+                Frame::RegisterPublisher(_) | Frame::RegisterSubscriber(_) => {
+                    let (fut, tx) = pubsub::Topic::pair();
+                    let topic = tokio::spawn(fut);
 
-            topic_handles.lock().await.push(topic);
-            ts.insert(topic_name.to_owned(), tx);
+                    topic_handles.lock().await.push(topic);
+                    ts.insert(topic_name.to_owned(), Sender::Pubsub(tx));
+                }
+                Frame::RegisterRpcServer(_) | Frame::RegisterRpcClient(_) => {
+                    let (fut, tx) = reqrep::Topic::pair();
+                    let topic = tokio::spawn(fut);
+
+                    topic_handles.lock().await.push(topic);
+                    ts.insert(topic_name.to_owned(), Sender::ReqRep(tx));
+                }
+                _ => unreachable!(), // because of `topic_name` instantiation
+            };
         }
 
         let tx = ts.get_mut(topic_name).unwrap();
 
         match frame {
             Frame::RegisterPublisher(_) => {
-                tx.send(Socket::Stream(stream))
+                let (_, read) = stream.split();
+                tx.send(Socket::Pubsub(pubsub::Socket::Stream(read)))
                     .await
-                    .context("Failed to add Publisher sink")?;
+                    .context("Failed to add Publisher stream")?;
             }
             Frame::RegisterSubscriber(_) => {
-                tx.send(Socket::Sink(stream))
+                let (write, _) = stream.split();
+                tx.send(Socket::Pubsub(pubsub::Socket::Sink(write)))
                     .await
                     .context("Failed to add Subscriber sink")?;
+            }
+            Frame::RegisterRpcServer(_) => {
+                tx.send(Socket::Reqrep(reqrep::Socket::Server(stream)))
+                    .await
+                    .context("Failed to add RPC Server")?;
+            }
+            Frame::RegisterRpcClient(_) => {
+                tx.send(Socket::Reqrep(reqrep::Socket::Client(stream)))
+                    .await
+                    .context("Failed to add RPC Client")?;
             }
             _ => unreachable!(), // because of `topic_name` instantiation
         }
