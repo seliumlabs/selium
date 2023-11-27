@@ -164,7 +164,7 @@ async fn handle_stream(
                     topic_handles.lock().await.push(topic);
                     ts.insert(topic_name.to_owned(), Sender::Pubsub(tx));
                 }
-                Frame::RegisterRpcServer(_) | Frame::RegisterRpcClient(_) => {
+                Frame::RegisterReplier(_) | Frame::RegisterRequester(_) => {
                     let (fut, tx) = reqrep::Topic::pair();
                     let topic = tokio::spawn(fut);
 
@@ -190,15 +190,15 @@ async fn handle_stream(
                     .await
                     .context("Failed to add Subscriber sink")?;
             }
-            Frame::RegisterRpcServer(_) => {
+            Frame::RegisterReplier(_) => {
                 tx.send(Socket::Reqrep(reqrep::Socket::Server(stream)))
                     .await
-                    .context("Failed to add RPC Server")?;
+                    .context("Failed to add Replier")?;
             }
-            Frame::RegisterRpcClient(_) => {
+            Frame::RegisterRequester(_) => {
                 tx.send(Socket::Reqrep(reqrep::Socket::Client(stream)))
                     .await
-                    .context("Failed to add RPC Client")?;
+                    .context("Failed to add Requester")?;
             }
             _ => unreachable!(), // because of `topic_name` instantiation
         }

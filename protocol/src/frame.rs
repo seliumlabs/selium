@@ -9,8 +9,8 @@ type Headers = Option<HashMap<String, String>>;
 
 const REGISTER_PUBLISHER: u8 = 0x0;
 const REGISTER_SUBSCRIBER: u8 = 0x1;
-const REGISTER_RPC_SERVER: u8 = 0x2;
-const REGISTER_RPC_CLIENT: u8 = 0x3;
+const REGISTER_REPLIER: u8 = 0x2;
+const REGISTER_REQUESTER: u8 = 0x3;
 const MESSAGE: u8 = 0x4;
 const BATCH_MESSAGE: u8 = 0x5;
 
@@ -18,8 +18,8 @@ const BATCH_MESSAGE: u8 = 0x5;
 pub enum Frame {
     RegisterPublisher(PublisherPayload),
     RegisterSubscriber(SubscriberPayload),
-    RegisterRpcServer(RpcServerPayload),
-    RegisterRpcClient(RpcClientPayload),
+    RegisterReplier(ReplierPayload),
+    RegisterRequester(RequesterPayload),
     Message(MessagePayload),
     BatchMessage(Bytes),
 }
@@ -33,10 +33,10 @@ impl Frame {
             Self::RegisterSubscriber(payload) => {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
-            Self::RegisterRpcServer(payload) => {
+            Self::RegisterReplier(payload) => {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
-            Self::RegisterRpcClient(payload) => {
+            Self::RegisterRequester(payload) => {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
             Self::Message(payload) => {
@@ -52,8 +52,8 @@ impl Frame {
         match self {
             Self::RegisterPublisher(_) => REGISTER_PUBLISHER,
             Self::RegisterSubscriber(_) => REGISTER_SUBSCRIBER,
-            Self::RegisterRpcServer(_) => REGISTER_RPC_SERVER,
-            Self::RegisterRpcClient(_) => REGISTER_RPC_CLIENT,
+            Self::RegisterReplier(_) => REGISTER_REPLIER,
+            Self::RegisterRequester(_) => REGISTER_REQUESTER,
             Self::Message(_) => MESSAGE,
             Self::BatchMessage(_) => BATCH_MESSAGE,
         }
@@ -63,8 +63,8 @@ impl Frame {
         match self {
             Self::RegisterPublisher(p) => Some(&p.topic),
             Self::RegisterSubscriber(s) => Some(&s.topic),
-            Self::RegisterRpcServer(s) => Some(&s.topic),
-            Self::RegisterRpcClient(c) => Some(&c.topic),
+            Self::RegisterReplier(s) => Some(&s.topic),
+            Self::RegisterRequester(c) => Some(&c.topic),
             Self::Message(_) => None,
             Self::BatchMessage(_) => None,
         }
@@ -76,9 +76,9 @@ impl Frame {
                 .map_err(ProtocolError::SerdeError)?,
             Frame::RegisterSubscriber(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
-            Frame::RegisterRpcServer(payload) => bincode::serialize_into(dst.writer(), &payload)
+            Frame::RegisterReplier(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
-            Frame::RegisterRpcClient(payload) => bincode::serialize_into(dst.writer(), &payload)
+            Frame::RegisterRequester(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
             Frame::Message(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
@@ -107,10 +107,10 @@ impl TryFrom<(u8, BytesMut)> for Frame {
             REGISTER_SUBSCRIBER => Frame::RegisterSubscriber(
                 bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
             ),
-            REGISTER_RPC_SERVER => Frame::RegisterRpcServer(
+            REGISTER_REPLIER => Frame::RegisterReplier(
                 bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
             ),
-            REGISTER_RPC_CLIENT => Frame::RegisterRpcClient(
+            REGISTER_REQUESTER => Frame::RegisterRequester(
                 bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
             ),
             MESSAGE => {
@@ -139,12 +139,12 @@ pub struct SubscriberPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RpcServerPayload {
+pub struct ReplierPayload {
     pub topic: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RpcClientPayload {
+pub struct RequesterPayload {
     pub topic: String,
 }
 
