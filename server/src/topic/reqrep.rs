@@ -134,6 +134,23 @@ impl Future for Topic {
                 Poll::Pending => (),
             }
 
+            if server.is_some() {
+                match server.as_mut().as_pin_mut().unwrap().poll_next(cx) {
+                    // Received message from the server stream
+                    Poll::Ready(Some(Ok(item))) => *buffered_rep = Some(item),
+                    // Encountered an error whilst receiving a message from an inner stream
+                    Poll::Ready(Some(Err(e))) => {
+                        error!("Received invalid message from stream: {e:?}")
+                    }
+                    // Server has finished
+                    Poll::Ready(None) => (),
+                    // No messages are available at this time
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
+                }
+            }
+
             match stream.as_mut().poll_next(cx) {
                 // Received message from a client stream
                 Poll::Ready(Some((id, Ok(item)))) => {
