@@ -37,7 +37,7 @@ pin_project! {
         #[pin]
         stream: StreamMap<usize, ReadHalf>,
         #[pin]
-        sink: Router<usize, WriteHalf>,
+        sink: Router<WriteHalf>,
         next_id: usize,
         #[pin]
         handle: Receiver<Socket>,

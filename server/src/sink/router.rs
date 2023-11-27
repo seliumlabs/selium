@@ -3,7 +3,6 @@
 use std::{
     borrow::{Borrow, BorrowMut},
     fmt::Debug,
-    hash::Hash,
     pin::Pin,
     slice::IterMut,
     task::{Context, Poll},
@@ -15,14 +14,14 @@ use log::error;
 use selium_protocol::{Frame, MessagePayload};
 use tokio::pin;
 
-const CLIENT_ID_HEADER: &'static str = "cid";
+const CLIENT_ID_HEADER: &str = "cid";
 
 #[must_use = "sinks do nothing unless you poll them"]
-pub struct Router<K, V> {
-    entries: Vec<(K, V)>,
+pub struct Router<V> {
+    entries: Vec<(usize, V)>,
 }
 
-impl<K, V> Router<K, V> {
+impl<V> Router<V> {
     pub fn new() -> Self {
         Self { entries: vec![] }
     }
@@ -33,25 +32,18 @@ impl<K, V> Router<K, V> {
         }
     }
 
-    pub fn iter_mut(&mut self) -> IterMut<'_, (K, V)> {
+    pub fn iter_mut(&mut self) -> IterMut<'_, (usize, V)> {
         self.entries.iter_mut()
     }
 
-    pub fn insert(&mut self, k: K, sink: V) -> Option<V>
-    where
-        K: Hash + Eq,
-    {
+    pub fn insert(&mut self, k: usize, sink: V) -> Option<V> {
         let ret = self.remove(&k);
         self.entries.push((k, sink));
 
         ret
     }
 
-    pub fn remove<Q: ?Sized>(&mut self, k: &Q) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq,
-    {
+    pub fn remove(&mut self, k: &usize) -> Option<V> {
         for i in 0..self.entries.len() {
             if self.entries[i].0.borrow() == k {
                 return Some(self.entries.swap_remove(i).1);
@@ -62,7 +54,7 @@ impl<K, V> Router<K, V> {
     }
 }
 
-impl<K, V> Default for Router<K, V> {
+impl<V> Default for Router<V> {
     fn default() -> Self {
         Self::new()
     }
@@ -70,9 +62,8 @@ impl<K, V> Default for Router<K, V> {
 
 // Note that this is an inefficient implementation as a slow sink will block other sinks
 // from receiving data, despite the slow sink not actually affecting other sinks.
-impl<K, V> Sink<Frame> for Router<K, V>
+impl<V> Sink<Frame> for Router<V>
 where
-    K: Unpin,
     V: Sink<Frame> + Unpin,
     V::Error: Debug,
 {
@@ -111,7 +102,13 @@ where
             Some(headers)
         };
 
-        let (_, sink) = self.entries[cid].borrow_mut();
+        let item = self.entries.iter_mut().find(|(id, _)| *id == cid);
+
+        if item.is_none() {
+            return Err(anyhow!("Client ID not found"));
+        }
+
+        let sink = item.unwrap().1.borrow_mut();
         pin!(sink);
         if let Err(e) = sink.start_send(Frame::Message(MessagePayload {
             headers,
@@ -159,11 +156,8 @@ where
     }
 }
 
-impl<K, V> FromIterator<(K, V)> for Router<K, V>
-where
-    K: Hash + Eq,
-{
-    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
+impl<V> FromIterator<(usize, V)> for Router<V> {
+    fn from_iter<T: IntoIterator<Item = (usize, V)>>(iter: T) -> Self {
         let iterator = iter.into_iter();
         let (lower_bound, _) = iterator.size_hint();
         let mut sink_map = Self::with_capacity(lower_bound);
@@ -176,10 +170,10 @@ where
     }
 }
 
-impl<K, V> Extend<(K, V)> for Router<K, V> {
+impl<V> Extend<(usize, V)> for Router<V> {
     fn extend<T>(&mut self, iter: T)
     where
-        T: IntoIterator<Item = (K, V)>,
+        T: IntoIterator<Item = (usize, V)>,
     {
         self.entries.extend(iter);
     }
