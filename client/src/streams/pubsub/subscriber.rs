@@ -189,14 +189,14 @@ where
         match frame {
             // If the frame is a standard, unbatched message, then decode and return it
             // immediately.
-            Frame::Message(mut bytes) => {
+            Frame::Message(mut payload) => {
                 if let Some(decomp) = &self.decompression {
-                    bytes = decomp
-                        .decompress(bytes)
+                    payload.message = decomp
+                        .decompress(payload.message)
                         .map_err(CodecError::DecompressFailure)?;
                 }
 
-                self.decode_message(bytes)
+                self.decode_message(payload.message)
             }
             // If the frame is a batched message, then set the current batch and call `poll_next`
             // again to begin popping off messages.

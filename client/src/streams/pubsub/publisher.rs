@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Sink, SinkExt};
 use selium_protocol::utils::encode_message_batch;
-use selium_protocol::{BiStream, Frame, PublisherPayload};
+use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload};
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
@@ -228,7 +228,10 @@ where
             bytes = comp.compress(bytes).map_err(CodecError::CompressFailure)?;
         }
 
-        let frame = Frame::Message(bytes);
+        let frame = Frame::Message(MessagePayload {
+            headers: None,
+            message: bytes,
+        });
         self.stream.start_send_unpin(frame)
     }
 

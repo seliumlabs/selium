@@ -73,9 +73,11 @@ fn validate_payload_length(length: u64) -> Result<(), SeliumError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::utils::encode_message_batch;
-    use crate::{Operation, PublisherPayload, SubscriberPayload};
+    use crate::{MessagePayload, Operation, PublisherPayload, SubscriberPayload};
     use bytes::Bytes;
 
     #[test]
@@ -121,12 +123,34 @@ mod tests {
     }
 
     #[test]
-    fn encodes_message_frame() {
-        let frame = Frame::Message(Bytes::from("Hello world"));
+    fn encodes_message_frame_with_header() {
+        let mut h = HashMap::new();
+        h.insert("test".to_owned(), "header".to_owned());
+
+        let frame = Frame::Message(MessagePayload {
+            headers: Some(h),
+            message: Bytes::from("Hello world"),
+        });
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0\0\0\0\0\x0b\x02Hello world");
+        let expected = Bytes::from("\0\0\0\0\0\0\06\x04\x01\x01\0\0\0\0\0\0\0\x04\0\0\0\0\0\0\0test\x06\0\0\0\0\0\0\0header\x0b\0\0\0\0\0\0\0Hello world");
+
+        codec.encode(frame, &mut buffer).unwrap();
+
+        assert_eq!(buffer, expected);
+    }
+
+    #[test]
+    fn encodes_message_frame_without_header() {
+        let frame = Frame::Message(MessagePayload {
+            headers: None,
+            message: Bytes::from("Hello world"),
+        });
+
+        let mut codec = MessageCodec;
+        let mut buffer = BytesMut::new();
+        let expected = Bytes::from("\0\0\0\0\0\0\0\x14\x04\0\x0b\0\0\0\0\0\0\0Hello world");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -145,7 +169,7 @@ mod tests {
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0\0\0\0\0H\x03\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
+        let expected = Bytes::from("\0\0\0\0\0\0\0H\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -156,7 +180,10 @@ mod tests {
     fn fails_to_encode_if_payload_too_large() {
         const PAYLOAD: [u8; MAX_MESSAGE_SIZE as usize + 1] = [0u8; MAX_MESSAGE_SIZE as usize + 1];
 
-        let frame = Frame::Message(Bytes::from_static(&PAYLOAD));
+        let frame = Frame::Message(MessagePayload {
+            headers: None,
+            message: Bytes::from_static(&PAYLOAD),
+        });
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
 
@@ -204,11 +231,31 @@ mod tests {
     }
 
     #[test]
-    fn decodes_message_frame() {
+    fn decodes_message_frame_with_header() {
         let mut codec = MessageCodec;
-        let mut src = BytesMut::from("\0\0\0\0\0\0\0\x0b\x02Hello world");
+        let mut src = BytesMut::from("\0\0\0\0\0\0\06\x04\x01\x01\0\0\0\0\0\0\0\x04\0\0\0\0\0\0\0test\x06\0\0\0\0\0\0\0header\x0b\0\0\0\0\0\0\0Hello world");
 
-        let expected = Frame::Message(Bytes::from("Hello world"));
+        let mut h = HashMap::new();
+        h.insert("test".to_owned(), "header".to_owned());
+
+        let expected = Frame::Message(MessagePayload {
+            headers: Some(h),
+            message: Bytes::from("Hello world"),
+        });
+        let result = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn decodes_message_frame_without_header() {
+        let mut codec = MessageCodec;
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0\x14\x04\0\x0b\0\0\0\0\0\0\0Hello world");
+
+        let expected = Frame::Message(MessagePayload {
+            headers: None,
+            message: Bytes::from("Hello world"),
+        });
         let result = codec.decode(&mut src).unwrap().unwrap();
 
         assert_eq!(result, expected);
@@ -217,7 +264,7 @@ mod tests {
     #[test]
     fn decodes_batch_message_frame() {
         let mut codec = MessageCodec;
-        let mut src = BytesMut::from("\0\0\0\0\0\0\0H\x03\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0H\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
 
         let batch = encode_message_batch(vec![
             Bytes::from("First message"),
