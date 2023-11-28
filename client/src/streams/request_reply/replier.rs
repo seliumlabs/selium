@@ -1,19 +1,15 @@
 use super::states::*;
-use crate::{
-    connection::ClientConnection,
-    streams::aliases::{Comp, Decomp},
-    traits::Open,
-    Client, StreamBuilder,
-};
+use crate::connection::ClientConnection;
+use crate::streams::aliases::{Comp, Decomp};
+use crate::traits::Open;
+use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{Future, SinkExt, StreamExt};
 use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload};
 use selium_std::errors::{CodecError, Result};
-use selium_std::traits::{
-    codec::{MessageDecoder, MessageEncoder},
-    compression::{Compress, Decompress},
-};
+use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
+use selium_std::traits::compression::{Compress, Decompress};
 use std::{marker::PhantomData, pin::Pin, sync::Arc};
 use tokio::sync::MutexGuard;
 
@@ -117,9 +113,7 @@ where
 }
 
 pub struct Replier<E, D, F, ReqItem, ResItem> {
-    client: Client,
     stream: BiStream,
-    headers: ReplierPayload,
     encoder: E,
     decoder: D,
     compression: Option<Comp>,
@@ -148,12 +142,10 @@ where
         handler: Pin<Box<F>>,
     ) -> Result<Self> {
         let lock = client.connection.lock().await;
-        let stream = Self::open_stream(lock, headers.clone()).await?;
+        let stream = Self::open_stream(lock, headers).await?;
 
         let replier = Self {
-            client,
             stream,
-            headers,
             encoder,
             decoder,
             compression,

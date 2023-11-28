@@ -101,9 +101,7 @@ where
 }
 
 pub struct Requestor<E, D, ReqItem, ResItem> {
-    client: Client,
     stream: BiStream,
-    headers: RequesterPayload,
     encoder: E,
     decoder: D,
     compression: Option<Comp>,
@@ -130,12 +128,10 @@ where
         request_timeout: Duration,
     ) -> Result<Self> {
         let lock = client.connection.lock().await;
-        let stream = Self::open_stream(lock, headers.clone()).await?;
+        let stream = Self::open_stream(lock, headers).await?;
 
         let requestor = Self {
-            client,
             stream,
-            headers,
             encoder,
             decoder,
             compression,

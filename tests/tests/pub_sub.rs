@@ -3,7 +3,7 @@ use clap::Parser;
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use selium::keep_alive::KeepAlive;
 use selium::std::codecs::StringCodec;
-use selium::{prelude::*, Subscriber};
+use selium::{prelude::*, pubsub::Subscriber};
 use selium_server::args::UserArgs;
 use selium_server::server::Server;
 

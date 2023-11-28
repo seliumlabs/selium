@@ -1,7 +1,6 @@
 use super::TryIntoU64;
 use async_trait::async_trait;
 use selium_std::errors::Result;
-use std::pin::Pin;
 
 /// Provides an `open` method for [StreamBuilder](crate::StreamBuilder) implementations to
 /// construct and spawn a new stream.
