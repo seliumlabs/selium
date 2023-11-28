@@ -1,16 +1,27 @@
-use std::{sync::Arc, marker::PhantomData, pin::Pin};
-use bytes::{Bytes, BytesMut};
-use selium_protocol::{BiStream, Frame, ReplierPayload, MessagePayload};
-use selium_std::errors::{Result, CodecError};
-use async_trait::async_trait;
-use futures::{Future, SinkExt, StreamExt};
-use selium_std::traits::{codec::{MessageDecoder, MessageEncoder}, compression::{Decompress, Compress}};
-use tokio::sync::MutexGuard;
 use super::states::*;
-use crate::{ StreamBuilder, streams::aliases::{Decomp, Comp}, Client, connection::ClientConnection, traits::Open, };
+use crate::{
+    connection::ClientConnection,
+    streams::aliases::{Comp, Decomp},
+    traits::Open,
+    Client, StreamBuilder,
+};
+use async_trait::async_trait;
+use bytes::{Bytes, BytesMut};
+use futures::{Future, SinkExt, StreamExt};
+use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload};
+use selium_std::errors::{CodecError, Result};
+use selium_std::traits::{
+    codec::{MessageDecoder, MessageEncoder},
+    compression::{Compress, Decompress},
+};
+use std::{marker::PhantomData, pin::Pin, sync::Arc};
+use tokio::sync::MutexGuard;
 
 impl StreamBuilder<ReplierWantsRequestDecoder> {
-    pub fn with_request_decoder<D, ReqItem>(self, decoder: D) -> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
+    pub fn with_request_decoder<D, ReqItem>(
+        self,
+        decoder: D,
+    ) -> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
         let next_state = ReplierWantsReplyEncoder::new(self.state, decoder);
 
         StreamBuilder {
@@ -21,15 +32,18 @@ impl StreamBuilder<ReplierWantsRequestDecoder> {
 }
 
 impl<D, ReqItem> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
-    pub fn with_request_decompression<T>(mut self, decomp: T) -> Self 
+    pub fn with_request_decompression<T>(mut self, decomp: T) -> Self
     where
-        T: Decompress + Send + Sync + 'static
+        T: Decompress + Send + Sync + 'static,
     {
         self.state.decompression = Some(Arc::new(decomp));
         self
     }
 
-    pub fn with_reply_encoder<E, ResItem>(self, encoder: E) -> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, ResItem>> {
+    pub fn with_reply_encoder<E, ResItem>(
+        self,
+        encoder: E,
+    ) -> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, ResItem>> {
         let next_state = ReplierWantsHandler::new(self.state, encoder);
 
         StreamBuilder {
@@ -40,9 +54,9 @@ impl<D, ReqItem> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
 }
 
 impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, ResItem>> {
-    pub fn with_reply_compression<T>(mut self, comp: T) -> Self 
+    pub fn with_reply_compression<T>(mut self, comp: T) -> Self
     where
-        T: Compress + Send + Sync + 'static
+        T: Compress + Send + Sync + 'static,
     {
         self.state.compression = Some(Arc::new(comp));
         self
@@ -51,7 +65,7 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
     pub fn with_handler<F, Fut>(
         self,
         handler: F,
-    ) -> StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem, ResItem>> 
+    ) -> StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem, ResItem>>
     where
         D: MessageDecoder<ReqItem> + Send + Unpin,
         E: MessageEncoder<ResItem> + Send + Unpin,
@@ -70,19 +84,22 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
 }
 
 #[async_trait]
-impl<D, E, F, Fut, ReqItem, ResItem> Open for StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem, ResItem>>
+impl<D, E, F, Fut, ReqItem, ResItem> Open
+    for StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem, ResItem>>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
     Fut: Future<Output = Result<ResItem>>,
     ReqItem: Unpin + Send,
-    ResItem: Unpin + Send
+    ResItem: Unpin + Send,
 {
     type Output = Replier<E, D, F, ReqItem, ResItem>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = ReplierPayload { topic: self.state.endpoint };
+        let headers = ReplierPayload {
+            topic: self.state.endpoint,
+        };
 
         let replier = Replier::spawn(
             self.client,
@@ -109,7 +126,7 @@ pub struct Replier<E, D, F, ReqItem, ResItem> {
     decompression: Option<Decomp>,
     handler: Pin<Box<F>>,
     _req_marker: PhantomData<ReqItem>,
-    _res_marker: PhantomData<ResItem>
+    _res_marker: PhantomData<ResItem>,
 }
 
 impl<D, E, F, Fut, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem>
@@ -119,7 +136,7 @@ where
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
     Fut: Future<Output = Result<ResItem>>,
     ReqItem: Unpin + Send,
-    ResItem: Unpin + Send
+    ResItem: Unpin + Send,
 {
     async fn spawn(
         client: Client,
@@ -130,7 +147,7 @@ where
         decompression: Option<Decomp>,
         handler: Pin<Box<F>>,
     ) -> Result<Self> {
-        let lock = client.connection.lock().await; 
+        let lock = client.connection.lock().await;
         let stream = Self::open_stream(lock, headers.clone()).await?;
 
         let replier = Self {
@@ -179,7 +196,10 @@ where
     }
 
     fn encode_message(&mut self, item: ResItem) -> Result<Bytes> {
-        let mut encoded = self.encoder.encode(item).map_err(CodecError::EncodeFailure)?;
+        let mut encoded = self
+            .encoder
+            .encode(item)
+            .map_err(CodecError::EncodeFailure)?;
 
         if let Some(comp) = self.compression.as_ref() {
             encoded = comp
@@ -199,7 +219,7 @@ where
 
                 let res_payload = MessagePayload {
                     headers: req_payload.headers,
-                    message: encoded
+                    message: encoded,
                 };
 
                 let frame = Frame::Message(res_payload);

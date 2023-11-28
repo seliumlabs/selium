@@ -1,9 +1,9 @@
-use std::time::Duration;
 use anyhow::Result;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
 use selium::std::errors::SeliumError;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Serialize, Deserialize)]
 enum Request {
@@ -55,9 +55,11 @@ async fn main() -> Result<()> {
     let res = requestor.request(Request::HelloWorld(None)).await?;
     println!("Received response: {res:?}");
 
-    let res = requestor.request(Request::HelloWorld(Some("Bobby".to_owned()))).await?;
+    let res = requestor
+        .request(Request::HelloWorld(Some("Bobby".to_owned())))
+        .await?;
     println!("Received response: {res:?}");
-   
+
     Ok(())
 }
 

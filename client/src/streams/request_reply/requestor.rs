@@ -1,18 +1,18 @@
 use super::states::*;
-use crate::{StreamBuilder, Client};
 use crate::connection::ClientConnection;
 use crate::streams::aliases::{Comp, Decomp};
 use crate::traits::Open;
+use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use selium_protocol::{RequesterPayload, BiStream, Frame, MessagePayload};
-use selium_std::errors::{CodecError, SeliumError};
-use selium_std::traits::codec::{MessageEncoder, MessageDecoder};
-use selium_std::traits::compression::{Compress, Decompress};
+use selium_protocol::{BiStream, Frame, MessagePayload, RequesterPayload};
 use selium_std::errors::Result;
+use selium_std::errors::{CodecError, SeliumError};
+use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
+use selium_std::traits::compression::{Compress, Decompress};
+use std::{marker::PhantomData, sync::Arc};
 use tokio::sync::MutexGuard;
-use std::{sync::Arc, marker::PhantomData};
 
 impl StreamBuilder<RequestorWantsRequestEncoder> {
     pub fn with_request_encoder<E, ReqItem>(
@@ -66,12 +66,14 @@ where
     E: MessageEncoder<ReqItem> + Send + Unpin,
     D: MessageDecoder<ResItem> + Send + Unpin,
     ReqItem: Unpin + Send,
-    ResItem: Unpin + Send
+    ResItem: Unpin + Send,
 {
     type Output = Requestor<E, D, ReqItem, ResItem>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = RequesterPayload { topic: self.state.endpoint };
+        let headers = RequesterPayload {
+            topic: self.state.endpoint,
+        };
 
         let requestor = Requestor::spawn(
             self.client,
@@ -80,7 +82,8 @@ where
             self.state.decoder,
             self.state.compression,
             self.state.decompression,
-        ).await?;
+        )
+        .await?;
 
         Ok(requestor)
     }
@@ -98,12 +101,12 @@ pub struct Requestor<E, D, ReqItem, ResItem> {
     _res_marker: PhantomData<ResItem>,
 }
 
-impl<E, D, ReqItem, ResItem> Requestor<E, D, ReqItem, ResItem> 
+impl<E, D, ReqItem, ResItem> Requestor<E, D, ReqItem, ResItem>
 where
     E: MessageEncoder<ReqItem> + Send + Unpin,
     D: MessageDecoder<ResItem> + Send + Unpin,
     ReqItem: Unpin + Send,
-    ResItem: Unpin + Send 
+    ResItem: Unpin + Send,
 {
     async fn spawn(
         client: Client,
@@ -145,7 +148,10 @@ where
     }
 
     fn encode_request(&mut self, item: ReqItem) -> Result<Bytes> {
-        let mut encoded = self.encoder.encode(item).map_err(CodecError::EncodeFailure)?;
+        let mut encoded = self
+            .encoder
+            .encode(item)
+            .map_err(CodecError::EncodeFailure)?;
 
         if let Some(comp) = self.compression.as_ref() {
             encoded = comp
@@ -166,12 +172,15 @@ where
         let mut mut_bytes = BytesMut::with_capacity(bytes.len());
         mut_bytes.extend_from_slice(&bytes);
 
-        Ok(self.decoder.decode(&mut mut_bytes).map_err(CodecError::DecodeFailure)?)
+        Ok(self
+            .decoder
+            .decode(&mut mut_bytes)
+            .map_err(CodecError::DecodeFailure)?)
     }
 
     pub async fn request(&mut self, req: ReqItem) -> Result<ResItem> {
         let encoded = self.encode_request(req)?;
-        
+
         let req_payload = MessagePayload {
             headers: None,
             message: encoded,

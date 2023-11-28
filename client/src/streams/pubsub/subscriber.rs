@@ -29,7 +29,7 @@ impl StreamBuilder<SubscriberWantsDecoder> {
 
         StreamBuilder {
             state: next_state,
-            client: self.client
+            client: self.client,
         }
     }
 }
