@@ -1,6 +1,6 @@
 use anyhow::Result;
-use fake::Fake;
 use fake::faker::name::en::Name;
+use fake::Fake;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
 use serde::{Deserialize, Serialize};
