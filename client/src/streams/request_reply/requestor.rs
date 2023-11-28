@@ -1,7 +1,7 @@
 use super::states::*;
 use crate::connection::ClientConnection;
 use crate::streams::aliases::{Comp, Decomp};
-use crate::traits::Open;
+use crate::traits::{Open, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -11,6 +11,7 @@ use selium_std::errors::Result;
 use selium_std::errors::{CodecError, SeliumError};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use selium_std::traits::compression::{Compress, Decompress};
+use std::time::Duration;
 use std::{marker::PhantomData, sync::Arc};
 use tokio::sync::MutexGuard;
 
@@ -58,6 +59,15 @@ impl<E, D, ReqItem, ResItem> StreamBuilder<RequestorWantsOpen<E, D, ReqItem, Res
         self.state.decompression = Some(Arc::new(decomp));
         self
     }
+
+    pub fn with_request_timeout<T>(mut self, timeout: T) -> Result<Self>
+    where
+        T: TryIntoU64,
+    {
+        let millis = timeout.try_into_u64()?;
+        self.state.request_timeout = Duration::from_millis(millis);
+        Ok(self)
+    }
 }
 
 #[async_trait()]
@@ -82,6 +92,7 @@ where
             self.state.decoder,
             self.state.compression,
             self.state.decompression,
+            self.state.request_timeout,
         )
         .await?;
 
@@ -97,6 +108,7 @@ pub struct Requestor<E, D, ReqItem, ResItem> {
     decoder: D,
     compression: Option<Comp>,
     decompression: Option<Decomp>,
+    request_timeout: Duration,
     _req_marker: PhantomData<ReqItem>,
     _res_marker: PhantomData<ResItem>,
 }
@@ -115,6 +127,7 @@ where
         decoder: D,
         compression: Option<Comp>,
         decompression: Option<Decomp>,
+        request_timeout: Duration,
     ) -> Result<Self> {
         let lock = client.connection.lock().await;
         let stream = Self::open_stream(lock, headers.clone()).await?;
@@ -127,6 +140,7 @@ where
             decoder,
             compression,
             decompression,
+            request_timeout,
             _req_marker: PhantomData,
             _res_marker: PhantomData,
         };
@@ -189,13 +203,13 @@ where
         let frame = Frame::Message(req_payload);
         self.stream.send(frame).await?;
 
-        if let Some(Ok(response)) = self.stream.next().await {
-            if let Frame::Message(res_payload) = response {
-                let decoded = self.decode_response(res_payload.message)?;
-                Ok(decoded)
-            } else {
-                Err(SeliumError::RequestFailed)
-            }
+        let response = tokio::time::timeout(self.request_timeout, self.stream.next())
+            .await
+            .map_err(|_| SeliumError::RequestTimeout)?;
+
+        if let Some(Ok(Frame::Message(res_payload))) = response {
+            let decoded = self.decode_response(res_payload.message)?;
+            Ok(decoded)
         } else {
             Err(SeliumError::RequestFailed)
         }

@@ -1,5 +1,7 @@
 use crate::streams::aliases::{Comp, Decomp};
-use std::{marker::PhantomData, pin::Pin};
+use std::{marker::PhantomData, pin::Pin, time::Duration};
+
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[doc(hidden)]
 pub struct RequestorWantsRequestEncoder {
@@ -38,6 +40,7 @@ pub struct RequestorWantsOpen<E, D, ReqItem, ResItem> {
     pub(crate) compression: Option<Comp>,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
+    pub(crate) request_timeout: Duration,
     _req_marker: PhantomData<ReqItem>,
     _res_marker: PhantomData<ResItem>,
 }
@@ -50,6 +53,7 @@ impl<E, D, ReqItem, ResItem> RequestorWantsOpen<E, D, ReqItem, ResItem> {
             compression: prev.compression,
             decoder,
             decompression: None,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
             _req_marker: prev._req_marker,
             _res_marker: PhantomData,
         }
