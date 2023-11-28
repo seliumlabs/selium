@@ -187,11 +187,9 @@ where
         };
 
         let frame = Frame::Message(req_payload);
-        println!("Sending {frame:?}");
         self.stream.send(frame).await?;
 
         if let Some(Ok(response)) = self.stream.next().await {
-            println!("Requestor got response: {response:?}");
             if let Frame::Message(res_payload) = response {
                 let decoded = self.decode_response(res_payload.message)?;
                 Ok(decoded)

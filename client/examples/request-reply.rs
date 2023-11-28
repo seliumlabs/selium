@@ -10,7 +10,7 @@ enum Request {
     HelloWorld(Option<String>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 enum Response {
     HelloWorld(String),
 }
@@ -46,19 +46,20 @@ async fn main() -> Result<()> {
     let mut requestor = connection
         .requestor("/some/endpoint")
         .with_request_encoder(BincodeCodec::default())
-        .with_reply_decoder(BincodeCodec::default())
+        .with_reply_decoder(BincodeCodec::<Response>::default())
         .open()
         .await?;
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let res = requestor.request(Request::HelloWorld(None)).await?;
-    println!("Received response: {res:?}");
+    assert_eq!(res, Response::HelloWorld("Hello, World!".to_owned()));
 
     let res = requestor
         .request(Request::HelloWorld(Some("Bobby".to_owned())))
         .await?;
-    println!("Received response: {res:?}");
+
+    assert_eq!(res, Response::HelloWorld("Hello, Bobby!".to_owned()));
 
     Ok(())
 }
@@ -67,7 +68,7 @@ async fn handler(req: Request) -> Result<Response, SeliumError> {
     match req {
         Request::HelloWorld(mut name) => {
             let name = name.take().unwrap_or_else(|| "World".to_owned());
-            let response = format!("{name}!");
+            let response = format!("Hello, {name}!");
             Ok(Response::HelloWorld(response))
         }
     }
