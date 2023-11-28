@@ -1,11 +1,13 @@
-use std::{sync::{Arc, MutexGuard}, marker::PhantomData};
-use selium_protocol::{BiStream, Frame};
-use selium_std::errors::Result;
+use std::{sync::Arc, marker::PhantomData, pin::Pin};
+use bytes::{Bytes, BytesMut};
+use selium_protocol::{BiStream, Frame, ReplierPayload, MessagePayload};
+use selium_std::errors::{Result, CodecError};
 use async_trait::async_trait;
-use futures::{Future, SinkExt};
+use futures::{Future, SinkExt, StreamExt};
 use selium_std::traits::{codec::{MessageDecoder, MessageEncoder}, compression::{Decompress, Compress}};
+use tokio::sync::MutexGuard;
 use super::states::*;
-use crate::{ StreamBuilder, streams::aliases::{Decomp, Comp}, Client, connection::ClientConnection, };
+use crate::{ StreamBuilder, streams::aliases::{Decomp, Comp}, Client, connection::ClientConnection, traits::Open, };
 
 impl StreamBuilder<ReplierWantsRequestDecoder> {
     pub fn with_request_decoder<D, ReqItem>(self, decoder: D) -> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
@@ -54,7 +56,7 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
         D: MessageDecoder<ReqItem> + Send + Unpin,
         E: MessageEncoder<ResItem> + Send + Unpin,
         F: FnMut(ReqItem) -> Fut,
-        Fut: Future<Output = ResItem>,
+        Fut: Future<Output = Result<ResItem>>,
         ReqItem: Unpin + Send,
         ResItem: Unpin + Send,
     {
@@ -73,14 +75,14 @@ where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = ResItem>,
+    Fut: Future<Output = Result<ResItem>>,
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send
 {
     type Output = Replier<E, D, F, ReqItem, ResItem>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers =;
+        let headers = ReplierPayload { topic: self.state.endpoint };
 
         let replier = Replier::spawn(
             self.client,
@@ -105,12 +107,20 @@ pub struct Replier<E, D, F, ReqItem, ResItem> {
     decoder: D,
     compression: Option<Comp>,
     decompression: Option<Decomp>,
-    handler: F,
+    handler: Pin<Box<F>>,
     _req_marker: PhantomData<ReqItem>,
     _res_marker: PhantomData<ResItem>
 }
 
-impl<E, D, F, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem> {
+impl<D, E, F, Fut, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem>
+where
+    D: MessageDecoder<ReqItem> + Send + Unpin,
+    E: MessageEncoder<ResItem> + Send + Unpin,
+    F: FnMut(ReqItem) -> Fut + Send + Unpin,
+    Fut: Future<Output = Result<ResItem>>,
+    ReqItem: Unpin + Send,
+    ResItem: Unpin + Send
+{
     async fn spawn(
         client: Client,
         headers: ReplierPayload,
@@ -118,7 +128,7 @@ impl<E, D, F, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem> {
         decoder: D,
         compression: Option<Comp>,
         decompression: Option<Decomp>,
-        handler: F,
+        handler: Pin<Box<F>>,
     ) -> Result<Self> {
         let lock = client.connection.lock().await; 
         let stream = Self::open_stream(lock, headers.clone()).await?;
@@ -152,7 +162,51 @@ impl<E, D, F, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem> {
         Ok(stream)
     }
 
-    pub async fn listen(self) -> Result<()> {
-       Ok(()) 
+    fn decode_message(&mut self, mut bytes: Bytes) -> Result<ReqItem> {
+        if let Some(decomp) = self.decompression.as_ref() {
+            bytes = decomp
+                .decompress(bytes)
+                .map_err(CodecError::DecompressFailure)?;
+        }
+
+        let mut mut_bytes = BytesMut::with_capacity(bytes.len());
+        mut_bytes.extend_from_slice(&bytes);
+
+        Ok(self
+            .decoder
+            .decode(&mut mut_bytes)
+            .map_err(CodecError::DecodeFailure)?)
+    }
+
+    fn encode_message(&mut self, item: ResItem) -> Result<Bytes> {
+        let mut encoded = self.encoder.encode(item).map_err(CodecError::EncodeFailure)?;
+
+        if let Some(comp) = self.compression.as_ref() {
+            encoded = comp
+                .compress(encoded)
+                .map_err(CodecError::CompressFailure)?;
+        }
+
+        Ok(encoded)
+    }
+
+    pub async fn listen(mut self) -> Result<()> {
+        while let Some(Ok(request)) = self.stream.next().await {
+            if let Frame::Message(req_payload) = request {
+                let decoded = self.decode_message(req_payload.message)?;
+                let response = (self.handler)(decoded).await?;
+                let encoded = self.encode_message(response)?;
+
+                let res_payload = MessagePayload {
+                    headers: req_payload.headers,
+                    message: encoded
+                };
+
+                let frame = Frame::Message(res_payload);
+                self.stream.send(frame).await?;
+            }
+        }
+
+        Ok(())
     }
 }

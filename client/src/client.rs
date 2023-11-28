@@ -2,7 +2,7 @@ use crate::connection::{ClientConnection, ConnectionOptions, SharedConnection};
 use crate::crypto::cert::{load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
 use crate::pubsub::states::{PublisherWantsEncoder, SubscriberWantsDecoder};
-use crate::request_reply::states::ReplierWantsRequestDecoder;
+use crate::request_reply::states::{ReplierWantsRequestDecoder, RequestorWantsRequestEncoder};
 use crate::traits::TryIntoU64;
 use crate::StreamBuilder;
 use rustls::{Certificate, PrivateKey, RootCertStore};
@@ -237,5 +237,11 @@ impl Client {
     /// state.
     pub fn replier(&self, endpoint: &str) -> StreamBuilder<ReplierWantsRequestDecoder> {
         StreamBuilder::new(self.clone(), ReplierWantsRequestDecoder::new(endpoint))
+    }
+
+    /// Returns a new [StreamBuilder](crate::StreamBuilder) instance, with an initial `Requestor`
+    /// state.
+    pub fn requestor(&self, endpoint: &str) -> StreamBuilder<RequestorWantsRequestEncoder> {
+        StreamBuilder::new(self.clone(), RequestorWantsRequestEncoder::new(endpoint))
     }
 }

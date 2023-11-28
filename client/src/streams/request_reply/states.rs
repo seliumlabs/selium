@@ -2,8 +2,63 @@ use crate::streams::aliases::{Comp, Decomp};
 use std::{marker::PhantomData, pin::Pin};
 
 #[doc(hidden)]
+pub struct RequestorWantsRequestEncoder {
+    pub(crate) endpoint: String,
+}
+
+impl RequestorWantsRequestEncoder {
+    pub fn new(endpoint: &str) -> Self {
+        Self {
+            endpoint: endpoint.to_owned(),
+        }
+    }
+}
+
+pub struct RequestorWantsReplyDecoder<E, ReqItem> {
+    pub(crate) endpoint: String,
+    pub(crate) encoder: E,
+    pub(crate) compression: Option<Comp>,
+    _req_marker: PhantomData<ReqItem>,
+}
+
+impl<E, ReqItem> RequestorWantsReplyDecoder<E, ReqItem> {
+    pub fn new(prev: RequestorWantsRequestEncoder, encoder: E) -> Self {
+        Self {
+            endpoint: prev.endpoint,
+            encoder,
+            compression: None,
+            _req_marker: PhantomData,
+        }
+    }
+}
+
+pub struct RequestorWantsOpen<E, D, ReqItem, ResItem> {
+    pub(crate) endpoint: String,
+    pub(crate) encoder: E,
+    pub(crate) compression: Option<Comp>,
+    pub(crate) decoder: D,
+    pub(crate) decompression: Option<Decomp>,
+    _req_marker: PhantomData<ReqItem>,
+    _res_marker: PhantomData<ResItem>,
+}
+
+impl<E, D, ReqItem, ResItem> RequestorWantsOpen<E, D, ReqItem, ResItem> {
+    pub fn new(prev: RequestorWantsReplyDecoder<E, ReqItem>, decoder: D) -> Self {
+        Self {
+            endpoint: prev.endpoint,
+            encoder: prev.encoder,
+            compression: prev.compression,
+            decoder,
+            decompression: None,
+            _req_marker: prev._req_marker,
+            _res_marker: PhantomData,
+        }
+    }
+}
+
+#[doc(hidden)]
 pub struct ReplierWantsRequestDecoder {
-    endpoint: String,
+    pub(crate) endpoint: String,
 }
 
 impl ReplierWantsRequestDecoder {

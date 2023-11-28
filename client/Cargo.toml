@@ -84,3 +84,8 @@ required-features = ["std-codec", "std-compression"]
 name = "batching_and_compression"
 path = "examples/batching_and_compression.rs"
 required-features = ["std-compression"]
+
+[[example]]
+name = "request_reply"
+path = "examples/request-reply.rs"
+required-features = ["std-codec"]
