@@ -1,3 +1,4 @@
+use std::pin::Pin;
 use super::TryIntoU64;
 use async_trait::async_trait;
 use selium_std::errors::Result;

@@ -4,7 +4,8 @@ mod connection_status;
 pub use backoff_strategy::*;
 pub(crate) use connection_status::*;
 
-use crate::{traits::KeepAliveStream, Publisher};
+use crate::pubsub::Publisher;
+use crate::traits::KeepAliveStream;
 use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use selium_std::errors::{QuicError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;

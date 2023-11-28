@@ -1,8 +1,10 @@
 use crate::connection::{ClientConnection, ConnectionOptions, SharedConnection};
 use crate::crypto::cert::{load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
+use crate::pubsub::states::{PublisherWantsEncoder, SubscriberWantsDecoder};
+use crate::request_reply::states::ReplierWantsRequestDecoder;
 use crate::traits::TryIntoU64;
-use crate::{PublisherWantsEncoder, StreamBuilder, StreamCommon, SubscriberWantsDecoder};
+use crate::StreamBuilder;
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use selium_std::errors::Result;
 use std::path::Path;
@@ -214,32 +216,26 @@ impl ClientBuilder<ClientWantsConnect> {
 /// [ClientBuilder], following a successfully established connection to the `Selium` server.
 #[derive(Clone)]
 pub struct Client {
-    connection: SharedConnection,
-    backoff_strategy: BackoffStrategy,
+    pub(crate) connection: SharedConnection,
+    pub(crate) backoff_strategy: BackoffStrategy,
 }
 
 impl Client {
     /// Returns a new [StreamBuilder](crate::StreamBuilder) instance, with an initial `Subscriber`
     /// state.
     pub fn subscriber(&self, topic: &str) -> StreamBuilder<SubscriberWantsDecoder> {
-        StreamBuilder {
-            connection: self.connection.clone(),
-            backoff_strategy: self.backoff_strategy.clone(),
-            state: SubscriberWantsDecoder {
-                common: StreamCommon::new(topic),
-            },
-        }
+        StreamBuilder::new(self.clone(), SubscriberWantsDecoder::new(topic))
     }
 
     /// Returns a new [StreamBuilder](crate::StreamBuilder) instance, with an initial `Publisher`
     /// state.
     pub fn publisher(&self, topic: &str) -> StreamBuilder<PublisherWantsEncoder> {
-        StreamBuilder {
-            connection: self.connection.clone(),
-            backoff_strategy: self.backoff_strategy.clone(),
-            state: PublisherWantsEncoder {
-                common: StreamCommon::new(topic),
-            },
-        }
+        StreamBuilder::new(self.clone(), PublisherWantsEncoder::new(topic))
+    }
+
+    /// Returns a new [StreamBuilder](crate::StreamBuilder)  instance, with an initial `Replier`
+    /// state.
+    pub fn replier(&self, endpoint: &str) -> StreamBuilder<ReplierWantsRequestDecoder> {
+        StreamBuilder::new(self.clone(), ReplierWantsRequestDecoder::new(endpoint))
     }
 }
