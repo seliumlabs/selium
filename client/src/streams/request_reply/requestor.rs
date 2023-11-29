@@ -6,14 +6,20 @@ use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use selium_protocol::{BiStream, Frame, MessagePayload, RequesterPayload};
+use selium_protocol::{BiStream, RequestId, Frame, MessagePayload, RequesterPayload, ReadHalf, WriteHalf};
 use selium_std::errors::Result;
 use selium_std::errors::{CodecError, SeliumError};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use selium_std::traits::compression::{Compress, Decompress};
+use tokio::sync::oneshot::{Sender, Receiver, self};
+use std::collections::HashMap;
 use std::time::Duration;
 use std::{marker::PhantomData, sync::Arc};
-use tokio::sync::MutexGuard;
+use tokio::sync::{MutexGuard, Mutex};
+
+type SharedPendingRequests = Arc<Mutex<HashMap<u32, Sender<Bytes>>>>;
+type SharedReadHalf = Arc<Mutex<ReadHalf>>;
+type SharedWriteHalf = Arc<Mutex<WriteHalf>>;
 
 impl StreamBuilder<RequestorWantsRequestEncoder> {
     pub fn with_request_encoder<E, ReqItem>(
@@ -100,13 +106,16 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct Requestor<E, D, ReqItem, ResItem> {
-    stream: BiStream,
+    request_id: Arc<RequestId>,
+    write_half: SharedWriteHalf,
     encoder: E,
     decoder: D,
     compression: Option<Comp>,
     decompression: Option<Decomp>,
     request_timeout: Duration,
+    pending_requests: SharedPendingRequests,
     _req_marker: PhantomData<ReqItem>,
     _res_marker: PhantomData<ResItem>,
 }
@@ -128,15 +137,26 @@ where
         request_timeout: Duration,
     ) -> Result<Self> {
         let lock = client.connection.lock().await;
+
         let stream = Self::open_stream(lock, headers).await?;
+        let (write_half, read_half) = stream.split();
+        let write_half = Arc::new(Mutex::new(write_half));
+        let read_half = Arc::new(Mutex::new(read_half));
+
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let request_id = Arc::new(RequestId::new());
+        
+        poll_replies(read_half.clone(), pending_requests.clone());
 
         let requestor = Self {
-            stream,
+            request_id,
+            write_half,
             encoder,
             decoder,
             compression,
             decompression,
             request_timeout,
+            pending_requests,
             _req_marker: PhantomData,
             _res_marker: PhantomData,
         };
@@ -188,26 +208,60 @@ where
             .map_err(CodecError::DecodeFailure)?)
     }
 
+
+    async fn queue_request(&mut self) -> (u32, Receiver<Bytes>) {
+        let (tx, rx) = oneshot::channel();
+        let mut lock = self.pending_requests.lock().await;
+        let req_id = self.request_id.next_id();
+
+        lock.insert(req_id, tx);
+
+        (req_id, rx)
+    }
+
     pub async fn request(&mut self, req: ReqItem) -> Result<ResItem> {
         let encoded = self.encode_request(req)?;
+        let (req_id, rx) = self.queue_request().await;
+
+        let mut headers = HashMap::new();
+        headers.insert("req_id".to_owned(), req_id.to_string());
 
         let req_payload = MessagePayload {
-            headers: None,
+            headers: Some(headers),
             message: encoded,
         };
 
         let frame = Frame::Message(req_payload);
-        self.stream.send(frame).await?;
+        self.write_half.lock().await.send(frame).await?;
 
-        let response = tokio::time::timeout(self.request_timeout, self.stream.next())
+        let response = tokio::time::timeout(self.request_timeout, rx)
             .await
-            .map_err(|_| SeliumError::RequestTimeout)?;
+            .map_err(|_| SeliumError::RequestTimeout)?
+            .map_err(|_| SeliumError::RequestFailed)?;
 
-        if let Some(Ok(Frame::Message(res_payload))) = response {
-            let decoded = self.decode_response(res_payload.message)?;
-            Ok(decoded)
-        } else {
-            Err(SeliumError::RequestFailed)
-        }
+        let decoded = self.decode_response(response)?;
+
+        Ok(decoded)
     }
 }
+
+fn poll_replies(read_half: SharedReadHalf, pending_requests: SharedPendingRequests) {
+    tokio::spawn(async move {
+        let mut read_half = read_half.lock().await;
+
+        while let Some(Ok(Frame::Message(res_payload))) = read_half.next().await {
+            if let Some(headers) = res_payload.headers {
+                if let Some(req_id) = headers.get("req_id") {
+                    let mut lock = pending_requests.lock().await; 
+
+                    if let Ok(req_id) = req_id.parse() {
+                        if let Some(pending) = lock.remove(&req_id) {
+                            let _ = pending.send(res_payload.message);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
