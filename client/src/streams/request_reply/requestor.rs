@@ -146,7 +146,7 @@ where
         let read_half = Arc::new(Mutex::new(read_half));
 
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
-        let request_id = Arc::new(RequestId::new());
+        let request_id = Arc::new(RequestId::default());
 
         poll_replies(read_half.clone(), pending_requests.clone());
 
