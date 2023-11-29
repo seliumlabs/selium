@@ -129,7 +129,7 @@ impl Future for Topic {
                     // Received message from the server stream
                     Poll::Ready(Some(Ok(item))) => {
                         *buffered_rep = Some(item);
-                    },
+                    }
                     // Encountered an error whilst receiving a message from an inner stream
                     Poll::Ready(Some(Err(e))) => {
                         error!("Received invalid message from stream: {e:?}")
@@ -138,8 +138,8 @@ impl Future for Topic {
                     Poll::Ready(None) => (),
                     // No messages are available at this time
                     Poll::Pending => {
-                        server_pending = true; 
-                    },
+                        server_pending = true;
+                    }
                 }
             }
 
