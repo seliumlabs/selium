@@ -51,7 +51,6 @@ async fn main() -> Result<()> {
             async move {
                 let res = requestor.request(request).await.unwrap();
                 assert_eq!(res, Response::HelloWorld(expected));
-                println!("Response: {res:?}");
             }
         });
 

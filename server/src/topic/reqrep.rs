@@ -80,6 +80,9 @@ impl Future for Topic {
         } = self.project();
 
         loop {
+            let mut server_pending = false;
+            let mut stream_pending = false;
+
             // If we've got a request buffered already, we need to write it to the replier
             // before we can do anything else.
             if buffered_req.is_some() && server.is_some() {
@@ -124,7 +127,9 @@ impl Future for Topic {
             if server.is_some() {
                 match server.as_mut().as_pin_mut().unwrap().poll_next(cx) {
                     // Received message from the server stream
-                    Poll::Ready(Some(Ok(item))) => *buffered_rep = Some(item),
+                    Poll::Ready(Some(Ok(item))) => {
+                        *buffered_rep = Some(item);
+                    },
                     // Encountered an error whilst receiving a message from an inner stream
                     Poll::Ready(Some(Err(e))) => {
                         error!("Received invalid message from stream: {e:?}")
@@ -132,7 +137,9 @@ impl Future for Topic {
                     // Server has finished
                     Poll::Ready(None) => (),
                     // No messages are available at this time
-                    Poll::Pending => (),
+                    Poll::Pending => {
+                        server_pending = true; 
+                    },
                 }
             }
 
@@ -174,15 +181,19 @@ impl Future for Topic {
                 }
                 // No messages are available at this time
                 Poll::Pending => {
-                    // Unwrapping is safe as the underlying sink is guaranteed not to error
-                    ready!(sink.poll_flush(cx)).unwrap();
-
-                    if server.is_some() {
-                        ready!(server.as_mut().as_pin_mut().unwrap().poll_flush(cx)).unwrap();
-                    }
-
-                    return Poll::Pending;
+                    stream_pending = true;
                 }
+            }
+
+            if server_pending && stream_pending {
+                // Unwrapping is safe as the underlying sink is guaranteed not to error
+                ready!(sink.poll_flush(cx)).unwrap();
+
+                if server.is_some() {
+                    ready!(server.as_mut().as_pin_mut().unwrap().poll_flush(cx)).unwrap();
+                }
+
+                return Poll::Pending;
             }
         }
     }
