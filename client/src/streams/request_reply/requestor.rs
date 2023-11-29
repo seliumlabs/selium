@@ -6,16 +6,18 @@ use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use selium_protocol::{BiStream, RequestId, Frame, MessagePayload, RequesterPayload, ReadHalf, WriteHalf};
+use selium_protocol::{
+    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequesterPayload, WriteHalf,
+};
 use selium_std::errors::Result;
 use selium_std::errors::{CodecError, SeliumError};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use selium_std::traits::compression::{Compress, Decompress};
-use tokio::sync::oneshot::{Sender, Receiver, self};
 use std::collections::HashMap;
 use std::time::Duration;
 use std::{marker::PhantomData, sync::Arc};
-use tokio::sync::{MutexGuard, Mutex};
+use tokio::sync::oneshot::{self, Receiver, Sender};
+use tokio::sync::{Mutex, MutexGuard};
 
 type SharedPendingRequests = Arc<Mutex<HashMap<u32, Sender<Bytes>>>>;
 type SharedReadHalf = Arc<Mutex<ReadHalf>>;
@@ -145,7 +147,7 @@ where
 
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
         let request_id = Arc::new(RequestId::new());
-        
+
         poll_replies(read_half.clone(), pending_requests.clone());
 
         let requestor = Self {
@@ -208,7 +210,6 @@ where
             .map_err(CodecError::DecodeFailure)?)
     }
 
-
     async fn queue_request(&mut self) -> (u32, Receiver<Bytes>) {
         let (tx, rx) = oneshot::channel();
         let mut lock = self.pending_requests.lock().await;
@@ -252,7 +253,7 @@ fn poll_replies(read_half: SharedReadHalf, pending_requests: SharedPendingReques
         while let Some(Ok(Frame::Message(res_payload))) = read_half.next().await {
             if let Some(headers) = res_payload.headers {
                 if let Some(req_id) = headers.get("req_id") {
-                    let mut lock = pending_requests.lock().await; 
+                    let mut lock = pending_requests.lock().await;
 
                     if let Ok(req_id) = req_id.parse() {
                         if let Some(pending) = lock.remove(&req_id) {
@@ -264,4 +265,3 @@ fn poll_replies(read_half: SharedReadHalf, pending_requests: SharedPendingReques
         }
     });
 }
-

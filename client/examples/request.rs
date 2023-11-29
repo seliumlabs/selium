@@ -1,4 +1,3 @@
-use std::time::Duration;
 use anyhow::Result;
 use fake::faker::name::en::Name;
 use fake::Fake;
@@ -6,6 +5,7 @@ use futures::future::try_join_all;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 const NUM_OF_REQUESTS: usize = 10;
 
