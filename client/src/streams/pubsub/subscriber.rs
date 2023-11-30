@@ -1,7 +1,9 @@
+use super::states::{SubscriberWantsDecoder, SubscriberWantsOpen};
 use crate::connection::{ClientConnection, SharedConnection};
-use crate::keep_alive::{AttemptFut, BackoffStrategy, KeepAlive};
+use crate::keep_alive::{AttemptFut, KeepAlive};
+use crate::streams::aliases::Decomp;
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
-use crate::{StreamBuilder, StreamCommon};
+use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, Stream, StreamExt};
@@ -16,21 +18,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::MutexGuard;
 
-type Decomp = Arc<dyn Decompress + Send + Sync>;
-
-#[doc(hidden)]
-pub struct SubscriberWantsDecoder {
-    pub(crate) common: StreamCommon,
-}
-
-#[doc(hidden)]
-pub struct SubscriberWantsOpen<D, Item> {
-    common: StreamCommon,
-    decoder: D,
-    decompression: Option<Decomp>,
-    _marker: PhantomData<Item>,
-}
-
 impl StreamBuilder<SubscriberWantsDecoder> {
     /// Specifies the decoder a [Subscriber](crate::Subscriber) uses for decoding messages
     /// received over the wire.
@@ -38,17 +25,11 @@ impl StreamBuilder<SubscriberWantsDecoder> {
     /// A decoder can be any type implementing
     /// [MessageDecoder](crate::std::traits::codec::MessageDecoder).
     pub fn with_decoder<D, Item>(self, decoder: D) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
-        let state = SubscriberWantsOpen {
-            common: self.state.common,
-            decoder,
-            decompression: None,
-            _marker: PhantomData,
-        };
+        let next_state = SubscriberWantsOpen::new(self.state, decoder);
 
         StreamBuilder {
-            state,
-            connection: self.connection,
-            backoff_strategy: self.backoff_strategy,
+            state: next_state,
+            client: self.client,
         }
     }
 }
@@ -103,8 +84,7 @@ where
         };
 
         let subscriber = Subscriber::spawn(
-            self.connection,
-            self.backoff_strategy,
+            self.client,
             headers,
             self.state.decoder,
             self.state.decompression,
@@ -124,7 +104,7 @@ where
 /// **Note:** The Subscriber struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
 pub struct Subscriber<D, Item> {
-    connection: SharedConnection,
+    client: Client,
     stream: BiStream,
     headers: SubscriberPayload,
     decoder: D,
@@ -139,18 +119,17 @@ where
     Item: Unpin + Send,
 {
     async fn spawn(
-        connection: SharedConnection,
-        backoff_strategy: BackoffStrategy,
+        client: Client,
         headers: SubscriberPayload,
         decoder: D,
         decompression: Option<Decomp>,
     ) -> Result<KeepAlive<Self, Item>> {
-        let lock = connection.lock().await;
+        let lock = client.connection.lock().await;
         let mut stream = Self::open_stream(lock, headers.clone()).await?;
         stream.finish().await?;
 
         let subscriber = Self {
-            connection,
+            client: client.clone(),
             stream,
             headers,
             decoder,
@@ -159,7 +138,7 @@ where
             _marker: PhantomData,
         };
 
-        Ok(KeepAlive::new(subscriber, backoff_strategy))
+        Ok(KeepAlive::new(subscriber, client.backoff_strategy))
     }
 
     async fn open_stream(
@@ -262,7 +241,7 @@ where
     }
 
     fn get_connection(&self) -> SharedConnection {
-        self.connection.clone()
+        self.client.connection.clone()
     }
 
     fn get_headers(&self) -> Self::Headers {

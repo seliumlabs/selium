@@ -1,8 +1,10 @@
-use super::builder::{StreamBuilder, StreamCommon};
+use super::states::{PublisherWantsEncoder, PublisherWantsOpen};
 use crate::batching::{BatchConfig, MessageBatch};
 use crate::connection::{ClientConnection, SharedConnection};
-use crate::keep_alive::{AttemptFut, BackoffStrategy, KeepAlive};
+use crate::keep_alive::{AttemptFut, KeepAlive};
+use crate::streams::aliases::Comp;
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
+use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Sink, SinkExt};
@@ -18,23 +20,6 @@ use std::task::{Context, Poll};
 use std::time::Instant;
 use tokio::sync::MutexGuard;
 
-type Comp = Arc<dyn Compress + Send + Sync>;
-
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct PublisherWantsEncoder {
-    pub(crate) common: StreamCommon,
-}
-
-#[doc(hidden)]
-pub struct PublisherWantsOpen<E, Item> {
-    common: StreamCommon,
-    encoder: E,
-    compression: Option<Comp>,
-    batch_config: Option<BatchConfig>,
-    _marker: PhantomData<Item>,
-}
-
 impl StreamBuilder<PublisherWantsEncoder> {
     /// Specifies the encoder a [Publisher](crate::Publisher) uses for encoding produced messages prior
     /// to being sent over the wire.
@@ -42,18 +27,11 @@ impl StreamBuilder<PublisherWantsEncoder> {
     /// An encoder can be any type implementing
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
     pub fn with_encoder<E, Item>(self, encoder: E) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
-        let state = PublisherWantsOpen {
-            common: self.state.common,
-            encoder,
-            compression: None,
-            batch_config: None,
-            _marker: PhantomData,
-        };
+        let next_state = PublisherWantsOpen::new(self.state, encoder);
 
         StreamBuilder {
-            state,
-            connection: self.connection,
-            backoff_strategy: self.backoff_strategy,
+            state: next_state,
+            client: self.client,
         }
     }
 }
@@ -125,8 +103,7 @@ where
         };
 
         let publisher = Publisher::spawn(
-            self.connection,
-            self.backoff_strategy,
+            self.client,
             headers,
             self.state.encoder,
             self.state.compression,
@@ -151,8 +128,7 @@ where
 /// **Note:** The Publisher struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
 pub struct Publisher<E, Item> {
-    connection: SharedConnection,
-    backoff_strategy: BackoffStrategy,
+    client: Client,
     stream: BiStream,
     headers: PublisherPayload,
     encoder: E,
@@ -168,30 +144,28 @@ where
     Item: Unpin + Send,
 {
     async fn spawn(
-        connection: SharedConnection,
-        backoff_strategy: BackoffStrategy,
+        client: Client,
         headers: PublisherPayload,
         encoder: E,
         compression: Option<Comp>,
         batch_config: Option<BatchConfig>,
     ) -> Result<KeepAlive<Self, Item>> {
         let batch = batch_config.as_ref().map(|c| MessageBatch::from(c.clone()));
-        let lock = connection.lock().await;
+        let lock = client.connection.lock().await;
         let stream = Self::open_stream(lock, headers.clone()).await?;
 
         let publisher = Self {
-            connection,
+            client: client.clone(),
             stream,
             headers,
             encoder,
             compression,
             batch,
             batch_config,
-            backoff_strategy: backoff_strategy.clone(),
             _marker: PhantomData,
         };
 
-        Ok(KeepAlive::new(publisher, backoff_strategy))
+        Ok(KeepAlive::new(publisher, client.backoff_strategy))
     }
 
     /// Spawns a new [Publisher] stream with the same configuration as the current stream, without
@@ -208,8 +182,7 @@ where
     /// Returns [Err] if a new stream cannot be opened on the current client connection.
     pub async fn duplicate(&self) -> Result<KeepAlive<Self, Item>> {
         let publisher = Publisher::spawn(
-            self.connection.clone(),
-            self.backoff_strategy.clone(),
+            self.client.clone(),
             self.headers.clone(),
             self.encoder.clone(),
             self.compression.clone(),
@@ -354,7 +327,7 @@ where
     }
 
     fn get_connection(&self) -> SharedConnection {
-        self.connection.clone()
+        self.client.connection.clone()
     }
 
     fn get_headers(&self) -> Self::Headers {

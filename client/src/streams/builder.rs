@@ -1,4 +1,4 @@
-use crate::{connection::SharedConnection, keep_alive::BackoffStrategy, traits::TryIntoU64};
+use crate::{traits::TryIntoU64, Client};
 use selium_protocol::Operation;
 use selium_std::errors::Result;
 
@@ -18,22 +18,26 @@ pub const RETENTION_POLICY_DEFAULT: u64 = 0;
 /// constructed via any of the methods on a [Client](crate::Client) instance. For example, the
 /// [subscriber](crate::Client::subscriber) and [publisher](crate::Client::publisher) methods will
 /// construct the respective StreamBuilder.
-#[derive(Debug)]
 pub struct StreamBuilder<T> {
     pub(crate) state: T,
-    pub(crate) connection: SharedConnection,
-    pub(crate) backoff_strategy: BackoffStrategy,
+    pub(crate) client: Client,
+}
+
+impl<T> StreamBuilder<T> {
+    pub fn new(client: Client, state: T) -> Self {
+        Self { state, client }
+    }
 }
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct StreamCommon {
+pub struct PubSubCommon {
     pub(crate) topic: String,
     pub(crate) retention_policy: u64,
     pub(crate) operations: Vec<Operation>,
 }
 
-impl StreamCommon {
+impl PubSubCommon {
     pub fn new(topic: &str) -> Self {
         Self {
             topic: topic.to_owned(),

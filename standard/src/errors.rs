@@ -120,6 +120,12 @@ pub enum SeliumError {
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
 
+    #[error("Request failed.")]
+    RequestFailed,
+
+    #[error("The request timed out before receiving a reply.")]
+    RequestTimeout,
+
     #[error(transparent)]
     IoError(#[from] std::io::Error),
 }

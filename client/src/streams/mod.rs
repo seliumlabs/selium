@@ -1,7 +1,6 @@
+mod aliases;
 mod builder;
-mod publisher;
-mod subscriber;
 
+pub mod pubsub;
+pub mod request_reply;
 pub use builder::*;
-pub use publisher::*;
-pub use subscriber::*;

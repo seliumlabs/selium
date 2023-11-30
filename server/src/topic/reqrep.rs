@@ -80,6 +80,9 @@ impl Future for Topic {
         } = self.project();
 
         loop {
+            let mut server_pending = false;
+            let mut stream_pending = false;
+
             // If we've got a request buffered already, we need to write it to the replier
             // before we can do anything else.
             if buffered_req.is_some() && server.is_some() {
@@ -87,19 +90,6 @@ impl Future for Topic {
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
                 ready!(s.as_mut().poll_ready(cx)).unwrap();
                 s.start_send(buffered_req.take().unwrap()).unwrap();
-            }
-
-            // If we've got a reply buffered already, we need to write it to the sink
-            // before we can do anything else.
-            if buffered_rep.is_some() {
-                // Unwrapping is safe as the underlying sink is guaranteed not to error
-                ready!(sink.as_mut().poll_ready(cx)).unwrap();
-
-                let r = sink.as_mut().start_send(buffered_rep.take().unwrap());
-
-                if let Some(e) = r.err() {
-                    error!("Failed to send reply to requester: {e:?}");
-                }
             }
 
             match handle.as_mut().poll_next(cx) {
@@ -137,7 +127,9 @@ impl Future for Topic {
             if server.is_some() {
                 match server.as_mut().as_pin_mut().unwrap().poll_next(cx) {
                     // Received message from the server stream
-                    Poll::Ready(Some(Ok(item))) => *buffered_rep = Some(item),
+                    Poll::Ready(Some(Ok(item))) => {
+                        *buffered_rep = Some(item);
+                    }
                     // Encountered an error whilst receiving a message from an inner stream
                     Poll::Ready(Some(Err(e))) => {
                         error!("Received invalid message from stream: {e:?}")
@@ -146,8 +138,21 @@ impl Future for Topic {
                     Poll::Ready(None) => (),
                     // No messages are available at this time
                     Poll::Pending => {
-                        return Poll::Pending;
+                        server_pending = true;
                     }
+                }
+            }
+
+            // If we've got a reply buffered already, we need to write it to the sink
+            // before we can do anything else.
+            if buffered_rep.is_some() {
+                // Unwrapping is safe as the underlying sink is guaranteed not to error
+                ready!(sink.as_mut().poll_ready(cx)).unwrap();
+
+                let r = sink.as_mut().start_send(buffered_rep.take().unwrap());
+
+                if let Some(e) = r.err() {
+                    error!("Failed to send reply to requester: {e:?}");
                 }
             }
 
@@ -167,13 +172,28 @@ impl Future for Topic {
                 }
                 // All streams have finished
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
-                Poll::Ready(None) => ready!(sink.as_mut().poll_flush(cx)).unwrap(),
+                Poll::Ready(None) => {
+                    ready!(sink.as_mut().poll_flush(cx)).unwrap();
+
+                    if server.is_some() {
+                        ready!(server.as_mut().as_pin_mut().unwrap().poll_flush(cx)).unwrap();
+                    }
+                }
                 // No messages are available at this time
                 Poll::Pending => {
-                    // Unwrapping is safe as the underlying sink is guaranteed not to error
-                    ready!(sink.poll_flush(cx)).unwrap();
-                    return Poll::Pending;
+                    stream_pending = true;
                 }
+            }
+
+            if server_pending && stream_pending {
+                // Unwrapping is safe as the underlying sink is guaranteed not to error
+                ready!(sink.poll_flush(cx)).unwrap();
+
+                if server.is_some() {
+                    ready!(server.as_mut().as_pin_mut().unwrap().poll_flush(cx)).unwrap();
+                }
+
+                return Poll::Pending;
             }
         }
     }
