@@ -152,7 +152,7 @@ impl Future for Topic {
                 let r = sink.as_mut().start_send(buffered_rep.take().unwrap());
 
                 if let Some(e) = r.err() {
-                    error!("Failed to send reply to requester: {e:?}");
+                    error!("Failed to send reply to requestor: {e:?}");
                 }
             }
 

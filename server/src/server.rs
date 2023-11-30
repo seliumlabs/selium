@@ -164,7 +164,7 @@ async fn handle_stream(
                     topic_handles.lock().await.push(topic);
                     ts.insert(topic_name.to_owned(), Sender::Pubsub(tx));
                 }
-                Frame::RegisterReplier(_) | Frame::RegisterRequester(_) => {
+                Frame::RegisterReplier(_) | Frame::RegisterRequestor(_) => {
                     let (fut, tx) = reqrep::Topic::pair();
                     let topic = tokio::spawn(fut);
 
@@ -195,10 +195,10 @@ async fn handle_stream(
                     .await
                     .context("Failed to add Replier")?;
             }
-            Frame::RegisterRequester(_) => {
+            Frame::RegisterRequestor(_) => {
                 tx.send(Socket::Reqrep(reqrep::Socket::Client(stream)))
                     .await
-                    .context("Failed to add Requester")?;
+                    .context("Failed to add Requestor")?;
             }
             _ => unreachable!(), // because of `topic_name` instantiation
         }

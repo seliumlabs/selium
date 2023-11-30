@@ -10,7 +10,7 @@ type Headers = Option<HashMap<String, String>>;
 const REGISTER_PUBLISHER: u8 = 0x0;
 const REGISTER_SUBSCRIBER: u8 = 0x1;
 const REGISTER_REPLIER: u8 = 0x2;
-const REGISTER_REQUESTER: u8 = 0x3;
+const REGISTER_REQUESTOR: u8 = 0x3;
 const MESSAGE: u8 = 0x4;
 const BATCH_MESSAGE: u8 = 0x5;
 
@@ -19,7 +19,7 @@ pub enum Frame {
     RegisterPublisher(PublisherPayload),
     RegisterSubscriber(SubscriberPayload),
     RegisterReplier(ReplierPayload),
-    RegisterRequester(RequesterPayload),
+    RegisterRequestor(RequestorPayload),
     Message(MessagePayload),
     BatchMessage(Bytes),
 }
@@ -36,7 +36,7 @@ impl Frame {
             Self::RegisterReplier(payload) => {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
-            Self::RegisterRequester(payload) => {
+            Self::RegisterRequestor(payload) => {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
             Self::Message(payload) => {
@@ -53,7 +53,7 @@ impl Frame {
             Self::RegisterPublisher(_) => REGISTER_PUBLISHER,
             Self::RegisterSubscriber(_) => REGISTER_SUBSCRIBER,
             Self::RegisterReplier(_) => REGISTER_REPLIER,
-            Self::RegisterRequester(_) => REGISTER_REQUESTER,
+            Self::RegisterRequestor(_) => REGISTER_REQUESTOR,
             Self::Message(_) => MESSAGE,
             Self::BatchMessage(_) => BATCH_MESSAGE,
         }
@@ -64,7 +64,7 @@ impl Frame {
             Self::RegisterPublisher(p) => Some(&p.topic),
             Self::RegisterSubscriber(s) => Some(&s.topic),
             Self::RegisterReplier(s) => Some(&s.topic),
-            Self::RegisterRequester(c) => Some(&c.topic),
+            Self::RegisterRequestor(c) => Some(&c.topic),
             Self::Message(_) => None,
             Self::BatchMessage(_) => None,
         }
@@ -78,7 +78,7 @@ impl Frame {
                 .map_err(ProtocolError::SerdeError)?,
             Frame::RegisterReplier(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
-            Frame::RegisterRequester(payload) => bincode::serialize_into(dst.writer(), &payload)
+            Frame::RegisterRequestor(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
             Frame::Message(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
@@ -110,7 +110,7 @@ impl TryFrom<(u8, BytesMut)> for Frame {
             REGISTER_REPLIER => Frame::RegisterReplier(
                 bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
             ),
-            REGISTER_REQUESTER => Frame::RegisterRequester(
+            REGISTER_REQUESTOR => Frame::RegisterRequestor(
                 bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
             ),
             MESSAGE => {
@@ -144,7 +144,7 @@ pub struct ReplierPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RequesterPayload {
+pub struct RequestorPayload {
     pub topic: String,
 }
 
