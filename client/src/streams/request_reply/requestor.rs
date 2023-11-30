@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use selium_protocol::{
-    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequesterPayload, WriteHalf,
+    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequestorPayload, WriteHalf,
 };
 use selium_std::errors::Result;
 use selium_std::errors::{CodecError, SeliumError};
@@ -89,7 +89,7 @@ where
     type Output = Requestor<E, D, ReqItem, ResItem>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = RequesterPayload {
+        let headers = RequestorPayload {
             topic: self.state.endpoint,
         };
 
@@ -131,7 +131,7 @@ where
 {
     async fn spawn(
         client: Client,
-        headers: RequesterPayload,
+        headers: RequestorPayload,
         encoder: E,
         decoder: D,
         compression: Option<Comp>,
@@ -168,12 +168,12 @@ where
 
     async fn open_stream(
         lock: MutexGuard<'_, ClientConnection>,
-        headers: RequesterPayload,
+        headers: RequestorPayload,
     ) -> Result<BiStream> {
         let mut stream = BiStream::try_from_connection(lock.conn()).await?;
         drop(lock);
 
-        let frame = Frame::RegisterRequester(headers);
+        let frame = Frame::RegisterRequestor(headers);
         stream.send(frame).await?;
 
         Ok(stream)
