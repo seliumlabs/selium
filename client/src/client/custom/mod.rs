@@ -1,11 +1,11 @@
 mod states;
 pub use states::*;
 
-use crate::{Client, ClientBuilder,  ClientCommon};
 use crate::connection::{ClientConnection, ConnectionOptions};
-use crate::crypto::cert::{load_keypair, load_root_store, load_certs};
+use crate::crypto::cert::{load_certs, load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
+use crate::{Client, ClientBuilder, ClientCommon};
 use selium_std::errors::Result;
 use std::path::Path;
 use std::sync::Arc;
@@ -90,15 +90,19 @@ impl ClientBuilder<CustomWantsConnect> {
     /// [SocketAddr](std::net::SocketAddr).
     /// - If the connection cannot be established.
     pub async fn connect(self) -> Result<Client> {
-        let CustomWantsConnect { common, certs, key, endpoint, root_store } = self.state;
-        let ClientCommon { keep_alive, backoff_strategy } = common;
-
-        let options = ConnectionOptions::new(
-            certs.as_slice(),
+        let CustomWantsConnect {
+            common,
+            certs,
             key,
+            endpoint,
             root_store,
+        } = self.state;
+        let ClientCommon {
             keep_alive,
-        );
+            backoff_strategy,
+        } = common;
+
+        let options = ConnectionOptions::new(certs.as_slice(), key, root_store, keep_alive);
 
         let connection = ClientConnection::connect(&endpoint, options).await?;
         let connection = Arc::new(Mutex::new(connection));
