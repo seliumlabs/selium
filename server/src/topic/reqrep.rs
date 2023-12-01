@@ -4,7 +4,7 @@ use futures::{
         mpsc::{self, Receiver, Sender},
         oneshot,
     },
-    ready, Future, Sink, Stream,
+    ready, Future, Sink, SinkExt, Stream,
 };
 use log::error;
 use pin_project_lite::pin_project;
@@ -88,8 +88,8 @@ impl Future for Topic {
             if buffered_req.is_some() && server.is_some() {
                 let mut s = server.as_mut().as_pin_mut().unwrap();
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
-                ready!(s.as_mut().poll_ready(cx)).unwrap();
-                s.start_send(buffered_req.take().unwrap()).unwrap();
+                ready!(s.as_mut().poll_ready_unpin(cx)).unwrap();
+                s.start_send_unpin(buffered_req.take().unwrap()).unwrap();
             }
 
             match handle.as_mut().poll_next(cx) {
@@ -112,11 +112,23 @@ impl Future for Topic {
                     stream.iter_mut().for_each(|(_, s)| s.shutdown_stream());
                     sink.iter_mut().for_each(|(_, s)| s.shutdown_sink());
 
+                    if server.is_some() {
+                        server
+                            .as_mut()
+                            .as_pin_mut()
+                            .unwrap()
+                            .as_mut()
+                            .shutdown_stream();
+                    }
+
                     return Poll::Ready(());
                 }
                 // If no messages are available and there's no work to do, block this future
                 Poll::Pending
-                    if stream.is_empty() && buffered_req.is_none() && buffered_rep.is_none() =>
+                    if stream.is_empty()
+                        && server.is_none()
+                        && buffered_req.is_none()
+                        && buffered_rep.is_none() =>
                 {
                     return Poll::Pending
                 }
@@ -132,10 +144,17 @@ impl Future for Topic {
                     }
                     // Encountered an error whilst receiving a message from an inner stream
                     Poll::Ready(Some(Err(e))) => {
-                        error!("Received invalid message from stream: {e:?}")
+                        error!("Received invalid message from replier: {e:?}")
                     }
                     // Server has finished
-                    Poll::Ready(None) => (),
+                    Poll::Ready(None) => {
+                        if server.is_some() {
+                            ready!(server.as_mut().as_pin_mut().unwrap().poll_flush(cx)).unwrap();
+                        }
+
+                        ready!(sink.as_mut().poll_flush(cx)).unwrap();
+                        *server = None;
+                    }
                     // No messages are available at this time
                     Poll::Pending => {
                         server_pending = true;
@@ -168,7 +187,7 @@ impl Future for Topic {
                 }
                 // Encountered an error whilst receiving a message from an inner stream
                 Poll::Ready(Some((_, Err(e)))) => {
-                    error!("Received invalid message from stream: {e:?}")
+                    error!("Received invalid message from requestor: {e:?}")
                 }
                 // All streams have finished
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
