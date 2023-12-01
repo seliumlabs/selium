@@ -31,7 +31,7 @@ fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
     Ok(key)
 }
 
-fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
+pub fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
     let path = path.as_ref();
     let cert_chain = fs::read(path).map_err(CryptoError::OpenCertFileError)?;
     let cert_chain = if path.extension().map_or(false, |x| x == "der") {
@@ -57,10 +57,8 @@ fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
 ///
 /// * `ca_file` - The filepath to the CA file.
 ///
-pub(crate) fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStore> {
-    let ca_file = ca_file.as_ref();
+pub(crate) fn load_root_store(certs: &[Certificate]) -> Result<RootCertStore> {
     let mut store = RootCertStore::empty();
-    let certs = load_certs(ca_file)?;
     store.add_parsable_certificates(&certs);
 
     if store.is_empty() {

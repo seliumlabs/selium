@@ -21,14 +21,15 @@ enum Response {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let connection = selium::client()
+    let connection = selium::custom()
         .keep_alive(5_000)?
+        .endpoint("127.0.0.1:7001")
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(
             "../certs/client/localhost.der",
             "../certs/client/localhost.key.der",
         )?
-        .connect("127.0.0.1:7001")
+        .connect()
         .await?;
 
     let requestor = connection

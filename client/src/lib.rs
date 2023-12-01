@@ -5,6 +5,7 @@ pub mod batching;
 pub mod keep_alive;
 pub mod prelude;
 pub mod traits;
+pub mod constants;
 
 pub(crate) mod connection;
 pub(crate) mod crypto;
