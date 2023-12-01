@@ -10,8 +10,8 @@ use selium_std::errors::Result;
 /// will not be in-scope unless the [ClientBuilder] is in a pre-connection state, which is achieved
 /// by first configuring the root store and keypair.
 ///
-/// **NOTE:** The [ClientBuilder] type is not intended to be used directly. Use the [client]
-/// function to construct a [ClientBuilder] in its initial state.
+/// **NOTE:** The [ClientBuilder] type is not intended to be used directly. Use the [cloud] other
+/// [custom] functions to construct a [ClientBuilder] in its initial state.
 #[derive(Debug)]
 pub struct ClientBuilder<T> {
     pub(crate) state: T,

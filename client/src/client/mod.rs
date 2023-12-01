@@ -12,7 +12,7 @@ pub use builder::*;
 pub use cloud::*;
 pub use custom::*;
 
-/// Constructs a [ClientBuilder] in its initial state. Prefer invoking this function over
+/// Constructs a Custom [ClientBuilder] in its initial state. Prefer invoking this function over
 /// explicitly constructing a [ClientBuilder].
 ///
 /// ```
@@ -24,7 +24,11 @@ pub fn custom() -> ClientBuilder<CustomWantsEndpoint> {
     }
 }
 
-/// Constructs a [ClientBuilder] in its initial state. Prefer invoking this function over
+/// Selium Cloud is a managed service for Selium, eliminating the need to run and maintain your
+/// own Selium Server. If you have registered for an account already, use this endpoint to connect
+/// to the Cloud. Otherwise you can create a free account at [selium.com].
+///
+/// Constructs a Cloud [ClientBuilder] in its initial state. Prefer invoking this function over
 /// explicitly constructing a [ClientBuilder].
 pub fn cloud() -> ClientBuilder<CloudWantsCertAndKey> {
     ClientBuilder {

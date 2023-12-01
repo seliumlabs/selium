@@ -126,10 +126,10 @@ pub enum SeliumError {
     #[error("The request timed out before receiving a reply.")]
     RequestTimeout,
 
-    #[error("Failed to open stream on Selium cloud endpoint.")]
+    #[error("Failed to open stream on Selium Cloud endpoint.")]
     OpenCloudStreamFailed(#[source] ConnectionError),
 
-    #[error("Failed to retrieve server address from Selium cloud.")]
+    #[error("Failed to retrieve server address from Selium Cloud.")]
     GetServerAddressFailed,
 
     #[error(transparent)]
