@@ -41,14 +41,15 @@ async fn run() -> Result<[Option<String>; 16]> {
     let subscriber3 = start_subscriber("/acmeco/something_else").await?;
     let subscriber4 = start_subscriber("/bluthco/stocks").await?;
 
-    let connection = selium::client()
+    let connection = selium::custom()
         .keep_alive(5_000)?
+        .endpoint(SERVER_ADDR)
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(
             "../certs/client/localhost.der",
             "../certs/client/localhost.key.der",
         )?
-        .connect(SERVER_ADDR)
+        .connect()
         .await?;
 
     let mut publisher = connection
@@ -104,14 +105,15 @@ async fn run() -> Result<[Option<String>; 16]> {
 async fn start_subscriber(
     topic: &str,
 ) -> Result<KeepAlive<Subscriber<StringCodec, String>, String>> {
-    let connection = selium::client()
+    let connection = selium::custom()
         .keep_alive(5_000)?
+        .endpoint(SERVER_ADDR)
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(
             "../certs/client/localhost.der",
             "../certs/client/localhost.key.der",
         )?
-        .connect(SERVER_ADDR)
+        .connect()
         .await?;
 
     Ok(connection

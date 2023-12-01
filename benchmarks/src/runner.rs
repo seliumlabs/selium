@@ -48,13 +48,14 @@ impl BenchmarkRunner {
     pub async fn init() -> Result<Self> {
         start_server()?;
 
-        let connection = selium::client()
+        let connection = selium::custom()
+            .endpoint(SERVER_ADDR)
             .with_certificate_authority("certs/client/ca.der")?
             .with_cert_and_key(
                 "certs/client/localhost.der",
                 "certs/client/localhost.key.der",
             )?
-            .connect(SERVER_ADDR)
+            .connect()
             .await?;
 
         Ok(Self { connection })

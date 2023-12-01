@@ -120,11 +120,17 @@ pub enum SeliumError {
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
 
-    #[error("Request failed.")]
+    #[error("The request to the specified endpoint failed.")]
     RequestFailed,
 
     #[error("The request timed out before receiving a reply.")]
     RequestTimeout,
+
+    #[error("Failed to open stream on Selium Cloud endpoint.")]
+    OpenCloudStreamFailed(#[source] ConnectionError),
+
+    #[error("Failed to retrieve server address from Selium Cloud.")]
+    GetServerAddressFailed,
 
     #[error(transparent)]
     IoError(#[from] std::io::Error),

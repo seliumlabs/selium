@@ -2,6 +2,7 @@ mod client;
 mod streams;
 
 pub mod batching;
+pub mod constants;
 pub mod keep_alive;
 pub mod prelude;
 pub mod traits;
