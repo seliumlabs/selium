@@ -59,7 +59,7 @@ pub fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
 ///
 pub(crate) fn load_root_store(certs: &[Certificate]) -> Result<RootCertStore> {
     let mut store = RootCertStore::empty();
-    store.add_parsable_certificates(&certs);
+    store.add_parsable_certificates(certs);
 
     if store.is_empty() {
         return Err(CryptoError::InvalidRootCert.into());
