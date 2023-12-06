@@ -6,7 +6,7 @@ use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{Future, SinkExt, StreamExt};
-use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload};
+use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload, TopicName};
 use selium_std::errors::{CodecError, Result};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use selium_std::traits::compression::{Compress, Decompress};
@@ -77,7 +77,6 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
             client: self.client,
         }
     }
-
 }
 
 #[async_trait]
@@ -94,9 +93,9 @@ where
     type Output = Replier<E, D, F, ReqItem, ResItem>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = ReplierPayload {
-            topic: self.state.endpoint,
-        };
+        let topic = TopicName::try_from(self.state.endpoint.as_str())?;
+
+        let headers = ReplierPayload { topic };
 
         let replier = Replier::spawn(
             self.client,

@@ -1,12 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
 use crate::args::UserArgs;
-use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions, get_pubkey_from_connection};
+use crate::quic::{
+    get_pubkey_from_connection, load_root_store, read_certs, server_config, ConfigOptions,
+};
 use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, StreamExt};
 use log::{error, info};
-use quinn::{Connecting, Endpoint, IdleTimeout, VarInt, Connection};
+use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
 use selium_protocol::{error_codes, BiStream, Frame, ReadHalf, WriteHalf};
+use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 type TopicChannel = Sender<ReadHalf, WriteHalf>;
@@ -140,7 +142,15 @@ async fn handle_connection(
         let topic_handles_clone = topic_handles.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(topics_clone, topic_handles_clone, cloud_auth, stream, connection).await {
+            if let Err(e) = handle_stream(
+                topics_clone,
+                topic_handles_clone,
+                cloud_auth,
+                stream,
+                connection,
+            )
+            .await
+            {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -152,7 +162,7 @@ async fn handle_stream(
     topic_handles: SharedTopicHandles,
     cloud_auth: bool,
     mut stream: BiStream,
-    connection: Connection
+    connection: Connection,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
@@ -165,9 +175,9 @@ async fn handle_stream(
         if cloud_auth {
             let _pub_key = get_pubkey_from_connection(&connection);
             let _namespace = topic.namespace();
-            
+
             // Send a request through the replier topic. Might need to
-            // update the reqrep topic so that we can send any Stream/Sink impl 
+            // update the reqrep topic so that we can send any Stream/Sink impl
             // as a socket.
         }
 

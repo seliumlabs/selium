@@ -96,7 +96,7 @@ where
     type Output = KeepAlive<Publisher<E, Item>, Item>;
 
     async fn open(self) -> Result<Self::Output> {
-        let topic  = TopicName::try_from(self.state.common.topic.as_str())?;
+        let topic = TopicName::try_from(self.state.common.topic.as_str())?;
 
         let headers = PublisherPayload {
             topic,

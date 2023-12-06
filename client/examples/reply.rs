@@ -35,8 +35,8 @@ async fn main() -> Result<()> {
         .replier("/some/endpoint")
         .with_request_decoder(BincodeCodec::default())
         .with_reply_encoder(BincodeCodec::default())
-        .with_handler(|req| { 
-            let my_state = my_state.clone(); 
+        .with_handler(|req| {
+            let my_state = my_state.clone();
             async move { handler(req, my_state).await }
         })
         .open()

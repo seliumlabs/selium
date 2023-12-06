@@ -1,13 +1,13 @@
-use std::{
-    ops::{Deref, DerefMut},
-    pin::Pin,
-    task::{Context, Poll},
-};
 use crate::traits::{ShutdownSink, ShutdownStream};
 use crate::{error_codes, Frame, MessageCodec};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream, StreamId};
 use selium_std::errors::{QuicError, Result, SeliumError};
+use std::{
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    task::{Context, Poll},
+};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 pub struct WriteHalf(FramedWrite<SendStream, MessageCodec>);

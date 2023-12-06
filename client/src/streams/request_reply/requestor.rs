@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use selium_protocol::{
-    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequestorPayload, WriteHalf,
+    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequestorPayload, TopicName, WriteHalf,
 };
 use selium_std::errors::Result;
 use selium_std::errors::{CodecError, SeliumError};
@@ -89,9 +89,9 @@ where
     type Output = Requestor<E, D, ReqItem, ResItem>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = RequestorPayload {
-            topic: self.state.endpoint,
-        };
+        let topic = TopicName::try_from(self.state.endpoint.as_str())?;
+
+        let headers = RequestorPayload { topic };
 
         let requestor = Requestor::spawn(
             self.client,
