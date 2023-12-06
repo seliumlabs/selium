@@ -132,6 +132,9 @@ pub enum SeliumError {
     #[error("Failed to retrieve server address from Selium Cloud.")]
     GetServerAddressFailed,
 
+    #[error("Poorly formatted topic name, must be in the format [namespace]/[topic]")]
+    ParseTopicNameError,
+
     #[error(transparent)]
     IoError(#[from] std::io::Error),
 }

@@ -1,9 +1,8 @@
-use std::collections::HashMap;
-
-use crate::Operation;
+use crate::{Operation, TopicName};
 use bytes::{BufMut, Bytes, BytesMut};
 use selium_std::errors::{ProtocolError, Result, SeliumError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 type Headers = Option<HashMap<String, String>>;
 
@@ -59,7 +58,7 @@ impl Frame {
         }
     }
 
-    pub fn get_topic(&self) -> Option<&str> {
+    pub fn get_topic(&self) -> Option<&TopicName> {
         match self {
             Self::RegisterPublisher(p) => Some(&p.topic),
             Self::RegisterSubscriber(s) => Some(&s.topic),
@@ -126,26 +125,26 @@ impl TryFrom<(u8, BytesMut)> for Frame {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PublisherPayload {
-    pub topic: String,
+    pub topic: TopicName,
     pub retention_policy: u64,
     pub operations: Vec<Operation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SubscriberPayload {
-    pub topic: String,
+    pub topic: TopicName,
     pub retention_policy: u64,
     pub operations: Vec<Operation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ReplierPayload {
-    pub topic: String,
+    pub topic: TopicName,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RequestorPayload {
-    pub topic: String,
+    pub topic: TopicName,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

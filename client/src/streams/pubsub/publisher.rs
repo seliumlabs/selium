@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Sink, SinkExt};
 use selium_protocol::utils::encode_message_batch;
-use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload};
+use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload, TopicName};
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
@@ -96,8 +96,10 @@ where
     type Output = KeepAlive<Publisher<E, Item>, Item>;
 
     async fn open(self) -> Result<Self::Output> {
+        let topic  = TopicName::try_from(self.state.common.topic.as_str())?;
+
         let headers = PublisherPayload {
-            topic: self.state.common.topic,
+            topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
         };

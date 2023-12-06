@@ -1,12 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
-
 use crate::args::UserArgs;
-use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
+use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions, get_pubkey_from_connection};
 use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, StreamExt};
 use log::{error, info};
-use quinn::{Connecting, Endpoint, IdleTimeout, VarInt};
+use quinn::{Connecting, Endpoint, IdleTimeout, VarInt, Connection};
 use selium_protocol::{error_codes, BiStream, Frame, ReadHalf, WriteHalf};
 use tokio::{sync::Mutex, task::JoinHandle};
 
@@ -18,6 +17,7 @@ pub struct Server {
     topics: SharedTopics,
     topic_handles: SharedTopicHandles,
     endpoint: Endpoint,
+    cloud_auth: bool,
 }
 
 impl Server {
@@ -41,9 +41,10 @@ impl Server {
         info!("connection incoming");
         let topics_clone = self.topics.clone();
         let topic_handles = self.topic_handles.clone();
+        let cloud_auth = self.cloud_auth;
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(topics_clone, topic_handles, conn).await {
+            if let Err(e) = handle_connection(topics_clone, topic_handles, cloud_auth, conn).await {
                 error!("connection failed: {:?}", e);
             }
         });
@@ -75,6 +76,7 @@ impl TryFrom<UserArgs> for Server {
     fn try_from(args: UserArgs) -> Result<Self, Self::Error> {
         let root_store = load_root_store(args.cert.ca)?;
         let (certs, key) = read_certs(args.cert.cert, args.cert.key)?;
+        let cloud_auth = args.cloud_auth;
 
         let opts = ConfigOptions {
             keylog: args.keylog,
@@ -93,6 +95,7 @@ impl TryFrom<UserArgs> for Server {
             topics,
             topic_handles,
             endpoint,
+            cloud_auth,
         })
     }
 }
@@ -100,6 +103,7 @@ impl TryFrom<UserArgs> for Server {
 async fn handle_connection(
     topics: SharedTopics,
     topic_handles: SharedTopicHandles,
+    cloud_auth: bool,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -136,7 +140,7 @@ async fn handle_connection(
         let topic_handles_clone = topic_handles.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(topics_clone, topic_handles_clone, stream).await {
+            if let Err(e) = handle_stream(topics_clone, topic_handles_clone, cloud_auth, stream, connection).await {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -146,16 +150,29 @@ async fn handle_connection(
 async fn handle_stream(
     topics: Arc<Mutex<HashMap<String, TopicChannel>>>,
     topic_handles: SharedTopicHandles,
+    cloud_auth: bool,
     mut stream: BiStream,
+    connection: Connection
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         let frame = result?;
-        let topic_name = frame.get_topic().ok_or(anyhow!("Expected header frame"))?;
+        let topic = frame.get_topic().ok_or(anyhow!("Expected header frame"))?;
+        let topic_name = topic.to_string();
+
+        let mut ts = topics.lock().await;
+
+        if cloud_auth {
+            let _pub_key = get_pubkey_from_connection(&connection);
+            let _namespace = topic.namespace();
+            
+            // Send a request through the replier topic. Might need to
+            // update the reqrep topic so that we can send any Stream/Sink impl 
+            // as a socket.
+        }
 
         // Spawn new topic if it doesn't exist yet
-        let mut ts = topics.lock().await;
-        if !ts.contains_key(topic_name) {
+        if !ts.contains_key(&topic_name) {
             match frame {
                 Frame::RegisterPublisher(_) | Frame::RegisterSubscriber(_) => {
                     let (fut, tx) = pubsub::Topic::pair();
@@ -175,7 +192,7 @@ async fn handle_stream(
             };
         }
 
-        let tx = ts.get_mut(topic_name).unwrap();
+        let tx = ts.get_mut(&topic_name).unwrap();
 
         match frame {
             Frame::RegisterPublisher(_) => {

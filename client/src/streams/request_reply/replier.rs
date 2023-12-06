@@ -77,6 +77,7 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
             client: self.client,
         }
     }
+
 }
 
 #[async_trait]

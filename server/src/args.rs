@@ -11,15 +11,22 @@ pub struct UserArgs {
 
     #[clap(flatten)]
     pub cert: CertGroup,
+
     /// Enable stateless retries
     #[clap(long = "stateless-retry")]
     pub stateless_retry: bool,
+
     /// File to log TLS keys to for debugging
     #[clap(long = "keylog")]
     pub keylog: bool,
+
     /// Maximum time in ms a client can idle waiting for data - default to 15 seconds
     #[clap(long = "max-idle-timeout", default_value_t = 15000, value_parser = clap::value_parser!(u32))]
     pub max_idle_timeout: u32,
+
+    /// Enables cloud authentication
+    #[clap(long = "cloud-auth")]
+    pub cloud_auth: bool,
 
     /// Can be called multiple times to increase output
     #[clap(flatten)]

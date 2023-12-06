@@ -3,7 +3,6 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-
 use crate::traits::{ShutdownSink, ShutdownStream};
 use crate::{error_codes, Frame, MessageCodec};
 use futures::{Sink, SinkExt, Stream, StreamExt};

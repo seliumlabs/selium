@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
@@ -27,11 +29,16 @@ async fn main() -> Result<()> {
         .connect()
         .await?;
 
+    let my_state = Arc::new(2);
+
     let replier = connection
         .replier("/some/endpoint")
         .with_request_decoder(BincodeCodec::default())
         .with_reply_encoder(BincodeCodec::default())
-        .with_handler(handler)
+        .with_handler(|req| { 
+            let my_state = my_state.clone(); 
+            async move { handler(req, my_state).await }
+        })
         .open()
         .await
         .unwrap();
@@ -41,7 +48,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handler(req: Request) -> Result<Response, SeliumError> {
+async fn handler(req: Request, state: Arc<i32>) -> Result<Response, SeliumError> {
+    println!("{state}");
     match req {
         Request::HelloWorld(mut name) => {
             let name = name.take().unwrap_or_else(|| "World".to_owned());
