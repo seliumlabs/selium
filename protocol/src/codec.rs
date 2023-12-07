@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn encodes_register_subscriber_frame() {
-        let topic = TopicName::try_from("namespace/topic").unwrap();
+        let topic = TopicName::try_from("/namespace/topic").unwrap();
 
         let frame = Frame::RegisterSubscriber(SubscriberPayload {
             topic,
@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn encodes_register_publisher_frame() {
-        let topic = TopicName::try_from("namespace/topic").unwrap();
+        let topic = TopicName::try_from("/namespace/topic").unwrap();
 
         let frame = Frame::RegisterPublisher(PublisherPayload {
             topic,
@@ -198,7 +198,7 @@ mod tests {
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec;
         let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\x01\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
-        let topic = TopicName::try_from("namespace/topic").unwrap();
+        let topic = TopicName::try_from("/namespace/topic").unwrap();
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
             topic,
@@ -219,7 +219,7 @@ mod tests {
     fn decodes_register_publisher_frame() {
         let mut codec = MessageCodec;
         let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\0\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
-        let topic = TopicName::try_from("namespace/topic").unwrap();
+        let topic = TopicName::try_from("/namespace/topic").unwrap();
 
         let expected = Frame::RegisterPublisher(PublisherPayload {
             topic,

@@ -6,7 +6,7 @@ pub mod reqrep;
 
 pub enum Socket<St, Si> {
     Pubsub(pubsub::Socket<St, Si>),
-    Reqrep(reqrep::Socket),
+    Reqrep(reqrep::Socket<St, Si>),
 }
 
 impl<St, Si> Socket<St, Si> {
@@ -17,7 +17,7 @@ impl<St, Si> Socket<St, Si> {
         }
     }
 
-    fn unwrap_reqrep(self) -> reqrep::Socket {
+    fn unwrap_reqrep(self) -> reqrep::Socket<St, Si> {
         match self {
             Self::Reqrep(s) => s,
             _ => panic!("Attempted to unwrap non-reqrep socket"),
@@ -27,7 +27,7 @@ impl<St, Si> Socket<St, Si> {
 
 pub enum Sender<St, Si> {
     Pubsub(mpsc::Sender<pubsub::Socket<St, Si>>),
-    ReqRep(mpsc::Sender<reqrep::Socket>),
+    ReqRep(mpsc::Sender<reqrep::Socket<St, Si>>),
 }
 
 impl<St, Si> Sender<St, Si> {

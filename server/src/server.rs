@@ -11,7 +11,7 @@ use selium_protocol::{error_codes, BiStream, Frame, ReadHalf, WriteHalf};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
-type TopicChannel = Sender<ReadHalf, WriteHalf>;
+type TopicChannel = Sender<WriteHalf, ReadHalf>;
 type SharedTopics = Arc<Mutex<HashMap<String, TopicChannel>>>;
 type SharedTopicHandles = Arc<Mutex<FuturesUnordered<JoinHandle<()>>>>;
 
@@ -218,12 +218,12 @@ async fn handle_stream(
                     .context("Failed to add Subscriber sink")?;
             }
             Frame::RegisterReplier(_) => {
-                tx.send(Socket::Reqrep(reqrep::Socket::Server(stream)))
+                tx.send(Socket::Reqrep(reqrep::Socket::Server(stream.split())))
                     .await
                     .context("Failed to add Replier")?;
             }
             Frame::RegisterRequestor(_) => {
-                tx.send(Socket::Reqrep(reqrep::Socket::Client(stream)))
+                tx.send(Socket::Reqrep(reqrep::Socket::Client(stream.split())))
                     .await
                     .context("Failed to add Requestor")?;
             }

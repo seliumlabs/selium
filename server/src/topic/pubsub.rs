@@ -21,7 +21,7 @@ const SOCK_CHANNEL_SIZE: usize = 100;
 
 pub type TopicShutdown = oneshot::Receiver<()>;
 
-pub enum Socket<St, Si> {
+pub enum Socket<Si, St> {
     Stream(St),
     Sink(Si),
 }
@@ -29,7 +29,7 @@ pub enum Socket<St, Si> {
 pin_project! {
     #[project = TopicProj]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Topic<St, Si, Item> {
+    pub struct Topic<Si, St, Item> {
         #[pin]
         stream: StreamMap<usize, St>,
         next_stream_id: usize,
@@ -37,13 +37,13 @@ pin_project! {
         sink: FanoutMany<usize, Si>,
         next_sink_id: usize,
         #[pin]
-        handle: Receiver<Socket<St, Si>>,
+        handle: Receiver<Socket<Si, St>>,
         buffered_item: Option<Item>,
     }
 }
 
-impl<St, Si, Item> Topic<St, Si, Item> {
-    pub fn pair() -> (Self, Sender<Socket<St, Si>>) {
+impl<Si, St, Item> Topic<Si, St, Item> {
+    pub fn pair() -> (Self, Sender<Socket<Si, St>>) {
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
 
         (
@@ -60,7 +60,7 @@ impl<St, Si, Item> Topic<St, Si, Item> {
     }
 }
 
-impl<St, Si, Item> Future for Topic<St, Si, Item>
+impl<Si, St, Item> Future for Topic<Si, St, Item>
 where
     St: Stream<Item = Result<Item, Si::Error>> + ShutdownStream + Unpin,
     Si: Sink<Item> + ShutdownSink + Unpin,

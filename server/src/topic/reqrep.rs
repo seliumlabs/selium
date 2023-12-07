@@ -1,19 +1,18 @@
 use crate::sink::Router;
+use anyhow::Result;
 use futures::{
-    channel::{
-        mpsc::{self, Receiver, Sender},
-        oneshot,
-    },
-    ready, Future, Sink, SinkExt, Stream,
+    channel::mpsc::{self, Receiver, Sender},
+    ready, Future, Sink, SinkExt, Stream, StreamExt,
 };
 use log::error;
 use pin_project_lite::pin_project;
 use selium_protocol::{
     traits::{ShutdownSink, ShutdownStream},
-    BiStream, Frame, ReadHalf, WriteHalf,
+    Frame,
 };
 use std::{
     collections::HashMap,
+    fmt::Debug,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -21,33 +20,31 @@ use tokio_stream::StreamMap;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
-pub type TopicShutdown = oneshot::Receiver<()>;
-
-pub enum Socket {
-    Client(BiStream),
-    Server(BiStream),
+pub enum Socket<Si, St> {
+    Client((Si, St)),
+    Server((Si, St)),
 }
 
 pin_project! {
     #[project = TopicProj]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Topic {
+    pub struct Topic<Si, St> {
         #[pin]
-        server: Option<BiStream>,
+        server: Option<(Si, St)>,
         #[pin]
-        stream: StreamMap<usize, ReadHalf>,
+        stream: StreamMap<usize, St>,
         #[pin]
-        sink: Router<WriteHalf>,
+        sink: Router<usize, Si>,
         next_id: usize,
         #[pin]
-        handle: Receiver<Socket>,
+        handle: Receiver<Socket<Si, St>>,
         buffered_req: Option<Frame>,
         buffered_rep: Option<Frame>,
     }
 }
 
-impl Topic {
-    pub fn pair() -> (Self, Sender<Socket>) {
+impl<Si, St> Topic<Si, St> {
+    pub fn pair() -> (Self, Sender<Socket<Si, St>>) {
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
 
         (
@@ -65,7 +62,12 @@ impl Topic {
     }
 }
 
-impl Future for Topic {
+impl<Si, St> Future for Topic<Si, St>
+where
+    St: Stream<Item = Result<Frame, Si::Error>> + ShutdownStream + Unpin,
+    Si: Sink<Frame> + ShutdownSink + Unpin,
+    Si::Error: Debug,
+{
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -86,16 +88,15 @@ impl Future for Topic {
             // If we've got a request buffered already, we need to write it to the replier
             // before we can do anything else.
             if buffered_req.is_some() && server.is_some() {
-                let mut s = server.as_mut().as_pin_mut().unwrap();
+                let si = &mut server.as_mut().as_pin_mut().unwrap().0;
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
-                ready!(s.as_mut().poll_ready_unpin(cx)).unwrap();
-                s.start_send_unpin(buffered_req.take().unwrap()).unwrap();
+                ready!(si.poll_ready_unpin(cx)).unwrap();
+                si.start_send_unpin(buffered_req.take().unwrap()).unwrap();
             }
 
             match handle.as_mut().poll_next(cx) {
                 Poll::Ready(Some(sock)) => match sock {
-                    Socket::Client(bi) => {
-                        let (si, st) = bi.split();
+                    Socket::Client((si, st)) => {
                         stream.as_mut().insert(*next_id, st);
                         sink.as_mut().insert(*next_id, si);
 
@@ -113,12 +114,7 @@ impl Future for Topic {
                     sink.iter_mut().for_each(|(_, s)| s.shutdown_sink());
 
                     if server.is_some() {
-                        server
-                            .as_mut()
-                            .as_pin_mut()
-                            .unwrap()
-                            .as_mut()
-                            .shutdown_stream();
+                        server.as_mut().as_pin_mut().unwrap().1.shutdown_stream();
                     }
 
                     return Poll::Ready(());
@@ -137,7 +133,9 @@ impl Future for Topic {
             }
 
             if server.is_some() {
-                match server.as_mut().as_pin_mut().unwrap().poll_next(cx) {
+                let st = &mut server.as_mut().as_pin_mut().unwrap().1;
+
+                match st.poll_next_unpin(cx) {
                     // Received message from the server stream
                     Poll::Ready(Some(Ok(item))) => {
                         *buffered_rep = Some(item);
@@ -149,7 +147,8 @@ impl Future for Topic {
                     // Server has finished
                     Poll::Ready(None) => {
                         if server.is_some() {
-                            ready!(server.as_mut().as_pin_mut().unwrap().poll_flush(cx)).unwrap();
+                            let si = &mut server.as_mut().as_pin_mut().unwrap().0;
+                            ready!(si.poll_flush_unpin(cx)).unwrap();
                         }
 
                         ready!(sink.as_mut().poll_flush(cx)).unwrap();
@@ -195,7 +194,8 @@ impl Future for Topic {
                     ready!(sink.as_mut().poll_flush(cx)).unwrap();
 
                     if server.is_some() {
-                        ready!(server.as_mut().as_pin_mut().unwrap().poll_flush(cx)).unwrap();
+                        let si = &mut server.as_mut().as_pin_mut().unwrap().0;
+                        ready!(si.poll_flush_unpin(cx)).unwrap();
                     }
                 }
                 // No messages are available at this time
@@ -209,7 +209,8 @@ impl Future for Topic {
                 ready!(sink.poll_flush(cx)).unwrap();
 
                 if server.is_some() {
-                    ready!(server.as_mut().as_pin_mut().unwrap().poll_flush(cx)).unwrap();
+                    let si = &mut server.as_mut().as_pin_mut().unwrap().0;
+                    ready!(si.poll_flush_unpin(cx)).unwrap();
                 }
 
                 return Poll::Pending;

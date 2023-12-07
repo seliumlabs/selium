@@ -3,7 +3,7 @@ use selium_std::errors::SeliumError;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
-const TOPIC_REGEX: &str = r"^([a-zA-Z]+(?:_[a-zA-Z]+)*)\/([a-zA-Z]+(?:_[a-zA-Z]+)*)$";
+const TOPIC_REGEX: &str = r"^\/([\w-]+)\/([\w-]+)$";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TopicName {
