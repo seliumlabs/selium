@@ -135,6 +135,9 @@ pub enum SeliumError {
     #[error("Poorly formatted topic name, must be in the format [namespace]/[topic]")]
     ParseTopicNameError,
 
+    #[error("Cannot use a reserved namespace prefix.")]
+    ReservedNamespaceError,
+
     #[error(transparent)]
     IoError(#[from] std::io::Error),
 }

@@ -7,12 +7,12 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, StreamExt};
 use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
-use selium_protocol::{error_codes, BiStream, Frame, ReadHalf, WriteHalf};
+use selium_protocol::{error_codes, BiStream, Frame, ReadHalf, TopicName, WriteHalf};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 type TopicChannel = Sender<WriteHalf, ReadHalf>;
-type SharedTopics = Arc<Mutex<HashMap<String, TopicChannel>>>;
+type SharedTopics = Arc<Mutex<HashMap<TopicName, TopicChannel>>>;
 type SharedTopicHandles = Arc<Mutex<FuturesUnordered<JoinHandle<()>>>>;
 
 pub struct Server {
@@ -158,7 +158,7 @@ async fn handle_connection(
 }
 
 async fn handle_stream(
-    topics: Arc<Mutex<HashMap<String, TopicChannel>>>,
+    topics: SharedTopics,
     topic_handles: SharedTopicHandles,
     cloud_auth: bool,
     mut stream: BiStream,
@@ -168,7 +168,11 @@ async fn handle_stream(
     if let Some(result) = stream.next().await {
         let frame = result?;
         let topic = frame.get_topic().ok_or(anyhow!("Expected header frame"))?;
-        let topic_name = topic.to_string();
+
+        // Note this can only occur if someone circumvents the client lib
+        if !topic.is_valid() {
+            return Err(anyhow!("Invalid topic name"));
+        }
 
         let mut ts = topics.lock().await;
 
@@ -182,27 +186,27 @@ async fn handle_stream(
         }
 
         // Spawn new topic if it doesn't exist yet
-        if !ts.contains_key(&topic_name) {
+        if !ts.contains_key(&topic) {
             match frame {
                 Frame::RegisterPublisher(_) | Frame::RegisterSubscriber(_) => {
                     let (fut, tx) = pubsub::Topic::pair();
-                    let topic = tokio::spawn(fut);
+                    let handle = tokio::spawn(fut);
 
-                    topic_handles.lock().await.push(topic);
-                    ts.insert(topic_name.to_owned(), Sender::Pubsub(tx));
+                    topic_handles.lock().await.push(handle);
+                    ts.insert(topic.clone(), Sender::Pubsub(tx));
                 }
                 Frame::RegisterReplier(_) | Frame::RegisterRequestor(_) => {
                     let (fut, tx) = reqrep::Topic::pair();
-                    let topic = tokio::spawn(fut);
+                    let handle = tokio::spawn(fut);
 
-                    topic_handles.lock().await.push(topic);
-                    ts.insert(topic_name.to_owned(), Sender::ReqRep(tx));
+                    topic_handles.lock().await.push(handle);
+                    ts.insert(topic.clone(), Sender::ReqRep(tx));
                 }
                 _ => unreachable!(), // because of `topic_name` instantiation
             };
         }
 
-        let tx = ts.get_mut(&topic_name).unwrap();
+        let tx = ts.get_mut(&topic).unwrap();
 
         match frame {
             Frame::RegisterPublisher(_) => {

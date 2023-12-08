@@ -1,22 +1,38 @@
+use lazy_regex::{lazy_regex, Lazy};
 use regex::Regex;
-use selium_std::errors::SeliumError;
+use selium_std::errors::{Result, SeliumError};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
-const TOPIC_REGEX: &str = r"^\/([\w-]+)\/([\w-]+)$";
+const RESERVED_NAMESPACE: &str = "selium";
+// Any [a-zA-Z0-9-_] with a length between 3 and 64 chars
+const COMPONENT_REGEX: Lazy<Regex> = lazy_regex!(r"^[\w-]{3,64}$");
+const TOPIC_REGEX: Lazy<Regex> = lazy_regex!(r"^\/([\w-]{3,64})\/([\w-]{3,64})$");
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TopicName {
     namespace: String,
     topic: String,
 }
 
 impl TopicName {
-    pub fn new(namespace: &str, topic: &str) -> Self {
-        Self {
+    pub fn create(namespace: &str, topic: &str) -> Result<Self> {
+        let s = Self {
             namespace: namespace.to_owned(),
             topic: topic.to_owned(),
+        };
+
+        if s.is_valid() {
+            Ok(s)
+        } else {
+            Err(SeliumError::ParseTopicNameError)
         }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.namespace.starts_with(RESERVED_NAMESPACE)
+            || !COMPONENT_REGEX.is_match(&self.namespace)
+            || !COMPONENT_REGEX.is_match(&self.topic)
     }
 
     pub fn namespace(&self) -> &str {
@@ -32,9 +48,11 @@ impl TryFrom<&str> for TopicName {
     type Error = SeliumError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let regex = Regex::new(TOPIC_REGEX).unwrap();
+        if value[1..].starts_with(RESERVED_NAMESPACE) {
+            return Err(SeliumError::ReservedNamespaceError);
+        }
 
-        let matches = regex
+        let matches = TOPIC_REGEX
             .captures(value)
             .ok_or(SeliumError::ParseTopicNameError)?;
 
@@ -60,11 +78,9 @@ mod tests {
         let topic_names = [
             "",
             "namespace",
-            "namespace/",
-            "name-space/topic-name",
-            "_name_space/topic_name",
-            "name_space/topic_name_",
-            "namespace/topic/other",
+            "/namespace/",
+            "/namespace/topic/other",
+            "/namespace/topic!",
         ];
 
         for topic_name in topic_names {
@@ -92,7 +108,7 @@ mod tests {
     fn outputs_formatted_topic_name() {
         let namespace = "namespace";
         let topic = "topic";
-        let topic_name = TopicName::new(namespace, topic);
+        let topic_name = TopicName::create(namespace, topic).unwrap();
         let expected = format!("{namespace}/{topic}");
 
         assert_eq!(topic_name.to_string(), expected);
