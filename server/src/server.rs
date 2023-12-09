@@ -1,25 +1,23 @@
 use crate::args::UserArgs;
-use crate::quic::{
-    get_pubkey_from_connection, load_root_store, read_certs, server_config, ConfigOptions,
-};
+use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
 use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, StreamExt};
 use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
-use selium_protocol::{error_codes, BiStream, Frame, ReadHalf, TopicName, WriteHalf};
+use selium_protocol::{error_codes, BiStream, Frame, TopicName};
+use selium_std::errors::SeliumError;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
-type TopicChannel = Sender<WriteHalf, ReadHalf>;
-type SharedTopics = Arc<Mutex<HashMap<TopicName, TopicChannel>>>;
+type TopicChannel = Sender<Frame, SeliumError>;
+pub(crate) type SharedTopics = Arc<Mutex<HashMap<TopicName, TopicChannel>>>;
 type SharedTopicHandles = Arc<Mutex<FuturesUnordered<JoinHandle<()>>>>;
 
 pub struct Server {
     topics: SharedTopics,
     topic_handles: SharedTopicHandles,
     endpoint: Endpoint,
-    cloud_auth: bool,
 }
 
 impl Server {
@@ -43,10 +41,9 @@ impl Server {
         info!("connection incoming");
         let topics_clone = self.topics.clone();
         let topic_handles = self.topic_handles.clone();
-        let cloud_auth = self.cloud_auth;
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(topics_clone, topic_handles, cloud_auth, conn).await {
+            if let Err(e) = handle_connection(topics_clone, topic_handles, conn).await {
                 error!("connection failed: {:?}", e);
             }
         });
@@ -78,7 +75,6 @@ impl TryFrom<UserArgs> for Server {
     fn try_from(args: UserArgs) -> Result<Self, Self::Error> {
         let root_store = load_root_store(args.cert.ca)?;
         let (certs, key) = read_certs(args.cert.cert, args.cert.key)?;
-        let cloud_auth = args.cloud_auth;
 
         let opts = ConfigOptions {
             keylog: args.keylog,
@@ -97,7 +93,6 @@ impl TryFrom<UserArgs> for Server {
             topics,
             topic_handles,
             endpoint,
-            cloud_auth,
         })
     }
 }
@@ -105,7 +100,6 @@ impl TryFrom<UserArgs> for Server {
 async fn handle_connection(
     topics: SharedTopics,
     topic_handles: SharedTopicHandles,
-    cloud_auth: bool,
     conn: quinn::Connecting,
 ) -> Result<()> {
     let connection = conn.await?;
@@ -142,14 +136,8 @@ async fn handle_connection(
         let topic_handles_clone = topic_handles.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(
-                topics_clone,
-                topic_handles_clone,
-                cloud_auth,
-                stream,
-                connection,
-            )
-            .await
+            if let Err(e) =
+                handle_stream(topics_clone, topic_handles_clone, stream, connection).await
             {
                 error!("Request failed: {:?}", e);
             }
@@ -160,7 +148,6 @@ async fn handle_connection(
 async fn handle_stream(
     topics: SharedTopics,
     topic_handles: SharedTopicHandles,
-    cloud_auth: bool,
     mut stream: BiStream,
     connection: Connection,
 ) -> Result<()> {
@@ -174,16 +161,11 @@ async fn handle_stream(
             return Err(anyhow!("Invalid topic name"));
         }
 
+        #[cfg(feature = "__cloud")]
+        use crate::cloud::do_cloud_auth;
+        do_cloud_auth(&connection, topic, &topics).await?;
+
         let mut ts = topics.lock().await;
-
-        if cloud_auth {
-            let _pub_key = get_pubkey_from_connection(&connection);
-            let _namespace = topic.namespace();
-
-            // Send a request through the replier topic. Might need to
-            // update the reqrep topic so that we can send any Stream/Sink impl
-            // as a socket.
-        }
 
         // Spawn new topic if it doesn't exist yet
         if !ts.contains_key(&topic) {
@@ -211,25 +193,33 @@ async fn handle_stream(
         match frame {
             Frame::RegisterPublisher(_) => {
                 let (_, read) = stream.split();
-                tx.send(Socket::Pubsub(pubsub::Socket::Stream(read)))
+                tx.send(Socket::Pubsub(pubsub::Socket::Stream(Box::pin(read))))
                     .await
                     .context("Failed to add Publisher stream")?;
             }
             Frame::RegisterSubscriber(_) => {
                 let (write, _) = stream.split();
-                tx.send(Socket::Pubsub(pubsub::Socket::Sink(write)))
+                tx.send(Socket::Pubsub(pubsub::Socket::Sink(Box::pin(write))))
                     .await
                     .context("Failed to add Subscriber sink")?;
             }
             Frame::RegisterReplier(_) => {
-                tx.send(Socket::Reqrep(reqrep::Socket::Server(stream.split())))
-                    .await
-                    .context("Failed to add Replier")?;
+                let (si, st) = stream.split();
+                tx.send(Socket::Reqrep(reqrep::Socket::Server((
+                    Box::pin(si),
+                    Box::pin(st),
+                ))))
+                .await
+                .context("Failed to add Replier")?;
             }
             Frame::RegisterRequestor(_) => {
-                tx.send(Socket::Reqrep(reqrep::Socket::Client(stream.split())))
-                    .await
-                    .context("Failed to add Requestor")?;
+                let (si, st) = stream.split();
+                tx.send(Socket::Reqrep(reqrep::Socket::Client((
+                    Box::pin(si),
+                    Box::pin(st),
+                ))))
+                .await
+                .context("Failed to add Requestor")?;
             }
             _ => unreachable!(), // because of `topic_name` instantiation
         }
@@ -237,5 +227,14 @@ async fn handle_stream(
         info!("Stream closed");
     }
 
+    Ok(())
+}
+
+#[cfg(not(feature = "__cloud"))]
+async fn do_cloud_auth<'a>(
+    _connection: &Connection,
+    _name: &TopicName,
+    _topics: &SharedTopics,
+) -> Result<()> {
     Ok(())
 }

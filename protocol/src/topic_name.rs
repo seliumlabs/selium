@@ -30,9 +30,9 @@ impl TopicName {
     }
 
     pub fn is_valid(&self) -> bool {
-        self.namespace.starts_with(RESERVED_NAMESPACE)
+        !(self.namespace.starts_with(RESERVED_NAMESPACE)
             || !COMPONENT_REGEX.is_match(&self.namespace)
-            || !COMPONENT_REGEX.is_match(&self.topic)
+            || !COMPONENT_REGEX.is_match(&self.topic))
     }
 
     pub fn namespace(&self) -> &str {
@@ -48,6 +48,10 @@ impl TryFrom<&str> for TopicName {
     type Error = SeliumError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
+        if value == "" {
+            return Err(SeliumError::ParseTopicNameError);
+        }
+
         if value[1..].starts_with(RESERVED_NAMESPACE) {
             return Err(SeliumError::ReservedNamespaceError);
         }
@@ -65,7 +69,7 @@ impl TryFrom<&str> for TopicName {
 
 impl Display for TopicName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.namespace, self.topic)
+        write!(f, "/{}/{}", self.namespace, self.topic)
     }
 }
 
@@ -81,6 +85,7 @@ mod tests {
             "/namespace/",
             "/namespace/topic/other",
             "/namespace/topic!",
+            "/selium/topic",
         ];
 
         for topic_name in topic_names {
@@ -92,10 +97,10 @@ mod tests {
     #[test]
     fn successfully_parses_topic_name() {
         let topic_names = [
-            "namespace/topic",
-            "name_space/topic",
-            "namespace/to_pic",
-            "name_space/to_pic",
+            "/namespace/topic",
+            "/name_space/topic",
+            "/namespace/to_pic",
+            "/name_space/to_pic",
         ];
 
         for topic_name in topic_names {
@@ -109,7 +114,7 @@ mod tests {
         let namespace = "namespace";
         let topic = "topic";
         let topic_name = TopicName::create(namespace, topic).unwrap();
-        let expected = format!("{namespace}/{topic}");
+        let expected = format!("/{namespace}/{topic}");
 
         assert_eq!(topic_name.to_string(), expected);
     }

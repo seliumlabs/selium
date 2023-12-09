@@ -1,8 +1,9 @@
-use crate::sink::Router;
-use anyhow::Result;
+use crate::{sink::Router, BoxSink};
 use futures::{
     channel::mpsc::{self, Receiver, Sender},
-    ready, Future, Sink, SinkExt, Stream, StreamExt,
+    ready,
+    stream::BoxStream,
+    Future, Sink, SinkExt, Stream, StreamExt,
 };
 use log::error;
 use pin_project_lite::pin_project;
@@ -10,6 +11,7 @@ use selium_protocol::{
     traits::{ShutdownSink, ShutdownStream},
     Frame,
 };
+use selium_std::errors::Result;
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -20,31 +22,31 @@ use tokio_stream::StreamMap;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
-pub enum Socket<Si, St> {
-    Client((Si, St)),
-    Server((Si, St)),
+pub enum Socket<E> {
+    Client((BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>)),
+    Server((BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>)),
 }
 
 pin_project! {
     #[project = TopicProj]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Topic<Si, St> {
+    pub struct Topic<E> {
         #[pin]
-        server: Option<(Si, St)>,
+        server: Option<(BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>)>,
         #[pin]
-        stream: StreamMap<usize, St>,
+        stream: StreamMap<usize, BoxStream<'static, Result<Frame>>>,
         #[pin]
-        sink: Router<usize, Si>,
+        sink: Router<usize, BoxSink<Frame, E>>,
         next_id: usize,
         #[pin]
-        handle: Receiver<Socket<Si, St>>,
+        handle: Receiver<Socket<E>>,
         buffered_req: Option<Frame>,
         buffered_rep: Option<Frame>,
     }
 }
 
-impl<Si, St> Topic<Si, St> {
-    pub fn pair() -> (Self, Sender<Socket<Si, St>>) {
+impl<E> Topic<E> {
+    pub fn pair() -> (Self, Sender<Socket<E>>) {
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
 
         (
@@ -62,11 +64,9 @@ impl<Si, St> Topic<Si, St> {
     }
 }
 
-impl<Si, St> Future for Topic<Si, St>
+impl<E> Future for Topic<E>
 where
-    St: Stream<Item = Result<Frame, Si::Error>> + ShutdownStream + Unpin,
-    Si: Sink<Frame> + ShutdownSink + Unpin,
-    Si::Error: Debug,
+    E: Debug + Unpin,
 {
     type Output = ();
 

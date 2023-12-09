@@ -1035,6 +1035,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "proxy-shared"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "openssl",
+ "quinn",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "sqlite",
+ "uuid",
+]
+
+[[package]]
 name = "quinn"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1401,6 +1415,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "selium-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap-verbosity-flag",
+ "env_logger",
+ "futures",
+ "log",
+ "openssl",
+ "proxy-shared",
+ "quinn",
+ "rand",
+ "ring 0.16.20",
+ "rustls",
+ "rustls-pemfile",
+ "selium",
+ "selium-tools",
+ "serde",
+ "sqlite",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "selium-server"
 version = "0.2.0"
 dependencies = [
@@ -1420,6 +1461,8 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "selium-protocol",
+ "selium-proxy",
+ "selium-std",
  "serde",
  "tokio",
  "tokio-stream",
@@ -1544,6 +1587,36 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "sqlite"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05439db7afa0ce0b38f6d1b4c691f368adde108df021e15e900fec6a1af92488"
+dependencies = [
+ "libc",
+ "sqlite3-sys",
+]
+
+[[package]]
+name = "sqlite3-src"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfc95a51a1ee38839599371685b9d4a926abb51791f0bc3bf8c3bb7867e6e454"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
+
+[[package]]
+name = "sqlite3-sys"
+version = "0.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2752c669433e40ebb08fde824146f50d9628aa0b66a3b7fc6be34db82a8063b"
+dependencies = [
+ "libc",
+ "sqlite3-src",
+]
 
 [[package]]
 name = "static_assertions"
@@ -1760,6 +1833,15 @@ name = "utf8parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "711b9620af191e0cdc7468a8d14e709c3dcdb115b36f838e601583af800a370a"
+
+[[package]]
+name = "uuid"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e395fcf16a7a3d8127ec99782007af141946b4795001f876d54fb0d55978560"
+dependencies = [
+ "getrandom",
+]
 
 [[package]]
 name = "vcpkg"
