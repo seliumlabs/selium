@@ -103,8 +103,11 @@ where
                         *next_id += 1;
                     }
                     Socket::Server(bi) => {
-                        // XXX Return error to BiStream if server is Some
-                        server.get_or_insert(bi);
+                        if server.is_some() {
+                            // XXX Return error to BiStream if server is Some
+                        } else {
+                            let _ = server.insert(bi);
+                        }
                     }
                 },
                 // If handle is terminated, the stream is dead

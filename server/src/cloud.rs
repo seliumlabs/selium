@@ -21,17 +21,28 @@ use crate::{
     topic::{reqrep, Socket},
 };
 
+#[cfg(debug_assertions)]
+const PROXY_PUBKEY: &[u8; 455] = include_bytes!("../proxy.debug.der");
+#[cfg(not(debug_assertions))]
+const PROXY_PUBKEY: &[u8; 455] = include_bytes!("../proxy.prod.der");
+
 // XXX This is horrendously inefficient! Caching is needed.
 pub async fn do_cloud_auth(
     connection: &Connection,
     name: &TopicName,
     topics: &SharedTopics,
 ) -> AnyhowResult<()> {
+    let pub_key = get_pubkey_from_connection(&connection)?;
+
+    // If this is the proxy, don't do auth
+    if pub_key.as_bytes() == PROXY_PUBKEY {
+        return Ok(());
+    }
+
     let mut ts = topics.lock().await;
 
     let proxy_namespace = TopicName::create("selium", "proxy").unwrap();
 
-    let pub_key = get_pubkey_from_connection(&connection)?;
     let namespace = name.namespace();
 
     if ts.contains_key(&proxy_namespace) {

@@ -149,7 +149,7 @@ async fn handle_stream(
     topics: SharedTopics,
     topic_handles: SharedTopicHandles,
     mut stream: BiStream,
-    connection: Connection,
+    _connection: Connection,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
@@ -162,8 +162,11 @@ async fn handle_stream(
         }
 
         #[cfg(feature = "__cloud")]
-        use crate::cloud::do_cloud_auth;
-        do_cloud_auth(&connection, topic, &topics).await?;
+        {
+            use crate::cloud::do_cloud_auth;
+            do_cloud_auth(&_connection, topic, &topics).await?;
+            // XXX Return error message to client if failed
+        }
 
         let mut ts = topics.lock().await;
 
@@ -227,14 +230,5 @@ async fn handle_stream(
         info!("Stream closed");
     }
 
-    Ok(())
-}
-
-#[cfg(not(feature = "__cloud"))]
-async fn do_cloud_auth<'a>(
-    _connection: &Connection,
-    _name: &TopicName,
-    _topics: &SharedTopics,
-) -> Result<()> {
     Ok(())
 }
