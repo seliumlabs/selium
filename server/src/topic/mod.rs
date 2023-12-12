@@ -30,8 +30,8 @@ pub enum Sender<T, E> {
     ReqRep(mpsc::Sender<reqrep::Socket<E>>),
 }
 
-impl<St, Si> Sender<St, Si> {
-    pub async fn send(&mut self, sock: Socket<St, Si>) -> Result<()> {
+impl<T, E> Sender<T, E> {
+    pub async fn send(&mut self, sock: Socket<T, E>) -> Result<()> {
         match self {
             Self::Pubsub(ref mut s) => s.send(sock.unwrap_pubsub()).await?,
             Self::ReqRep(ref mut s) => s.send(sock.unwrap_reqrep()).await?,

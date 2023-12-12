@@ -12,6 +12,7 @@ const REGISTER_REPLIER: u8 = 0x2;
 const REGISTER_REQUESTOR: u8 = 0x3;
 const MESSAGE: u8 = 0x4;
 const BATCH_MESSAGE: u8 = 0x5;
+const ERROR: u8 = 0x6;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Frame {
@@ -21,6 +22,7 @@ pub enum Frame {
     RegisterRequestor(RequestorPayload),
     Message(MessagePayload),
     BatchMessage(Bytes),
+    Error(Bytes),
 }
 
 impl Frame {
@@ -42,6 +44,7 @@ impl Frame {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
             Self::BatchMessage(bytes) => bytes.len() as u64,
+            Self::Error(bytes) => bytes.len() as u64,
         };
 
         Ok(length)
@@ -55,6 +58,7 @@ impl Frame {
             Self::RegisterRequestor(_) => REGISTER_REQUESTOR,
             Self::Message(_) => MESSAGE,
             Self::BatchMessage(_) => BATCH_MESSAGE,
+            Self::Error(_) => ERROR,
         }
     }
 
@@ -66,6 +70,7 @@ impl Frame {
             Self::RegisterRequestor(c) => Some(&c.topic),
             Self::Message(_) => None,
             Self::BatchMessage(_) => None,
+            Self::Error(_) => None,
         }
     }
 
@@ -82,6 +87,7 @@ impl Frame {
             Frame::Message(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
             Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes),
+            Frame::Error(bytes) => dst.extend_from_slice(&bytes),
         }
 
         Ok(())
@@ -98,7 +104,9 @@ impl Frame {
 impl TryFrom<(u8, BytesMut)> for Frame {
     type Error = SeliumError;
 
-    fn try_from((message_type, bytes): (u8, BytesMut)) -> Result<Self, Self::Error> {
+    fn try_from(
+        (message_type, bytes): (u8, BytesMut),
+    ) -> Result<Self, <Frame as TryFrom<(u8, BytesMut)>>::Error> {
         let frame = match message_type {
             REGISTER_PUBLISHER => Frame::RegisterPublisher(
                 bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
@@ -116,6 +124,7 @@ impl TryFrom<(u8, BytesMut)> for Frame {
                 Frame::Message(bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?)
             }
             BATCH_MESSAGE => Frame::BatchMessage(bytes.into()),
+            ERROR => Frame::Error(bytes.into()),
             _type => return Err(ProtocolError::UnknownMessageType(_type))?,
         };
 

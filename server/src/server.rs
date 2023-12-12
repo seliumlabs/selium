@@ -2,8 +2,8 @@ use crate::args::UserArgs;
 use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
 use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
-use futures::{future::join_all, stream::FuturesUnordered, StreamExt};
-use log::{error, info};
+use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
+use log::{debug, error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
 use selium_protocol::{error_codes, BiStream, Frame, TopicName};
 use selium_std::errors::SeliumError;
@@ -164,8 +164,16 @@ async fn handle_stream(
         #[cfg(feature = "__cloud")]
         {
             use crate::cloud::do_cloud_auth;
-            do_cloud_auth(&_connection, topic, &topics).await?;
-            // XXX Return error message to client if failed
+            if let Err(e) = do_cloud_auth(&_connection, topic, &topics).await {
+                debug!("Cloud authentication error: {e:?}");
+                dbg!(&e);
+
+                stream
+                    .send(Frame::Error(e.to_string().into_bytes().into()))
+                    .await?;
+
+                return Ok(());
+            }
         }
 
         let mut ts = topics.lock().await;
@@ -187,7 +195,7 @@ async fn handle_stream(
                     topic_handles.lock().await.push(handle);
                     ts.insert(topic.clone(), Sender::ReqRep(tx));
                 }
-                _ => unreachable!(), // because of `topic_name` instantiation
+                _ => unreachable!(), // because of `topic` instantiation
             };
         }
 
@@ -224,7 +232,7 @@ async fn handle_stream(
                 .await
                 .context("Failed to add Requestor")?;
             }
-            _ => unreachable!(), // because of `topic_name` instantiation
+            _ => unreachable!(), // because of `topic` instantiation
         }
     } else {
         info!("Stream closed");

@@ -1,11 +1,12 @@
 use crate::{sink::Router, BoxSink};
+use bytes::Bytes;
 use futures::{
     channel::mpsc::{self, Receiver, Sender},
     ready,
     stream::BoxStream,
     Future, Sink, SinkExt, Stream, StreamExt,
 };
-use log::error;
+use log::{error, warn};
 use pin_project_lite::pin_project;
 use selium_protocol::{
     traits::{ShutdownSink, ShutdownStream},
@@ -42,6 +43,7 @@ pin_project! {
         handle: Receiver<Socket<E>>,
         buffered_req: Option<Frame>,
         buffered_rep: Option<Frame>,
+        buffered_err: Option<(Option<Bytes>, BoxSink<Frame, E>)>,
     }
 }
 
@@ -58,6 +60,7 @@ impl<E> Topic<E> {
                 handle: rx,
                 buffered_req: None,
                 buffered_rep: None,
+                buffered_err: None,
             },
             tx,
         )
@@ -79,6 +82,7 @@ where
             mut handle,
             buffered_req,
             buffered_rep,
+            buffered_err,
         } = self.project();
 
         loop {
@@ -94,6 +98,34 @@ where
                 si.start_send_unpin(buffered_req.take().unwrap()).unwrap();
             }
 
+            // If we've got an error buffered already, we need to write it to the client
+            // before we can do anything else.
+            if let Some((maybe_bytes, mut si)) = buffered_err.take() {
+                if let Some(bytes) = maybe_bytes {
+                    match si.poll_ready_unpin(cx) {
+                        Poll::Ready(Ok(_)) => {
+                            if si.start_send_unpin(Frame::Error(bytes)).is_ok() {
+                                *buffered_err = Some((None, si));
+                            }
+                        }
+                        Poll::Ready(Err(e)) => warn!("Could not poll replier sink: {e:?}"),
+                        Poll::Pending => {
+                            *buffered_err = Some((Some(bytes), si));
+                            return Poll::Pending;
+                        }
+                    }
+                } else {
+                    match si.poll_flush_unpin(cx) {
+                        Poll::Ready(Ok(_)) => (),
+                        Poll::Ready(Err(e)) => warn!("Could not flush replier sink: {e:?}"),
+                        Poll::Pending => {
+                            *buffered_err = Some((None, si));
+                            return Poll::Pending;
+                        }
+                    }
+                }
+            }
+
             match handle.as_mut().poll_next(cx) {
                 Poll::Ready(Some(sock)) => match sock {
                     Socket::Client((si, st)) => {
@@ -102,11 +134,12 @@ where
 
                         *next_id += 1;
                     }
-                    Socket::Server(bi) => {
+                    Socket::Server((si, st)) => {
                         if server.is_some() {
-                            // XXX Return error to BiStream if server is Some
+                            *buffered_err =
+                                Some((Some("A replier already exists for this topic".into()), si));
                         } else {
-                            let _ = server.insert(bi);
+                            let _ = server.insert((si, st));
                         }
                     }
                 },
@@ -192,8 +225,8 @@ where
                     error!("Received invalid message from requestor: {e:?}")
                 }
                 // All streams have finished
-                // Unwrapping is safe as the underlying sink is guaranteed not to error
                 Poll::Ready(None) => {
+                    // Unwrapping is safe as the underlying sink is guaranteed not to error
                     ready!(sink.as_mut().poll_flush(cx)).unwrap();
 
                     if server.is_some() {

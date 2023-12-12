@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, time::Duration};
 
 use anyhow::{anyhow, Context, Result as AnyhowResult};
 use bytes::BytesMut;
@@ -14,6 +14,7 @@ use selium_std::{
     errors::{CodecError, Result, SeliumError},
     traits::codec::{MessageDecoder, MessageEncoder},
 };
+use tokio::time::timeout;
 
 use crate::{
     quic::get_pubkey_from_connection,
@@ -41,7 +42,7 @@ pub async fn do_cloud_auth(
 
     let mut ts = topics.lock().await;
 
-    let proxy_namespace = TopicName::create("selium", "proxy").unwrap();
+    let proxy_namespace = TopicName::_create_unchecked("selium", "proxy");
 
     let namespace = name.namespace();
 
@@ -58,16 +59,18 @@ pub async fn do_cloud_auth(
             .context("Failed to add Requestor to proxy topic")?;
 
         tx.send(AdminRequest::GetNamespace(pub_key)).await?;
-        let (response, _) = rx.into_future().await;
-        match response {
-            Some(Ok(AdminResponse::GetNamespaceResponse(ns))) if ns == namespace => Ok(()),
-            Some(Ok(AdminResponse::GetNamespaceResponse(_))) => Err(anyhow!("Access denied")),
-            Some(Ok(_)) => Err(anyhow!("Invalid response from proxy")),
-            Some(Err(e)) => Err(e.into()),
-            None => Err(anyhow!("No response from proxy")),
+        let result = timeout(Duration::from_secs(5), rx.into_future()).await;
+        match result {
+            Ok((Some(Ok(AdminResponse::GetNamespaceResponse(ns))), _)) if ns == namespace => Ok(()),
+            Ok((Some(Ok(AdminResponse::GetNamespaceResponse(_))), _)) => {
+                Err(anyhow!("Access denied"))
+            }
+            Ok((Some(Ok(_)), _)) => Err(anyhow!("Invalid response from proxy")),
+            Ok((Some(Err(e)), _)) => Err(e.into()),
+            _ => Err(anyhow!("No response from proxy")),
         }
     } else {
-        Err(anyhow!("Waiting for proxy - please retry"))
+        Err(anyhow!("Waiting for proxy to connect - please retry"))
     }
 }
 

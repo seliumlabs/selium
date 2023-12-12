@@ -29,6 +29,14 @@ impl TopicName {
         }
     }
 
+    #[doc(hidden)]
+    pub fn _create_unchecked(namespace: &str, topic: &str) -> Self {
+        Self {
+            namespace: namespace.into(),
+            topic: topic.into(),
+        }
+    }
+
     pub fn is_valid(&self) -> bool {
         !(self.namespace.starts_with(RESERVED_NAMESPACE)
             || !COMPONENT_REGEX.is_match(&self.namespace)

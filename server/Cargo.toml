@@ -16,7 +16,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-__cloud = ["selium-proxy"]
+default = ["__cloud"]
+__cloud = ["dep:selium-proxy"]
 
 [dependencies]
 anyhow = "1.0"
