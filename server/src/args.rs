@@ -24,10 +24,6 @@ pub struct UserArgs {
     #[clap(long = "max-idle-timeout", default_value_t = 15000, value_parser = clap::value_parser!(u32))]
     pub max_idle_timeout: u32,
 
-    /// Enables cloud authentication
-    #[clap(long = "cloud-auth")]
-    pub cloud_auth: bool,
-
     /// Can be called multiple times to increase output
     #[clap(flatten)]
     pub verbose: Verbosity,
