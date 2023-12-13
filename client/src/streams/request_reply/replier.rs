@@ -67,7 +67,7 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
         D: MessageDecoder<ReqItem> + Send + Unpin,
         E: MessageEncoder<ResItem> + Send + Unpin,
         F: FnMut(ReqItem) -> Fut,
-        Fut: Future<Output = Result<ResItem>>,
+        Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
         ReqItem: Unpin + Send,
         ResItem: Unpin + Send,
     {
@@ -87,7 +87,7 @@ where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = Result<ResItem>>,
+    Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
@@ -129,7 +129,7 @@ where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = Result<ResItem>>,
+    Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
@@ -208,7 +208,7 @@ where
         while let Some(Ok(request)) = self.stream.next().await {
             if let Frame::Message(req_payload) = request {
                 let decoded = self.decode_message(req_payload.message)?;
-                let response = (self.handler)(decoded).await?;
+                let response = (self.handler)(decoded).await.unwrap();
                 let encoded = self.encode_message(response)?;
 
                 let res_payload = MessagePayload {

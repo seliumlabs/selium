@@ -1,5 +1,4 @@
 use super::{certificate_builder::CertificateBuilder, key_pair::KeyPair};
-use crate::cli::GenCertsArgs;
 use anyhow::Result;
 use colored::*;
 use rcgen::Certificate;
@@ -7,12 +6,16 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-fn generate_ca_cert() -> Result<Certificate> {
-    let cert = CertificateBuilder::ca()
+fn generate_ca_cert(no_expiry: bool) -> Result<Certificate> {
+    let mut builder = CertificateBuilder::ca()
         .country_name("AU")
-        .organization_name("Selium")
-        .valid_for_days(5)
-        .build()?;
+        .organization_name("Selium");
+
+    if !no_expiry {
+        builder = builder.valid_for_days(5);
+    }
+
+    let cert = builder.build()?;
 
     Ok(cert)
 }
@@ -35,22 +38,22 @@ pub struct CertGen {
 }
 
 impl CertGen {
-    pub fn generate() -> Result<Self> {
+    pub fn generate(no_expiry: bool) -> Result<Self> {
         println!("Generating certificates...");
 
-        let ca = generate_ca_cert()?;
-        let client = KeyPair::client(&ca)?;
-        let server = KeyPair::server(&ca)?;
+        let ca = generate_ca_cert(no_expiry)?;
+        let client = KeyPair::client(&ca, no_expiry)?;
+        let server = KeyPair::server(&ca, no_expiry)?;
         let ca = ca.serialize_der()?;
 
         Ok(Self { ca, client, server })
     }
 
-    pub fn output(&self, args: GenCertsArgs) -> Result<()> {
+    pub fn output(&self, client_out_path: &Path, server_out_path: &Path) -> Result<()> {
         println!("Writing certs to filesystem...");
 
-        self.write_to_filesystem(&args.client_out_path, &self.client)?;
-        self.write_to_filesystem(&args.server_out_path, &self.server)?;
+        self.write_to_filesystem(client_out_path, &self.client)?;
+        self.write_to_filesystem(server_out_path, &self.server)?;
 
         Ok(())
     }
