@@ -1,6 +1,7 @@
 use super::states::*;
 use crate::connection::ClientConnection;
 use crate::streams::aliases::{Comp, Decomp};
+use crate::streams::handle_reply;
 use crate::traits::Open;
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
@@ -168,6 +169,7 @@ where
         let frame = Frame::RegisterReplier(headers);
         stream.send(frame).await?;
 
+        handle_reply(&mut stream).await?;
         Ok(stream)
     }
 

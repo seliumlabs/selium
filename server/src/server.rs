@@ -3,7 +3,7 @@ use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
 use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
-use log::{debug, error, info};
+use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
 use selium_protocol::{error_codes, BiStream, Frame, TopicName};
 use selium_std::errors::SeliumError;
@@ -164,17 +164,22 @@ async fn handle_stream(
         #[cfg(feature = "__cloud")]
         {
             use crate::cloud::do_cloud_auth;
-            if let Err(e) = do_cloud_auth(&_connection, topic, &topics).await {
-                debug!("Cloud authentication error: {e:?}");
-                dbg!(&e);
+            use log::debug;
+            match do_cloud_auth(&_connection, topic, &topics).await {
+                Ok(_) => stream.send(Frame::Ok).await?,
+                Err(e) => {
+                    debug!("Cloud authentication error: {e:?}");
 
-                stream
-                    .send(Frame::Error(e.to_string().into_bytes().into()))
-                    .await?;
+                    stream
+                        .send(Frame::Error(e.to_string().into_bytes().into()))
+                        .await?;
 
-                return Ok(());
+                    return Ok(());
+                }
             }
         }
+        #[cfg(not(feature = "__cloud"))]
+        stream.send(Frame::Ok).await?;
 
         let mut ts = topics.lock().await;
 

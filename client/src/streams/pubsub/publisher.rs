@@ -3,6 +3,7 @@ use crate::batching::{BatchConfig, MessageBatch};
 use crate::connection::{ClientConnection, SharedConnection};
 use crate::keep_alive::{AttemptFut, KeepAlive};
 use crate::streams::aliases::Comp;
+use crate::streams::handle_reply;
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
@@ -198,7 +199,7 @@ where
     /// Gracefully closes the stream.
     ///
     /// It is highly recommended to invoke this method after no new messages will be
-    /// published to this stream. This is to assure that the `Selium` server has acknowledged all
+    /// published to this stream. This is to ensure that the `Selium` server has acknowledged all
     /// sent data prior to closing the connection.
     ///
     /// Under the hood, `finish` calls the [finish](quinn::SendStream::finish) on the underlying
@@ -222,6 +223,7 @@ where
         let frame = Frame::RegisterPublisher(headers);
         stream.send(frame).await?;
 
+        handle_reply(&mut stream).await?;
         Ok(stream)
     }
 

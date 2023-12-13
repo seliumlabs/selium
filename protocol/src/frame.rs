@@ -13,6 +13,7 @@ const REGISTER_REQUESTOR: u8 = 0x3;
 const MESSAGE: u8 = 0x4;
 const BATCH_MESSAGE: u8 = 0x5;
 const ERROR: u8 = 0x6;
+const OK: u8 = 0x7;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Frame {
@@ -23,11 +24,12 @@ pub enum Frame {
     Message(MessagePayload),
     BatchMessage(Bytes),
     Error(Bytes),
+    Ok,
 }
 
 impl Frame {
     pub fn get_length(&self) -> Result<u64> {
-        let length = match self {
+        Ok(match self {
             Self::RegisterPublisher(payload) => {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
@@ -45,9 +47,8 @@ impl Frame {
             }
             Self::BatchMessage(bytes) => bytes.len() as u64,
             Self::Error(bytes) => bytes.len() as u64,
-        };
-
-        Ok(length)
+            Self::Ok => 0,
+        })
     }
 
     pub fn get_type(&self) -> u8 {
@@ -59,6 +60,7 @@ impl Frame {
             Self::Message(_) => MESSAGE,
             Self::BatchMessage(_) => BATCH_MESSAGE,
             Self::Error(_) => ERROR,
+            Self::Ok => OK,
         }
     }
 
@@ -71,6 +73,7 @@ impl Frame {
             Self::Message(_) => None,
             Self::BatchMessage(_) => None,
             Self::Error(_) => None,
+            Self::Ok => None,
         }
     }
 
@@ -88,6 +91,7 @@ impl Frame {
                 .map_err(ProtocolError::SerdeError)?,
             Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes),
             Frame::Error(bytes) => dst.extend_from_slice(&bytes),
+            Frame::Ok => (),
         }
 
         Ok(())
@@ -125,6 +129,7 @@ impl TryFrom<(u8, BytesMut)> for Frame {
             }
             BATCH_MESSAGE => Frame::BatchMessage(bytes.into()),
             ERROR => Frame::Error(bytes.into()),
+            OK => Frame::Ok,
             _type => return Err(ProtocolError::UnknownMessageType(_type))?,
         };
 

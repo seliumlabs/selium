@@ -2,6 +2,7 @@ use super::states::{SubscriberWantsDecoder, SubscriberWantsOpen};
 use crate::connection::{ClientConnection, SharedConnection};
 use crate::keep_alive::{AttemptFut, KeepAlive};
 use crate::streams::aliases::Decomp;
+use crate::streams::handle_reply;
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
@@ -127,8 +128,7 @@ where
         decompression: Option<Decomp>,
     ) -> Result<KeepAlive<Self, Item>> {
         let lock = client.connection.lock().await;
-        let mut stream = Self::open_stream(lock, headers.clone()).await?;
-        stream.finish().await?;
+        let stream = Self::open_stream(lock, headers.clone()).await?;
 
         let subscriber = Self {
             client: client.clone(),
@@ -153,6 +153,7 @@ where
         let frame = Frame::RegisterSubscriber(headers);
         stream.send(frame).await?;
 
+        handle_reply(&mut stream).await?;
         Ok(stream)
     }
 
