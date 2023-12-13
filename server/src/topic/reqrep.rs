@@ -23,6 +23,8 @@ use tokio_stream::StreamMap;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
+type BoxedBiStream<E> = (BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>);
+
 pub enum Socket<E> {
     Client((BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>)),
     Server((BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>)),
@@ -33,7 +35,7 @@ pin_project! {
     #[must_use = "futures do nothing unless you `.await` or poll them"]
     pub struct Topic<E> {
         #[pin]
-        server: Option<(BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>)>,
+        server: Option<BoxedBiStream<E>>,
         #[pin]
         stream: StreamMap<usize, BoxStream<'static, Result<Frame>>>,
         #[pin]

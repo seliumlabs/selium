@@ -184,7 +184,7 @@ async fn handle_stream(
         let mut ts = topics.lock().await;
 
         // Spawn new topic if it doesn't exist yet
-        if !ts.contains_key(&topic) {
+        if !ts.contains_key(topic) {
             match frame {
                 Frame::RegisterPublisher(_) | Frame::RegisterSubscriber(_) => {
                     let (fut, tx) = pubsub::Topic::pair();
@@ -204,7 +204,7 @@ async fn handle_stream(
             };
         }
 
-        let tx = ts.get_mut(&topic).unwrap();
+        let tx = ts.get_mut(topic).unwrap();
 
         match frame {
             Frame::RegisterPublisher(_) => {

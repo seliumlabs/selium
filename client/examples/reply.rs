@@ -31,9 +31,7 @@ async fn main() -> Result<()> {
         .replier("/some/endpoint")
         .with_request_decoder(BincodeCodec::default())
         .with_reply_encoder(BincodeCodec::default())
-        .with_handler(|req| {
-            async move { Ok(handler(req).await?) }
-        })
+        .with_handler(|req| async move { Ok(handler(req).await?) })
         .open()
         .await
         .unwrap();

@@ -6,8 +6,8 @@ use std::fmt::Display;
 
 const RESERVED_NAMESPACE: &str = "selium";
 // Any [a-zA-Z0-9-_] with a length between 3 and 64 chars
-const COMPONENT_REGEX: Lazy<Regex> = lazy_regex!(r"^[\w-]{3,64}$");
-const TOPIC_REGEX: Lazy<Regex> = lazy_regex!(r"^\/([\w-]{3,64})\/([\w-]{3,64})$");
+static COMPONENT_REGEX: Lazy<Regex> = lazy_regex!(r"^[\w-]{3,64}$");
+static TOPIC_REGEX: Lazy<Regex> = lazy_regex!(r"^\/([\w-]{3,64})\/([\w-]{3,64})$");
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TopicName {
@@ -56,7 +56,7 @@ impl TryFrom<&str> for TopicName {
     type Error = SeliumError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        if value == "" {
+        if value.is_empty() {
             return Err(SeliumError::ParseTopicNameError);
         }
 
