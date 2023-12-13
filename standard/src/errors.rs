@@ -132,6 +132,15 @@ pub enum SeliumError {
     #[error("Failed to retrieve server address from Selium Cloud.")]
     GetServerAddressFailed,
 
+    #[error("Poorly formatted topic name, must be in the format [namespace]/[topic]")]
+    ParseTopicNameError,
+
+    #[error("Cannot use a reserved namespace prefix.")]
+    ReservedNamespaceError,
+
     #[error(transparent)]
     IoError(#[from] std::io::Error),
+
+    #[error("Failed to open stream with error: {0}.")]
+    OpenStream(String),
 }

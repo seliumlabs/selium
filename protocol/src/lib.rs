@@ -3,6 +3,7 @@ mod codec;
 mod frame;
 mod operation;
 mod request_id;
+mod topic_name;
 
 pub mod error_codes;
 pub mod traits;
@@ -13,3 +14,4 @@ pub use codec::*;
 pub use frame::*;
 pub use operation::*;
 pub use request_id::*;
+pub use topic_name::*;

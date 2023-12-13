@@ -1,15 +1,17 @@
-use crate::sink::FanoutMany;
-use anyhow::Result;
+use crate::{sink::FanoutMany, BoxSink};
 use futures::{
     channel::{
         mpsc::{self, Receiver, Sender},
         oneshot,
     },
-    ready, Future, Sink, Stream,
+    ready,
+    stream::BoxStream,
+    Future, Sink, Stream,
 };
 use log::error;
 use pin_project_lite::pin_project;
 use selium_protocol::traits::{ShutdownSink, ShutdownStream};
+use selium_std::errors::Result;
 use std::{
     fmt::Debug,
     pin::Pin,
@@ -21,29 +23,29 @@ const SOCK_CHANNEL_SIZE: usize = 100;
 
 pub type TopicShutdown = oneshot::Receiver<()>;
 
-pub enum Socket<St, Si> {
-    Stream(St),
-    Sink(Si),
+pub enum Socket<T, E> {
+    Stream(BoxStream<'static, Result<T>>),
+    Sink(BoxSink<T, E>),
 }
 
 pin_project! {
     #[project = TopicProj]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Topic<St, Si, Item> {
+    pub struct Topic<T, E> {
         #[pin]
-        stream: StreamMap<usize, St>,
+        stream: StreamMap<usize, BoxStream<'static, Result<T>>>,
         next_stream_id: usize,
         #[pin]
-        sink: FanoutMany<usize, Si>,
+        sink: FanoutMany<usize, BoxSink<T, E>>,
         next_sink_id: usize,
         #[pin]
-        handle: Receiver<Socket<St, Si>>,
-        buffered_item: Option<Item>,
+        handle: Receiver<Socket<T, E>>,
+        buffered_item: Option<T>,
     }
 }
 
-impl<St, Si, Item> Topic<St, Si, Item> {
-    pub fn pair() -> (Self, Sender<Socket<St, Si>>) {
+impl<T, E> Topic<T, E> {
+    pub fn pair() -> (Self, Sender<Socket<T, E>>) {
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
 
         (
@@ -60,12 +62,10 @@ impl<St, Si, Item> Topic<St, Si, Item> {
     }
 }
 
-impl<St, Si, Item> Future for Topic<St, Si, Item>
+impl<T, E> Future for Topic<T, E>
 where
-    St: Stream<Item = Result<Item, Si::Error>> + ShutdownStream + Unpin,
-    Si: Sink<Item> + ShutdownSink + Unpin,
-    Si::Error: Debug,
-    Item: Clone + Unpin,
+    E: Debug + Unpin,
+    T: Clone + Unpin,
 {
     type Output = ();
 

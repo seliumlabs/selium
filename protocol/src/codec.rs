@@ -77,13 +77,15 @@ mod tests {
 
     use super::*;
     use crate::utils::encode_message_batch;
-    use crate::{MessagePayload, Operation, PublisherPayload, SubscriberPayload};
+    use crate::{MessagePayload, Operation, PublisherPayload, SubscriberPayload, TopicName};
     use bytes::Bytes;
 
     #[test]
     fn encodes_register_subscriber_frame() {
+        let topic = TopicName::try_from("/namespace/topic").unwrap();
+
         let frame = Frame::RegisterSubscriber(SubscriberPayload {
-            topic: "Some topic".into(),
+            topic,
             retention_policy: 5,
             operations: vec![
                 Operation::Map("first/module.wasm".into()),
@@ -94,7 +96,7 @@ mod tests {
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let expected = Bytes::from_static(b"\0\0\0\0\0\0\0\x86\x01\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -103,8 +105,10 @@ mod tests {
 
     #[test]
     fn encodes_register_publisher_frame() {
+        let topic = TopicName::try_from("/namespace/topic").unwrap();
+
         let frame = Frame::RegisterPublisher(PublisherPayload {
-            topic: "Some topic".into(),
+            topic,
             retention_policy: 5,
             operations: vec![
                 Operation::Map("first/module.wasm".into()),
@@ -115,7 +119,7 @@ mod tests {
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0\0\0\0\0z\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let expected = Bytes::from_static(b"\0\0\0\0\0\0\0\x86\0\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -134,7 +138,7 @@ mod tests {
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0\0\0\0\06\x04\x01\x01\0\0\0\0\0\0\0\x04\0\0\0\0\0\0\0test\x06\0\0\0\0\0\0\0header\x0b\0\0\0\0\0\0\0Hello world");
+        let expected = Bytes::from_static(b"\0\0\0\0\0\0\06\x04\x01\x01\0\0\0\0\0\0\0\x04\0\0\0\0\0\0\0test\x06\0\0\0\0\0\0\0header\x0b\0\0\0\0\0\0\0Hello world");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -193,10 +197,11 @@ mod tests {
     #[test]
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec;
-        let mut src = BytesMut::from("\0\0\0\0\0\0\0z\x01\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\x01\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
+        let topic = TopicName::try_from("/namespace/topic").unwrap();
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
-            topic: "Some topic".into(),
+            topic,
             retention_policy: 5,
             operations: vec![
                 Operation::Map("first/module.wasm".into()),
@@ -213,10 +218,11 @@ mod tests {
     #[test]
     fn decodes_register_publisher_frame() {
         let mut codec = MessageCodec;
-        let mut src = BytesMut::from("\0\0\0\0\0\0\0z\0\n\0\0\0\0\0\0\0Some topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\0\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
+        let topic = TopicName::try_from("/namespace/topic").unwrap();
 
         let expected = Frame::RegisterPublisher(PublisherPayload {
-            topic: "Some topic".into(),
+            topic,
             retention_policy: 5,
             operations: vec![
                 Operation::Map("first/module.wasm".into()),

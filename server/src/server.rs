@@ -1,17 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
-
 use crate::args::UserArgs;
 use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
 use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
-use futures::{future::join_all, stream::FuturesUnordered, StreamExt};
+use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
 use log::{error, info};
-use quinn::{Connecting, Endpoint, IdleTimeout, VarInt};
-use selium_protocol::{error_codes, BiStream, Frame, ReadHalf, WriteHalf};
+use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
+use selium_protocol::{error_codes, BiStream, Frame, TopicName};
+use selium_std::errors::SeliumError;
+use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
-type TopicChannel = Sender<ReadHalf, WriteHalf>;
-type SharedTopics = Arc<Mutex<HashMap<String, TopicChannel>>>;
+type TopicChannel = Sender<Frame, SeliumError>;
+pub(crate) type SharedTopics = Arc<Mutex<HashMap<TopicName, TopicChannel>>>;
 type SharedTopicHandles = Arc<Mutex<FuturesUnordered<JoinHandle<()>>>>;
 
 pub struct Server {
@@ -136,7 +136,9 @@ async fn handle_connection(
         let topic_handles_clone = topic_handles.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_stream(topics_clone, topic_handles_clone, stream).await {
+            if let Err(e) =
+                handle_stream(topics_clone, topic_handles_clone, stream, connection).await
+            {
                 error!("Request failed: {:?}", e);
             }
         });
@@ -144,63 +146,98 @@ async fn handle_connection(
 }
 
 async fn handle_stream(
-    topics: Arc<Mutex<HashMap<String, TopicChannel>>>,
+    topics: SharedTopics,
     topic_handles: SharedTopicHandles,
     mut stream: BiStream,
+    _connection: Connection,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
         let frame = result?;
-        let topic_name = frame.get_topic().ok_or(anyhow!("Expected header frame"))?;
+        let topic = frame.get_topic().ok_or(anyhow!("Expected header frame"))?;
+
+        // Note this can only occur if someone circumvents the client lib
+        if !topic.is_valid() {
+            return Err(anyhow!("Invalid topic name"));
+        }
+
+        #[cfg(feature = "__cloud")]
+        {
+            use crate::cloud::do_cloud_auth;
+            use log::debug;
+            match do_cloud_auth(&_connection, topic, &topics).await {
+                Ok(_) => stream.send(Frame::Ok).await?,
+                Err(e) => {
+                    debug!("Cloud authentication error: {e:?}");
+
+                    stream
+                        .send(Frame::Error(e.to_string().into_bytes().into()))
+                        .await?;
+
+                    return Ok(());
+                }
+            }
+        }
+        #[cfg(not(feature = "__cloud"))]
+        stream.send(Frame::Ok).await?;
+
+        let mut ts = topics.lock().await;
 
         // Spawn new topic if it doesn't exist yet
-        let mut ts = topics.lock().await;
-        if !ts.contains_key(topic_name) {
+        if !ts.contains_key(topic) {
             match frame {
                 Frame::RegisterPublisher(_) | Frame::RegisterSubscriber(_) => {
                     let (fut, tx) = pubsub::Topic::pair();
-                    let topic = tokio::spawn(fut);
+                    let handle = tokio::spawn(fut);
 
-                    topic_handles.lock().await.push(topic);
-                    ts.insert(topic_name.to_owned(), Sender::Pubsub(tx));
+                    topic_handles.lock().await.push(handle);
+                    ts.insert(topic.clone(), Sender::Pubsub(tx));
                 }
                 Frame::RegisterReplier(_) | Frame::RegisterRequestor(_) => {
                     let (fut, tx) = reqrep::Topic::pair();
-                    let topic = tokio::spawn(fut);
+                    let handle = tokio::spawn(fut);
 
-                    topic_handles.lock().await.push(topic);
-                    ts.insert(topic_name.to_owned(), Sender::ReqRep(tx));
+                    topic_handles.lock().await.push(handle);
+                    ts.insert(topic.clone(), Sender::ReqRep(tx));
                 }
-                _ => unreachable!(), // because of `topic_name` instantiation
+                _ => unreachable!(), // because of `topic` instantiation
             };
         }
 
-        let tx = ts.get_mut(topic_name).unwrap();
+        let tx = ts.get_mut(topic).unwrap();
 
         match frame {
             Frame::RegisterPublisher(_) => {
                 let (_, read) = stream.split();
-                tx.send(Socket::Pubsub(pubsub::Socket::Stream(read)))
+                tx.send(Socket::Pubsub(pubsub::Socket::Stream(Box::pin(read))))
                     .await
                     .context("Failed to add Publisher stream")?;
             }
             Frame::RegisterSubscriber(_) => {
                 let (write, _) = stream.split();
-                tx.send(Socket::Pubsub(pubsub::Socket::Sink(write)))
+                tx.send(Socket::Pubsub(pubsub::Socket::Sink(Box::pin(write))))
                     .await
                     .context("Failed to add Subscriber sink")?;
             }
             Frame::RegisterReplier(_) => {
-                tx.send(Socket::Reqrep(reqrep::Socket::Server(stream)))
-                    .await
-                    .context("Failed to add Replier")?;
+                let (si, st) = stream.split();
+                tx.send(Socket::Reqrep(reqrep::Socket::Server((
+                    Box::pin(si),
+                    Box::pin(st),
+                ))))
+                .await
+                .context("Failed to add Replier")?;
             }
             Frame::RegisterRequestor(_) => {
-                tx.send(Socket::Reqrep(reqrep::Socket::Client(stream)))
-                    .await
-                    .context("Failed to add Requestor")?;
+                let (si, st) = stream.split();
+                tx.send(Socket::Reqrep(reqrep::Socket::Client((
+                    Box::pin(si),
+                    Box::pin(st),
+                ))))
+                .await
+                .context("Failed to add Requestor")?;
             }
-            _ => unreachable!(), // because of `topic_name` instantiation
+            _ => unreachable!(), // because of `topic` instantiation
         }
     } else {
         info!("Stream closed");

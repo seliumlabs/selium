@@ -1,12 +1,13 @@
 use super::states::*;
 use crate::connection::ClientConnection;
 use crate::streams::aliases::{Comp, Decomp};
+use crate::streams::handle_reply;
 use crate::traits::Open;
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{Future, SinkExt, StreamExt};
-use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload};
+use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload, TopicName};
 use selium_std::errors::{CodecError, Result};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use selium_std::traits::compression::{Compress, Decompress};
@@ -66,7 +67,7 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
         D: MessageDecoder<ReqItem> + Send + Unpin,
         E: MessageEncoder<ResItem> + Send + Unpin,
         F: FnMut(ReqItem) -> Fut,
-        Fut: Future<Output = Result<ResItem>>,
+        Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
         ReqItem: Unpin + Send,
         ResItem: Unpin + Send,
     {
@@ -86,16 +87,16 @@ where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = Result<ResItem>>,
+    Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
     type Output = Replier<E, D, F, ReqItem, ResItem>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = ReplierPayload {
-            topic: self.state.endpoint,
-        };
+        let topic = TopicName::try_from(self.state.endpoint.as_str())?;
+
+        let headers = ReplierPayload { topic };
 
         let replier = Replier::spawn(
             self.client,
@@ -128,7 +129,7 @@ where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = Result<ResItem>>,
+    Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
@@ -168,6 +169,7 @@ where
         let frame = Frame::RegisterReplier(headers);
         stream.send(frame).await?;
 
+        handle_reply(&mut stream).await?;
         Ok(stream)
     }
 
@@ -206,7 +208,7 @@ where
         while let Some(Ok(request)) = self.stream.next().await {
             if let Frame::Message(req_payload) = request {
                 let decoded = self.decode_message(req_payload.message)?;
-                let response = (self.handler)(decoded).await?;
+                let response = (self.handler)(decoded).await.unwrap();
                 let encoded = self.encode_message(response)?;
 
                 let res_payload = MessagePayload {

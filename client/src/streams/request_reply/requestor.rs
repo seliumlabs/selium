@@ -1,13 +1,14 @@
 use super::states::*;
 use crate::connection::ClientConnection;
 use crate::streams::aliases::{Comp, Decomp};
+use crate::streams::handle_reply;
 use crate::traits::{Open, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use selium_protocol::{
-    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequestorPayload, WriteHalf,
+    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequestorPayload, TopicName, WriteHalf,
 };
 use selium_std::errors::Result;
 use selium_std::errors::{CodecError, SeliumError};
@@ -89,9 +90,9 @@ where
     type Output = Requestor<E, D, ReqItem, ResItem>;
 
     async fn open(self) -> Result<Self::Output> {
-        let headers = RequestorPayload {
-            topic: self.state.endpoint,
-        };
+        let topic = TopicName::try_from(self.state.endpoint.as_str())?;
+
+        let headers = RequestorPayload { topic };
 
         let requestor = Requestor::spawn(
             self.client,
@@ -176,6 +177,7 @@ where
         let frame = Frame::RegisterRequestor(headers);
         stream.send(frame).await?;
 
+        handle_reply(&mut stream).await?;
         Ok(stream)
     }
 

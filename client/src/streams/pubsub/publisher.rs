@@ -3,13 +3,14 @@ use crate::batching::{BatchConfig, MessageBatch};
 use crate::connection::{ClientConnection, SharedConnection};
 use crate::keep_alive::{AttemptFut, KeepAlive};
 use crate::streams::aliases::Comp;
+use crate::streams::handle_reply;
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Sink, SinkExt};
 use selium_protocol::utils::encode_message_batch;
-use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload};
+use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload, TopicName};
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
@@ -96,8 +97,10 @@ where
     type Output = KeepAlive<Publisher<E, Item>, Item>;
 
     async fn open(self) -> Result<Self::Output> {
+        let topic = TopicName::try_from(self.state.common.topic.as_str())?;
+
         let headers = PublisherPayload {
-            topic: self.state.common.topic,
+            topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
         };
@@ -196,7 +199,7 @@ where
     /// Gracefully closes the stream.
     ///
     /// It is highly recommended to invoke this method after no new messages will be
-    /// published to this stream. This is to assure that the `Selium` server has acknowledged all
+    /// published to this stream. This is to ensure that the `Selium` server has acknowledged all
     /// sent data prior to closing the connection.
     ///
     /// Under the hood, `finish` calls the [finish](quinn::SendStream::finish) on the underlying
@@ -220,6 +223,7 @@ where
         let frame = Frame::RegisterPublisher(headers);
         stream.send(frame).await?;
 
+        handle_reply(&mut stream).await?;
         Ok(stream)
     }
 
