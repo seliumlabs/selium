@@ -12,34 +12,35 @@ pub use builder::*;
 pub use cloud::*;
 pub use custom::*;
 
-/// Constructs a Custom [ClientBuilder] in its initial state. Prefer invoking this function over
-/// explicitly constructing a [ClientBuilder].
+/// Constructs a Custom [ClientBuilder] in its initial state to prepare to connect to a self-hosted
+/// `Selium` server.
 ///
-/// ```
-/// let client = selium::custom();
-/// ```
+/// Prefer invoking this function over explicitly constructing a [ClientBuilder].
 pub fn custom() -> ClientBuilder<CustomWantsEndpoint> {
     ClientBuilder {
         state: CustomWantsEndpoint::default(),
     }
 }
 
-/// Selium Cloud is a managed service for Selium, eliminating the need to run and maintain your
-/// own Selium Server. If you have registered for an account already, use this endpoint to connect
-/// to the Cloud. Otherwise you can create a free account at [selium.com].
+/// Constructs a Cloud [ClientBuilder] in its initial state to prepare to connect to `Selium
+/// Cloud`.
 ///
-/// Constructs a Cloud [ClientBuilder] in its initial state. Prefer invoking this function over
-/// explicitly constructing a [ClientBuilder].
+/// **NOTE:** Selium Cloud is a managed service for Selium, eliminating the need to run and maintain your
+/// own Selium Server. If you have registered for an account already, use this endpoint to connect
+/// to the Cloud. Otherwise you can create a free account at [selium.com](https://selium.com).
+/// 
+/// Prefer invoking this function over explicitly constructing a [ClientBuilder].
 pub fn cloud() -> ClientBuilder<CloudWantsCertAndKey> {
     ClientBuilder {
         state: CloudWantsCertAndKey::default(),
     }
 }
 
-/// A client containing an authenticated connection to the `Selium` server.
+/// A client containing an authenticated connection to either `Selium Cloud` or a self-hosted `Selium` 
+/// server.
 ///
-/// The [Client] struct is the entry point to opening various `Selium` streams, such as the
-/// [Publisher](crate::Publisher) and [Subscriber](crate::Subscriber) stream types.
+/// The [Client] struct is the entry point to opening various `Selium` streams, such as the 
+/// [Pub/Sub](crate::streams::pubsub) streams and [Request/Reply](crate::streams::request_reply) streams.
 ///
 /// Multiple streams can be opened from a single connected [Client] without extinguishing the underlying
 /// connection, through the use of [QUIC](https://quicwg.org) multiplexing.

@@ -12,16 +12,19 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 impl ClientBuilder<CustomWantsEndpoint> {
+    /// See [keep_alive](ClientCommon::keep_alive) in [ClientCommon].
     pub fn keep_alive<T: TryIntoU64>(mut self, interval: T) -> Result<Self> {
         self.state.common.keep_alive(interval)?;
         Ok(self)
     }
 
+    /// See [backoff_strategy](ClientCommon::backoff_strategy) in [ClientCommon].
     pub fn backoff_strategy(mut self, strategy: BackoffStrategy) -> Self {
         self.state.common.backoff_strategy(strategy);
         self
     }
 
+    /// Specifies the remote server address to connect to.
     pub fn endpoint(self, endpoint: &str) -> ClientBuilder<CustomWantsRootCert> {
         let next_state = CustomWantsRootCert::new(self.state, endpoint);
         ClientBuilder { state: next_state }
@@ -80,7 +83,7 @@ impl ClientBuilder<CustomWantsCertAndKey> {
 impl ClientBuilder<CustomWantsConnect> {
     /// Attempts to establish a connection with the `Selium` server corresponding to the provided
     /// `addr` argument. The [connect](ClientBuilder::connect) method will only be in scope if the
-    /// [ClientBuilder] is in a pre-connect state, `ClientWantsConnect`.
+    /// [ClientBuilder] is in a pre-connect state, `CustomWantsConnect`.
     ///
     /// # Errors
     ///

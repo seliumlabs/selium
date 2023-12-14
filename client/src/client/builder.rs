@@ -3,15 +3,16 @@ use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
 use selium_std::errors::Result;
 
-/// A convenient builder struct used to build a [Client] instance.
+/// A convenient builder struct used to build a [Client](selium::client) instance.
 ///
-/// The [ClientBuilder] uses a type-level Finite State Machine to assure that a [Client] cannot
-/// be constructed with an invalid state. For example, the [connect](ClientBuilder::connect) method
-/// will not be in-scope unless the [ClientBuilder] is in a pre-connection state, which is achieved
-/// by first configuring the root store and keypair.
+/// The [ClientBuilder] uses a type-level Finite State Machine to assure that a
+/// [Client](selium::Client) cannot be constructed with an invalid state. For example, the
+/// [connect](ClientBuilder::connect) method will not be in-scope unless the [ClientBuilder] is in
+/// a pre-connection state, which is achieved by first configuring the root store and keypair.
 ///
-/// **NOTE:** The [ClientBuilder] type is not intended to be used directly. Use the [cloud] other
-/// [custom] functions to construct a [ClientBuilder] in its initial state.
+/// **NOTE:** The [ClientBuilder] type is not intended to be used directly. Use the
+/// [cloud](selium::cloud) or [custom](selium::custom) functions to construct a [ClientBuilder] in
+/// its initial state.
 #[derive(Debug)]
 pub struct ClientBuilder<T> {
     pub(crate) state: T,
@@ -23,7 +24,7 @@ impl<T> ClientBuilder<T> {
     }
 }
 
-#[doc(hidden)]
+/// Common state for all client types.
 #[derive(Debug)]
 pub struct ClientCommon {
     pub(crate) keep_alive: u64,
@@ -77,6 +78,27 @@ impl ClientCommon {
         Ok(())
     }
 
+    /// Overrides the `backoff_strategy` used to recover a connection and streams when transient
+    /// errors occur. 
+    ///
+    /// See the [keep_alive](selium::keep_alive) module for more information.
+    ///
+    /// # Examples
+    ///
+    /// Overriding the default `backoff_strategy` to use a linear strategy with 5 attempts, and a
+    /// duration step of 2 seconds.
+    ///
+    /// ```
+    /// use selium::keep_alive::BackoffStrategy;
+    /// use std::time::Duration;
+    ///
+    /// let strategy = BackoffStrategy::linear()
+    ///     .max_attempts(5)
+    ///     .step(Duration::from_secs(2));
+    ///
+    /// let client = selium::custom()
+    ///     .backoff_strategy(strategy);
+    /// ```
     pub fn backoff_strategy(&mut self, strategy: BackoffStrategy) {
         self.backoff_strategy = strategy;
     }

@@ -128,6 +128,11 @@ where
 /// contexts as a [Sink](futures::Sink). Any messages sent to the sink will be encoded with the
 /// provided encoder, before being sent over the wire.
 ///
+/// Publishers are asynchronous, meaning that when a message is sent over the wire, the Publisher
+/// will move on without expecting a response, and likewise, won't confirm if the message was delivered 
+/// to the [Subscriber](crate::Subscriber) streams. If you prefer synchronous messaging patterns like RPC,
+/// the [Request/Reply](crate::streams::request_reply) streams are an implementation of this pattern.
+///
 /// **Note:** The Publisher struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
 pub struct Publisher<E, Item> {

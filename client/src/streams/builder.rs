@@ -1,12 +1,9 @@
-use crate::{traits::TryIntoU64, Client};
+use crate::{constants::RETENTION_POLICY_DEFAULT, traits::TryIntoU64, Client};
 use selium_protocol::Operation;
 use selium_std::errors::Result;
 
-/// The default `retention_policy` setting for messages.
-pub const RETENTION_POLICY_DEFAULT: u64 = 0;
-
 /// A convenient builder struct used to build a `Selium` stream, such as a
-/// [Publisher](crate::Publisher) or [Subscriber](crate::Subscriber).
+/// [Pub/Sub](crate::streams::pubsub) or [Request/Reply](crate::streams::request_reply) stream.
 ///
 /// Similar to the [ClientBuilder](crate::ClientBuilder) struct, the [StreamBuilder] struct uses a
 /// type-level Finite State Machine to assure that any stream instance cannot be constructed with an
@@ -16,8 +13,9 @@ pub const RETENTION_POLICY_DEFAULT: u64 = 0;
 ///
 /// **NOTE:** The [StreamBuilder] type is not intended to be used directly, but rather, is
 /// constructed via any of the methods on a [Client](crate::Client) instance. For example, the
-/// [subscriber](crate::Client::subscriber) and [publisher](crate::Client::publisher) methods will
-/// construct the respective StreamBuilder.
+/// [subscriber](crate::Client::subscriber), [publisher](crate::Client::publisher),
+/// [requestor](crate::Client::requestor) and [replier](crate::Client::replier) methods will
+/// construct each respective StreamBuilder.
 pub struct StreamBuilder<T> {
     pub(crate) state: T,
     pub(crate) client: Client,

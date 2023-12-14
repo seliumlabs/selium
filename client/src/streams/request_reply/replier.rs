@@ -15,6 +15,10 @@ use std::{marker::PhantomData, pin::Pin, sync::Arc};
 use tokio::sync::MutexGuard;
 
 impl StreamBuilder<ReplierWantsRequestDecoder> {
+    /// Specifies the decoder a [Replier](crate::Replier) uses for decoding incoming requests.
+    ///
+    /// A decoder can be any type implementing
+    /// [MessageDecoder](crate::std::traits::codec::MessageDecoder).
     pub fn with_request_decoder<D, ReqItem>(
         self,
         decoder: D,
@@ -29,6 +33,11 @@ impl StreamBuilder<ReplierWantsRequestDecoder> {
 }
 
 impl<D, ReqItem> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
+    /// Specifies the decompression implementation a [Replier](crate::Replier) uses for
+    /// decompressing incoming request payloads.
+    ///
+    /// A decompressor can be any type implementing
+    /// [Decompress](crate::std::traits::compression::Decompress).
     pub fn with_request_decompression<T>(mut self, decomp: T) -> Self
     where
         T: Decompress + Send + Sync + 'static,
@@ -37,6 +46,10 @@ impl<D, ReqItem> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
         self
     }
 
+    /// Specifies the encoder a [Replier](crate::Replier) uses for encoding outgoing replies. 
+    ///
+    /// An encoder can be any type implementing
+    /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
     pub fn with_reply_encoder<E, ResItem>(
         self,
         encoder: E,
@@ -51,6 +64,10 @@ impl<D, ReqItem> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
 }
 
 impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, ResItem>> {
+    /// Specifies the compression implementation a [Replier](crate::Replier) uses for
+    /// compressing outgoing replies.
+    ///
+    /// A compressor can be any type implementing [Compress](crate::std::traits::compression::Compress).
     pub fn with_reply_compression<T>(mut self, comp: T) -> Self
     where
         T: Compress + Send + Sync + 'static,
@@ -59,6 +76,15 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
         self
     }
 
+    /// Specifies the callback to invoke when handling incoming requests. The handler can be either
+    /// closure returning an async block, or a pointer to an asynchronous function.
+    ///
+    /// The closure will receive the decoded request as a single argument.
+    ///
+    /// # Errors
+    ///
+    /// The handler function must return a [Result] to account for failures when processing
+    /// requests.
     pub fn with_handler<F, Fut>(
         self,
         handler: F,
@@ -113,6 +139,16 @@ where
     }
 }
 
+/// A Replier stream that binds to a topic, and listens for incoming requests from one or more
+/// [Requestor](crate::Requestor) streams.
+///
+/// When a request is received by a Replier stream, a provided callback (see
+/// [with_handler](Replier::with_handler)) will be invoked to process the request and return a
+/// response back to the [Requestor](crate::Requestor) stream.
+///
+/// When a Replier stream is spawned, it will bind to the specified topic. A consequence of this is
+/// that only one active stream can bind to a namespace/topic combination at any given time. Trying
+/// to bind to an already occupied topic will result in a runtime error.
 pub struct Replier<E, D, F, ReqItem, ResItem> {
     stream: BiStream,
     encoder: E,
@@ -204,6 +240,8 @@ where
         Ok(encoded)
     }
 
+    /// Prepares a [Replier] stream to begin processing incoming messages.
+    /// This method will block the current task until the stream has been exhausted.
     pub async fn listen(mut self) -> Result<()> {
         while let Some(Ok(request)) = self.stream.next().await {
             if let Frame::Message(req_payload) = request {
