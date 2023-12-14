@@ -1,6 +1,3 @@
-use std::net::SocketAddr;
-use std::time::Duration;
-
 use anyhow::Result;
 use clap::Parser;
 use selium::prelude::*;
@@ -9,6 +6,8 @@ use selium::{request_reply::Requestor, Client};
 use selium_server::args::UserArgs;
 use selium_server::server::Server;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+use std::time::Duration;
 
 // Allow the operating system to assign a free port
 const SERVER_ADDR: &str = "127.0.0.1:0";
@@ -67,7 +66,7 @@ impl TestClient {
                     })
                     .open()
                     .await
-                    .expect("Whoops!");
+                    .unwrap();
 
                 replier.listen().await.unwrap()
             }
