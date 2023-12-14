@@ -79,7 +79,7 @@ impl ClientCommon {
     }
 
     /// Overrides the `backoff_strategy` used to recover a connection and streams when transient
-    /// errors occur. 
+    /// errors occur.
     ///
     /// See the [keep_alive](crate::keep_alive) module for more information.
     ///

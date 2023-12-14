@@ -22,7 +22,7 @@ use std::time::Instant;
 use tokio::sync::MutexGuard;
 
 impl StreamBuilder<PublisherWantsEncoder> {
-    /// Specifies the encoder a [Publisher] uses for encoding produced messages prior to being 
+    /// Specifies the encoder a [Publisher] uses for encoding produced messages prior to being
     /// sent over the wire.
     ///
     /// An encoder can be any type implementing
@@ -38,7 +38,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
 }
 
 impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
-    /// Specifies the compression implementation a [Publisher] uses for compressing encoded 
+    /// Specifies the compression implementation a [Publisher] uses for compressing encoded
     /// messages prior to being sent over the wire.
     ///
     /// If message batching is enabled for the stream, the message batch will be compressed as a
@@ -129,7 +129,7 @@ where
 /// provided encoder, before being sent over the wire.
 ///
 /// Publishers are asynchronous, meaning that when a message is sent over the wire, the Publisher
-/// will move on without expecting a response, and likewise, won't confirm if the message was delivered 
+/// will move on without expecting a response, and likewise, won't confirm if the message was delivered
 /// to the [Subscriber](crate::streams::pubsub::Subscriber) streams. If you prefer synchronous messaging patterns like RPC,
 /// the [Request/Reply](crate::streams::request_reply) streams are an implementation of this pattern.
 ///

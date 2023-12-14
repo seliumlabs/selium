@@ -25,7 +25,7 @@ type SharedReadHalf = Arc<Mutex<ReadHalf>>;
 type SharedWriteHalf = Arc<Mutex<WriteHalf>>;
 
 impl StreamBuilder<RequestorWantsRequestEncoder> {
-    /// Specifies the encoder a [Requestor] uses for encoding outgoing requests. 
+    /// Specifies the encoder a [Requestor] uses for encoding outgoing requests.
     ///
     /// An encoder can be any type implementing
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
@@ -73,7 +73,7 @@ impl<E, ReqItem> StreamBuilder<RequestorWantsReplyDecoder<E, ReqItem>> {
 }
 
 impl<E, D, ReqItem, ResItem> StreamBuilder<RequestorWantsOpen<E, D, ReqItem, ResItem>> {
-    /// Specifies the decompression implementation a [Requestor] uses for decompressing incoming 
+    /// Specifies the decompression implementation a [Requestor] uses for decompressing incoming
     /// reply payloads.
     ///
     /// A decompressor can be any type implementing
@@ -86,14 +86,14 @@ impl<E, D, ReqItem, ResItem> StreamBuilder<RequestorWantsOpen<E, D, ReqItem, Res
         self
     }
 
-    /// Overrides the default `request_timeout` setting for the [Requestor] stream. 
+    /// Overrides the default `request_timeout` setting for the [Requestor] stream.
     ///
     /// Requests that exceed the timeout duration will be aborted, to prevent slow replies from
     /// blocking the current task for too long.
     ///
     /// Accepts any `timeout` argument that can be *fallibly* converted into a [u64] via the
     /// [TryIntoU64](crate::traits::TryIntoU64) trait.
-    /// 
+    ///
     /// # Errors
     ///
     /// Returns [Err] if the provided timeout fails to be convert to a [u64].
@@ -137,20 +137,20 @@ where
     }
 }
 
-/// A Requestor stream that dispatches requests to any [Replier](crate::streams::request_reply::Replier) streams 
+/// A Requestor stream that dispatches requests to any [Replier](crate::streams::request_reply::Replier) streams
 /// bound to the specified topic.
 ///
 /// Requestor streams are synchronous, meaning that they will block the current task while awaiting
-/// a response, as opposed to the asynchronous, non-blocking nature of [Publisher](crate::streams::pubsub::Publisher) streams. 
+/// a response, as opposed to the asynchronous, non-blocking nature of [Publisher](crate::streams::pubsub::Publisher) streams.
 /// This makes them ideal for any use-cases relying on the RPC messaging pattern, when a response
 /// is expected before resuming the task.
 ///
 /// Once constructed, requests can be dispatched by calling and awaiting the
-/// [request](Requestor::request) method. 
+/// [request](Requestor::request) method.
 ///
 /// # Concurrency
 ///
-/// The `Requestor` type derives the [Clone] trait, so requests can safely be made concurrently, as the `Requestor` 
+/// The `Requestor` type derives the [Clone] trait, so requests can safely be made concurrently, as the `Requestor`
 /// will implicitly handle routing replies to the correct task.
 #[derive(Clone)]
 pub struct Requestor<E, D, ReqItem, ResItem> {

@@ -15,7 +15,7 @@ use std::{marker::PhantomData, pin::Pin, sync::Arc};
 use tokio::sync::MutexGuard;
 
 impl StreamBuilder<ReplierWantsRequestDecoder> {
-    /// Specifies the decoder a [Replier] uses for decoding 
+    /// Specifies the decoder a [Replier] uses for decoding
     /// incoming requests.
     ///
     /// A decoder can be any type implementing
@@ -47,7 +47,7 @@ impl<D, ReqItem> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
         self
     }
 
-    /// Specifies the encoder a [Replier] uses for encoding outgoing replies. 
+    /// Specifies the encoder a [Replier] uses for encoding outgoing replies.
     ///
     /// An encoder can be any type implementing
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
@@ -143,7 +143,7 @@ where
 /// A Replier stream that binds to a topic, and listens for incoming requests from one or more
 /// [Requestor](crate::streams::request_reply::Requestor) streams.
 ///
-/// When a request is received by a Replier stream, a provided callback will be invoked to process the 
+/// When a request is received by a Replier stream, a provided callback will be invoked to process the
 /// request and return a response back to the [Requestor](crate::streams::request_reply::Requestor) stream.
 ///
 /// When a Replier stream is spawned, it will bind to the specified topic. A consequence of this is
