@@ -1,17 +1,12 @@
 use anyhow::Result;
-use clap::Parser;
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use selium::keep_alive::KeepAlive;
 use selium::std::codecs::StringCodec;
 use selium::{prelude::*, pubsub::Subscriber};
-use selium_server::args::UserArgs;
-use selium_server::server::Server;
-
-const SERVER_ADDR: &'static str = "127.0.0.1:7001";
+use crate::helpers::start_server;
 
 #[tokio::test]
 async fn test_pub_sub() -> Result<()> {
-    start_server()?;
 
     let messages = run().await?;
 
@@ -36,14 +31,17 @@ async fn test_pub_sub() -> Result<()> {
 }
 
 async fn run() -> Result<[Option<String>; 16]> {
-    let mut subscriber1 = start_subscriber("/acmeco/stocks").await?;
-    let mut subscriber2 = start_subscriber("/acmeco/stocks").await?;
-    let subscriber3 = start_subscriber("/acmeco/something_else").await?;
-    let subscriber4 = start_subscriber("/bluthco/stocks").await?;
+    let addr = start_server()?;
+    let addr = addr.to_string();
+
+    let mut subscriber1 = start_subscriber(&addr, "/acmeco/stocks").await?;
+    let mut subscriber2 = start_subscriber(&addr, "/acmeco/stocks").await?;
+    let subscriber3 = start_subscriber(&addr, "/acmeco/something_else").await?;
+    let subscriber4 = start_subscriber(&addr, "/bluthco/stocks").await?;
 
     let connection = selium::custom()
         .keep_alive(5_000)?
-        .endpoint(SERVER_ADDR)
+        .endpoint(&addr)
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(
             "../certs/client/localhost.der",
@@ -103,11 +101,12 @@ async fn run() -> Result<[Option<String>; 16]> {
 }
 
 async fn start_subscriber(
+    addr: &str,
     topic: &str,
 ) -> Result<KeepAlive<Subscriber<StringCodec, String>, String>> {
     let connection = selium::custom()
         .keep_alive(5_000)?
-        .endpoint(SERVER_ADDR)
+        .endpoint(addr)
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(
             "../certs/client/localhost.der",
@@ -123,25 +122,4 @@ async fn start_subscriber(
         .with_decoder(StringCodec)
         .open()
         .await?)
-}
-
-fn start_server() -> Result<()> {
-    let args = UserArgs::parse_from([
-        "",
-        "--cert",
-        "../certs/server/localhost.der",
-        "--key",
-        "../certs/server/localhost.key.der",
-        "--ca",
-        "../certs/server/ca.der",
-        "-vvvv",
-    ]);
-
-    let server = Server::try_from(args)?;
-
-    tokio::spawn(async move {
-        server.listen().await.expect("Failed to spawn server");
-    });
-
-    Ok(())
 }

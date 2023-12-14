@@ -7,6 +7,7 @@ use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
 use selium_protocol::{error_codes, BiStream, Frame, TopicName};
 use selium_std::errors::SeliumError;
+use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
@@ -35,6 +36,11 @@ impl Server {
         }
 
         Ok(())
+    }
+
+    pub fn addr(&self) -> Result<SocketAddr> {
+        let addr = self.endpoint.local_addr()?;
+        Ok(addr)
     }
 
     async fn connect(&self, conn: Connecting) -> Result<()> {
