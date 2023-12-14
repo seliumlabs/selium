@@ -1,7 +1,7 @@
 mod states;
 pub use states::*;
 
-use crate::connection::{ClientConnection, ConnectionOptions};
+use crate::connection::{configure_client, ClientConnection, ConnectionOptions};
 use crate::crypto::cert::{load_certs, load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
@@ -43,7 +43,7 @@ impl ClientBuilder<CustomWantsRootCert> {
         ca_path: T,
     ) -> Result<ClientBuilder<CustomWantsCertAndKey>> {
         let ca_certs = load_certs(ca_path)?;
-        let root_store = load_root_store(&ca_certs)?;
+        let root_store = load_root_store(ca_certs)?;
         let next_state = CustomWantsCertAndKey::new(self.state, root_store);
         Ok(ClientBuilder { state: next_state })
     }
@@ -66,18 +66,18 @@ impl ClientBuilder<CustomWantsCertAndKey> {
     ///
     /// - The provided `key_file` argument does not refer to a file containing a
     /// valid PKCS-8 private key.
-    pub fn with_cert_and_key<T: AsRef<Path>>(
+    pub fn with_cert_and_key<'a, T: AsRef<Path>>(
         self,
         cert_file: T,
         key_file: T,
-    ) -> Result<ClientBuilder<CustomWantsConnect>> {
+    ) -> Result<ClientBuilder<CustomWantsConnect<'a>>> {
         let (certs, key) = load_keypair(cert_file, key_file)?;
         let next_state = CustomWantsConnect::new(self.state, &certs, key);
         Ok(ClientBuilder { state: next_state })
     }
 }
 
-impl ClientBuilder<CustomWantsConnect> {
+impl<'a> ClientBuilder<CustomWantsConnect<'a>> {
     /// Attempts to establish a connection with the `Selium` server corresponding to the provided
     /// `addr` argument. The [connect](ClientBuilder::connect) method will only be in scope if the
     /// [ClientBuilder] is in a pre-connect state, `ClientWantsConnect`.
@@ -103,8 +103,9 @@ impl ClientBuilder<CustomWantsConnect> {
         } = common;
 
         let options = ConnectionOptions::new(certs.as_slice(), key, root_store, keep_alive);
+        let client_config = configure_client(options);
 
-        let connection = ClientConnection::connect(&endpoint, options).await?;
+        let connection = ClientConnection::connect(&endpoint, client_config).await?;
         let connection = Arc::new(Mutex::new(connection));
 
         Ok(Client {
