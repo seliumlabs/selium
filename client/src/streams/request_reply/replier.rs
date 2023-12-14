@@ -86,7 +86,7 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
     ///
     /// The handler function must return a [Result] to account for failures when processing
     /// requests.
-    pub fn with_handler<F, Fut>(
+    pub fn with_handler<Err, F, Fut>(
         self,
         handler: F,
     ) -> StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem, ResItem>>
@@ -94,7 +94,7 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
         D: MessageDecoder<ReqItem> + Send + Unpin,
         E: MessageEncoder<ResItem> + Send + Unpin,
         F: FnMut(ReqItem) -> Fut,
-        Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
+        Fut: Future<Output = std::result::Result<ResItem, Err>>,
         ReqItem: Unpin + Send,
         ResItem: Unpin + Send,
     {
@@ -108,13 +108,13 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
 }
 
 #[async_trait]
-impl<D, E, F, Fut, ReqItem, ResItem> Open
+impl<D, E, Err, F, Fut, ReqItem, ResItem> Open
     for StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem, ResItem>>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
+    Fut: Future<Output = std::result::Result<ResItem, Err>>,
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
@@ -160,12 +160,12 @@ pub struct Replier<E, D, F, ReqItem, ResItem> {
     _res_marker: PhantomData<ResItem>,
 }
 
-impl<D, E, F, Fut, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem>
+impl<D, E, Err, F, Fut, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = std::result::Result<ResItem, Box<dyn std::error::Error>>>,
+    Fut: Future<Output = std::result::Result<ResItem, Err>>,
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {

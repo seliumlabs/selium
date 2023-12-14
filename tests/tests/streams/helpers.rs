@@ -66,7 +66,7 @@ impl TestClient {
                             tokio::time::sleep(delay).await;
                         }
 
-                        Ok(handler(req).await?)
+                        handler(req).await
                     })
                     .open()
                     .await
