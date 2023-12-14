@@ -11,9 +11,9 @@ pub trait Open {
     /// Constructs headers to register a stream with the `Selium` server, and constructs the output
     /// type corresponding to the type of stream.
     ///
-    /// For example, when constructing a [Publisher](crate::Publisher) stream via a
+    /// For example, when constructing a [Publisher](crate::streams::pubsub::Publisher) stream via a
     /// [StreamBuilder](crate::StreamBuilder), the open method will construct publisher headers,
-    /// and then spawn a new [Publisher](crate::Publisher) stream.
+    /// and then spawn a new [Publisher](crate::streams::pubsub::Publisher) stream.
     ///
     /// # Errors
     ///

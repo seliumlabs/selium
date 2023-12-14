@@ -123,6 +123,9 @@ pub enum SeliumError {
     #[error("The request to the specified endpoint failed.")]
     RequestFailed,
 
+    #[error("The request handler encountered an error.")]
+    RequestHandlerFailure,
+
     #[error("The request timed out before receiving a reply.")]
     RequestTimeout,
 

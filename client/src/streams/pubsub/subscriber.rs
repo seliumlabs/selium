@@ -20,8 +20,7 @@ use std::task::{Context, Poll};
 use tokio::sync::MutexGuard;
 
 impl StreamBuilder<SubscriberWantsDecoder> {
-    /// Specifies the decoder a [Subscriber](crate::Subscriber) uses for decoding messages
-    /// received over the wire.
+    /// Specifies the decoder a [Subscriber] uses for decoding messages received over the wire.
     ///
     /// A decoder can be any type implementing
     /// [MessageDecoder](crate::std::traits::codec::MessageDecoder).
@@ -36,7 +35,7 @@ impl StreamBuilder<SubscriberWantsDecoder> {
 }
 
 impl<D, Item> StreamBuilder<SubscriberWantsOpen<D, Item>> {
-    /// Specifies the decompression implementation a [Subscriber](crate::Subscriber) uses for
+    /// Specifies the decompression implementation a [Subscriber] uses for
     /// decompressing messages received over the wire prior to decoding.
     ///
     /// A decompressor can be any type implementing

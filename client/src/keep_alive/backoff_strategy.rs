@@ -1,7 +1,9 @@
 use std::time::Duration;
 
-const DEFAULT_MAX_ATTEMPTS: u32 = 5;
-const DEFAULT_STEP: Duration = Duration::from_secs(1);
+/// Default max retry attempts.
+pub const DEFAULT_MAX_ATTEMPTS: u32 = 5;
+/// Default attempt duration step.
+pub const DEFAULT_STEP: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 enum Strategy {
@@ -33,6 +35,31 @@ impl Default for BackoffStrategyState {
     }
 }
 
+/// Configuration type used to override default backoff strategy.
+///
+/// The `BackoffStrategy` type includes high-level associated functions to construct a configuration
+/// using a preset strategy.
+///
+/// ```
+/// use selium::keep_alive::BackoffStrategy;
+///
+/// let linear = BackoffStrategy::linear();
+/// let constant = BackoffStrategy::constant();
+/// let exponential = BackoffStrategy::exponential(2);
+/// ```
+///
+/// The preset strategy can then be tweaked further by overriding the default settings provided for
+/// the max attempts, max retry duration, and duration step.
+///
+/// ```
+/// use selium::keep_alive::BackoffStrategy;
+/// use std::time::Duration;
+///
+/// let tweaked_linear = BackoffStrategy::linear()
+///     .with_max_attempts(5)
+///     .with_max_duration(Duration::from_secs(3))
+///     .with_step(Duration::from_secs(1));
+/// ```
 #[derive(Default, Debug, Clone)]
 pub struct BackoffStrategy {
     strategy_type: Strategy,
@@ -47,34 +74,177 @@ impl BackoffStrategy {
         }
     }
 
+    /// Constructs a new `RetryStrategy` instance with a `linear` preset.
+    ///
+    /// A linear retry strategy will increase each successive attempt linearly by the provided
+    /// (or default if not provided) `step`.
+    ///
+    /// # Examples
+    ///
+    /// The following strategy will produce a sequence of [Duration] values equivalent
+    /// to `2s, 4s, 6s, 8s, 10s`.
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::linear()
+    ///     .with_max_attempts(5)
+    ///     .with_step(Duration::from_secs(2));
+    /// ```
     pub fn linear() -> Self {
         Self::new(Strategy::Linear)
     }
 
+    /// Constructs a new `RetryStrategy` instance with a `constant` preset.
+    ///
+    /// A constant retry strategy will not increase the duration of each successive retry.
+    ///
+    /// # Examples
+    ///
+    /// The following strategy will produce a sequence of [Duration] values equivalent
+    /// to `2s, 2s, 2s, 2s, 2s`.
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::constant()
+    ///     .with_max_attempts(5)
+    ///     .with_step(Duration::from_secs(2));
+    /// ```
     pub fn constant() -> Self {
         Self::new(Strategy::Constant)
     }
 
+    /// Constructs a new `RetryStrategy` instance with an `exponential` preset.
+    ///
+    /// An exponential retry strategy will increase each successive attempt exponentially using
+    /// the provided (or default if not provided) `step` and exponential `factor`.
+    ///
+    /// # Examples
+    ///
+    /// The following strategy will produce a sequence of [Duration] values equivalent
+    /// to `2s, 4s, 8s, 16s, 32s`.
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::exponential(2)
+    ///     .with_max_attempts(5)
+    ///     .with_step(Duration::from_secs(2));
+    /// ```
     pub fn exponential(factor: u64) -> Self {
         Self::new(Strategy::Exponential(factor))
     }
 
+    /// Overrides the [default max attempts](DEFAULT_MAX_ATTEMPTS) value to specify the amount of
+    /// [Duration] values that will be produced by the iterator.
+    ///
+    /// # Examples
+    ///
+    /// The following will produce a sequence equivalent to `2s, 4s, 6s`
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::linear()
+    ///     .with_max_attempts(3)
+    ///     .with_step(Duration::from_secs(2));
+    /// ```
+    ///
+    /// whereas the following will produce a sequence equivalent to `2s, 4s, 6s, 8s, 10s`
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::linear()
+    ///     .with_max_attempts(5) // Increased max attempts!
+    ///     .with_step(Duration::from_secs(2));
+    /// ```
     pub fn with_max_attempts(mut self, attempts: u32) -> Self {
         self.state.max_attempts = attempts;
         self
     }
 
+    /// Specifies a max duration to clamp produced [Duration]s to a maximum value. Can be useful
+    /// when creating an `exponential` strategy with a high amount of retries to keep the [Duration]
+    /// values within reasonable boundaries.
+    ///
+    /// # Examples
+    ///
+    /// The following, uncapped `exponential` strategy will produce a sequence equivalent to
+    /// `2s, 4s, 8s, 16s, 32s, 64s`, which can be quite unwieldy.
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::exponential(2)
+    ///     .with_max_attempts(6)
+    ///     .with_step(Duration::from_secs(2));
+    /// ```
+    ///
+    /// whereas the following, capped `exponential` strategy would produce a sequence equivalent to
+    /// `2s, 4s, 8s, 8s, 8s, 8s`
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::exponential(2)
+    ///     .with_max_attempts(6)
+    ///     .with_max_duration(Duration::from_secs(8)) // Capped to 8 seconds maximum!
+    ///     .with_step(Duration::from_secs(2));
+    /// ```
     pub fn with_max_duration(mut self, max: Duration) -> Self {
         self.state.max_duration = Some(max);
         self
     }
 
+    /// Overrides the [default step](DEFAULT_STEP) to use for each strategy. Depending on the
+    /// strategy, this will have different results.
+    ///
+    /// - For `linear` strategies, the `step` is used to increase the duration for each successive attempt.
+    /// - For `constant` strategies, the `step` is used as a constant duration for every attempt.
+    /// - For `exponential` strategies, each attempt is increased exponentially using the product of the
+    /// `step` and an exponential `factor`
+    ///
+    /// # Examples
+    ///
+    /// The following linear strategy will produce a sequence equivalent to
+    /// `2s, 4s, 6s, 8s, 10s`
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::linear()
+    ///     .with_max_attempts(5) // Increased max attempts!
+    ///     .with_step(Duration::from_secs(2));
+    /// ```
+    ///
+    /// whereas the following strategy will produce a sequence equivalent to `4s, 8s, 12s, 16s, 20s`
+    ///
+    /// ```
+    /// # use selium::keep_alive::BackoffStrategy;
+    /// # use std::time::Duration;
+    /// #
+    /// BackoffStrategy::linear()
+    ///     .with_max_attempts(5)
+    ///     .with_step(Duration::from_secs(4)); // Increased step!
+    /// ```
     pub fn with_step(mut self, step: Duration) -> Self {
         self.state.step = step;
         self
     }
 }
 
+/// Consumes the `BackoffStrategy` instance to create an iterator that produces [Duration] values
+/// representing a sequence of retry attempts.
 impl IntoIterator for BackoffStrategy {
     type Item = Duration;
     type IntoIter = BackoffStrategyIter;
@@ -88,6 +258,7 @@ impl IntoIterator for BackoffStrategy {
     }
 }
 
+#[doc(hidden)]
 pub struct BackoffStrategyIter {
     strategy_type: Strategy,
     state: BackoffStrategyState,
