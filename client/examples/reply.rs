@@ -1,7 +1,6 @@
 use anyhow::Result;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
-use selium::std::errors::SeliumError;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,7 +40,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handler(req: Request) -> Result<Response, SeliumError> {
+async fn handler(req: Request) -> Result<Response> {
     match req {
         Request::HelloWorld(mut name) => {
             let name = name.take().unwrap_or_else(|| "World".to_owned());
