@@ -59,16 +59,12 @@ async fn concurrent_requests_are_routed_successfully() -> Result<()> {
     Ok(())
 }
 
-// #[tokio::test]
-// async fn fails_to_bind_multiple_repliers_to_topic() -> Result<()> {
-//     let client = TestClient::start().await?;
-//
-//     let bind_tasks = vec![
-//         client.start_replier(None),
-//         client.start_replier(None)
-//     ];
-//
-//     let _ = select_all(bind_tasks).await;
-//
-//     Ok(())
-// }
+#[tokio::test]
+async fn fails_to_bind_multiple_repliers_to_topic() -> Result<()> {
+    let client = TestClient::start().await?;
+
+    client.start_replier(None);
+    assert!(client.start_replier(None).await.unwrap().is_err());
+
+    Ok(())
+}

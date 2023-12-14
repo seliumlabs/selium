@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
+use selium::std::errors::SeliumError;
 use selium::{request_reply::Requestor, Client};
 use selium_server::args::UserArgs;
 use selium_server::server::Server;
@@ -48,7 +49,10 @@ impl TestClient {
         Ok(Self { client })
     }
 
-    pub fn start_replier(&self, delay: Option<Duration>) -> tokio::task::JoinHandle<()> {
+    pub fn start_replier(
+        &self,
+        delay: Option<Duration>,
+    ) -> tokio::task::JoinHandle<Result<(), SeliumError>> {
         tokio::spawn({
             let client = self.client.clone();
 
@@ -68,7 +72,7 @@ impl TestClient {
                     .await
                     .unwrap();
 
-                replier.listen().await.unwrap()
+                replier.listen().await
             }
         })
     }
@@ -110,7 +114,6 @@ pub fn start_server() -> Result<SocketAddr> {
         "../certs/server/localhost.key.der",
         "--ca",
         "../certs/server/ca.der",
-        "-vvvv",
     ]);
 
     let server = Server::try_from(args)?;

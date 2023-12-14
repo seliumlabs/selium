@@ -117,9 +117,9 @@ where
                         }
                     }
                 } else {
-                    match si.poll_flush_unpin(cx) {
+                    match si.poll_close_unpin(cx) {
                         Poll::Ready(Ok(_)) => (),
-                        Poll::Ready(Err(e)) => warn!("Could not flush replier sink: {e:?}"),
+                        Poll::Ready(Err(e)) => warn!("Could not close replier sink: {e:?}"),
                         Poll::Pending => {
                             *buffered_err = Some((None, si));
                             return Poll::Pending;

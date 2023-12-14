@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{Future, SinkExt, StreamExt};
 use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload, TopicName};
-use selium_std::errors::{CodecError, Result};
+use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use selium_std::traits::compression::{Compress, Decompress};
 use std::{marker::PhantomData, pin::Pin, sync::Arc};
@@ -206,18 +206,25 @@ where
 
     pub async fn listen(mut self) -> Result<()> {
         while let Some(Ok(request)) = self.stream.next().await {
-            if let Frame::Message(req_payload) = request {
-                let decoded = self.decode_message(req_payload.message)?;
-                let response = (self.handler)(decoded).await.unwrap();
-                let encoded = self.encode_message(response)?;
+            match request {
+                Frame::Message(req_payload) => {
+                    let decoded = self.decode_message(req_payload.message)?;
+                    let response = (self.handler)(decoded).await.unwrap();
+                    let encoded = self.encode_message(response)?;
 
-                let res_payload = MessagePayload {
-                    headers: req_payload.headers,
-                    message: encoded,
-                };
+                    let res_payload = MessagePayload {
+                        headers: req_payload.headers,
+                        message: encoded,
+                    };
 
-                let frame = Frame::Message(res_payload);
-                self.stream.send(frame).await?;
+                    let frame = Frame::Message(res_payload);
+                    self.stream.send(frame).await?;
+                }
+                Frame::Error(bytes) => match String::from_utf8(bytes.to_vec()) {
+                    Ok(s) => return Err(SeliumError::OpenStream(s)),
+                    Err(_) => return Err(SeliumError::OpenStream("Invalid UTF-8 error".into())),
+                },
+                _ => unreachable!(),
             }
         }
 
