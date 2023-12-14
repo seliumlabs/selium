@@ -1,7 +1,8 @@
 mod states;
+use quinn::ClientConfig;
 pub use states::*;
 
-use crate::connection::{ClientConnection, ConnectionOptions};
+use crate::connection::{configure_client, ClientConnection, ConnectionOptions};
 use crate::constants::SELIUM_CLOUD_REMOTE_URL;
 use crate::crypto::cert::load_keypair;
 use crate::keep_alive::BackoffStrategy;
@@ -23,18 +24,18 @@ impl ClientBuilder<CloudWantsCertAndKey> {
         self
     }
 
-    pub fn with_cert_and_key<T: AsRef<Path>>(
+    pub fn with_cert_and_key<'a, T: AsRef<Path>>(
         self,
         cert_file: T,
         key_file: T,
-    ) -> Result<ClientBuilder<CloudWantsConnect>> {
+    ) -> Result<ClientBuilder<CloudWantsConnect<'a>>> {
         let (certs, key) = load_keypair(cert_file, key_file)?;
         let next_state = CloudWantsConnect::new(self.state, &certs, key);
         Ok(ClientBuilder { state: next_state })
     }
 }
 
-impl ClientBuilder<CloudWantsConnect> {
+impl<'a> ClientBuilder<CloudWantsConnect<'a>> {
     pub async fn connect(self) -> Result<Client> {
         let CloudWantsConnect {
             common,
@@ -48,9 +49,10 @@ impl ClientBuilder<CloudWantsConnect> {
         } = common;
 
         let options = ConnectionOptions::new(certs.as_slice(), key, root_store, keep_alive);
+        let client_config = configure_client(options);
 
-        let endpoint = get_cloud_endpoint(options.clone()).await?;
-        let connection = ClientConnection::connect(&endpoint, options).await?;
+        let endpoint = get_cloud_endpoint(client_config.clone()).await?;
+        let connection = ClientConnection::connect(&endpoint, client_config).await?;
         let connection = Arc::new(Mutex::new(connection));
 
         Ok(Client {
@@ -60,8 +62,8 @@ impl ClientBuilder<CloudWantsConnect> {
     }
 }
 
-async fn get_cloud_endpoint(options: ConnectionOptions) -> Result<String> {
-    let connection = ClientConnection::connect(SELIUM_CLOUD_REMOTE_URL, options).await?;
+async fn get_cloud_endpoint(client_config: ClientConfig) -> Result<String> {
+    let connection = ClientConnection::connect(SELIUM_CLOUD_REMOTE_URL, client_config).await?;
     let (_, mut read) = connection
         .conn()
         .open_bi()

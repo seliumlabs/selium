@@ -1,47 +1,45 @@
-use rustls::{Certificate, PrivateKey, RootCertStore};
+use rustls::{
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    RootCertStore,
+};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use selium_std::errors::{CryptoError, Result};
 use std::{fs, path::Path};
 
-pub type KeyPair = (Vec<Certificate>, PrivateKey);
+pub type KeyPair<'a> = (Vec<CertificateDer<'a>>, PrivateKeyDer<'a>);
 
-fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
+fn load_key<'a, T: AsRef<Path>>(path: T) -> Result<PrivateKeyDer<'a>> {
     let path = path.as_ref();
     let key = fs::read(path).map_err(CryptoError::OpenKeyFileError)?;
     let key = if path.extension().map_or(false, |x| x == "der") {
-        PrivateKey(key)
+        PrivatePkcs8KeyDer::from(key).into()
     } else {
-        let pkcs8 =
-            pkcs8_private_keys(&mut &*key).map_err(CryptoError::MalformedPKCS8PrivateKey)?;
-
-        match pkcs8.into_iter().next() {
-            Some(x) => PrivateKey(x),
-            None => {
-                let rsa =
-                    rsa_private_keys(&mut &*key).map_err(CryptoError::MalformedPKCS1PrivateKey)?;
-
-                rsa.into_iter()
-                    .next()
-                    .map(PrivateKey)
-                    .ok_or(CryptoError::NoPrivateKeysFound)?
-            }
+        match pkcs8_private_keys(&mut &*key).into_iter().next() {
+            Some(Ok(x)) => x.into(),
+            Some(Err(e)) => return Err(CryptoError::MalformedPKCS8PrivateKey(e).into()),
+            None => rsa_private_keys(&mut &*key)
+                .into_iter()
+                .next()
+                .ok_or(CryptoError::NoPrivateKeysFound)?
+                .map(|k| PrivateKeyDer::Pkcs1(k))
+                .map_err(|e| CryptoError::MalformedPKCS1PrivateKey(e))?,
         }
     };
 
     Ok(key)
 }
 
-pub fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
+pub fn load_certs<'a, T: AsRef<Path>>(path: T) -> Result<Vec<CertificateDer<'a>>> {
     let path = path.as_ref();
     let cert_chain = fs::read(path).map_err(CryptoError::OpenCertFileError)?;
     let cert_chain = if path.extension().map_or(false, |x| x == "der") {
-        vec![Certificate(cert_chain)]
+        vec![cert_chain.into()]
     } else {
-        certs(&mut &*cert_chain)
-            .map_err(CryptoError::InvalidPemCertificate)?
-            .into_iter()
-            .map(Certificate)
-            .collect()
+        let mut chain = Vec::new();
+        for res in certs(&mut &*cert_chain).into_iter() {
+            chain.push(res?);
+        }
+        chain
     };
 
     Ok(cert_chain)
@@ -57,7 +55,9 @@ pub fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
 ///
 /// * `ca_file` - The filepath to the CA file.
 ///
-pub(crate) fn load_root_store(certs: &[Certificate]) -> Result<RootCertStore> {
+pub(crate) fn load_root_store<'a>(
+    certs: impl IntoIterator<Item = CertificateDer<'a>>,
+) -> Result<RootCertStore> {
     let mut store = RootCertStore::empty();
     store.add_parsable_certificates(certs);
 
@@ -78,7 +78,7 @@ pub(crate) fn load_root_store(certs: &[Certificate]) -> Result<RootCertStore> {
 /// * `cert_file` - The filepath to the certificate file.
 /// * `key_file` - The filepath to the private key file.
 ///
-pub fn load_keypair<T: AsRef<Path>>(cert_file: T, key_file: T) -> Result<KeyPair> {
+pub fn load_keypair<'a, T: AsRef<Path>>(cert_file: T, key_file: T) -> Result<KeyPair<'a>> {
     let certs = load_certs(cert_file)?;
     let private_key = load_key(key_file)?;
     Ok((certs, private_key))

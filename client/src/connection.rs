@@ -1,6 +1,7 @@
 use crate::utils::net::get_socket_addrs;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
-use rustls::{Certificate, PrivateKey, RootCertStore};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::RootCertStore;
 use selium_std::errors::{ParseEndpointAddressError, QuicError, Result};
 use std::sync::Arc;
 use std::{net::SocketAddr, time::Duration};
@@ -11,18 +12,18 @@ const ENDPOINT_ADDRESS: &str = "[::]:0";
 
 pub type SharedConnection = Arc<Mutex<ClientConnection>>;
 
-#[derive(Debug, Clone)]
-pub struct ConnectionOptions {
-    certs: Vec<Certificate>,
-    key: PrivateKey,
+#[derive(Debug)]
+pub struct ConnectionOptions<'a> {
+    certs: Vec<CertificateDer<'a>>,
+    key: PrivateKeyDer<'a>,
     root_store: RootCertStore,
     keep_alive: u64,
 }
 
-impl ConnectionOptions {
+impl<'a> ConnectionOptions<'a> {
     pub fn new(
-        certs: &[Certificate],
-        key: PrivateKey,
+        certs: &[CertificateDer<'a>],
+        key: PrivateKeyDer<'a>,
         root_store: RootCertStore,
         keep_alive: u64,
     ) -> Self {
@@ -43,8 +44,7 @@ pub struct ClientConnection {
 }
 
 impl ClientConnection {
-    pub async fn connect(addr: &str, options: ConnectionOptions) -> Result<Self> {
-        let client_config = configure_client(options);
+    pub async fn connect<'a>(addr: &str, client_config: ClientConfig) -> Result<Self> {
         let addr = get_socket_addrs(addr)?;
         let connection = connect_to_endpoint(addr, client_config.clone()).await?;
 
@@ -69,9 +69,8 @@ impl ClientConnection {
     }
 }
 
-fn configure_client(options: ConnectionOptions) -> ClientConfig {
+pub(crate) fn configure_client<'a>(options: ConnectionOptions<'a>) -> ClientConfig {
     let mut crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(options.root_store)
         .with_client_auth_cert(options.certs, options.key)
         .unwrap();

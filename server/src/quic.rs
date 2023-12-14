@@ -4,9 +4,11 @@
 use anyhow::{bail, Context, Result};
 use openssl::x509::X509;
 use quinn::{Connection, IdleTimeout, ServerConfig};
-use rustls::server::AllowAnyAuthenticatedClient;
-use rustls::{Certificate, PrivateKey, RootCertStore};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::server::WebPkiClientVerifier;
+use rustls::{pki_types::PrivateKeyDer, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
+use selium_std::errors::CryptoError;
 use std::{fs, path::Path, sync::Arc};
 
 const ALPN_QUIC_HTTP: &[&[u8]] = &[b"hq-29"];
@@ -18,17 +20,16 @@ pub struct ConfigOptions {
     pub max_idle_timeout: IdleTimeout,
 }
 
-pub fn server_config(
+pub fn server_config<'a>(
     root_store: RootCertStore,
-    certs: Vec<Certificate>,
-    key: PrivateKey,
+    certs: Vec<CertificateDer<'a>>,
+    key: PrivateKeyDer<'a>,
     options: ConfigOptions,
 ) -> Result<ServerConfig> {
-    let client_cert_verifier = Arc::new(AllowAnyAuthenticatedClient::new(root_store));
+    let client_verifier = WebPkiClientVerifier::builder(root_store.into()).build()?;
 
     let mut server_crypto = rustls::ServerConfig::builder()
-        .with_safe_defaults()
-        .with_client_cert_verifier(client_cert_verifier)
+        .with_client_cert_verifier(client_verifier)
         .with_single_cert(certs, key)?;
 
     server_crypto.alpn_protocols = ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
@@ -47,51 +48,49 @@ pub fn server_config(
     Ok(server_config)
 }
 
-fn load_key<T: AsRef<Path>>(path: T) -> Result<PrivateKey> {
+fn load_key<'a, T: AsRef<Path>>(path: T) -> Result<PrivateKeyDer<'a>> {
     let path = path.as_ref();
     let key = fs::read(path).context("failed to read private key")?;
     let key = if path.extension().map_or(false, |x| x == "der") {
-        PrivateKey(key)
+        PrivatePkcs8KeyDer::from(key).into()
     } else {
-        let pkcs8 = pkcs8_private_keys(&mut &*key).context("malformed PKCS #8 private key")?;
-        match pkcs8.into_iter().next() {
-            Some(x) => PrivateKey(x),
-            None => {
-                let rsa = rsa_private_keys(&mut &*key).context("malformed PKCS #1 private key")?;
-                match rsa.into_iter().next() {
-                    Some(x) => PrivateKey(x),
-                    None => {
-                        bail!("no private keys found");
-                    }
-                }
-            }
+        // let pkcs8 = ;.context("malformed PKCS #8 private key")?;
+        match pkcs8_private_keys(&mut &*key).into_iter().next() {
+            Some(Ok(x)) => x.into(),
+            Some(Err(e)) => return Err(CryptoError::MalformedPKCS8PrivateKey(e).into()),
+            None => rsa_private_keys(&mut &*key)
+                .into_iter()
+                .next()
+                .ok_or(CryptoError::NoPrivateKeysFound)?
+                .map(|k| PrivateKeyDer::Pkcs1(k))
+                .map_err(|e| CryptoError::MalformedPKCS1PrivateKey(e))?,
         }
     };
 
     Ok(key)
 }
 
-fn load_certs<T: AsRef<Path>>(path: T) -> Result<Vec<Certificate>> {
+fn load_certs<'a, T: AsRef<Path>>(path: T) -> Result<Vec<CertificateDer<'a>>> {
     let path = path.as_ref();
     let cert_chain = fs::read(path).context("failed to read certificate chain")?;
 
     let cert_chain = if path.extension().map_or(false, |x| x == "der") {
-        vec![Certificate(cert_chain)]
+        vec![cert_chain.into()]
     } else {
-        certs(&mut &*cert_chain)
-            .context("invalid PEM-encoded certificate")?
-            .into_iter()
-            .map(Certificate)
-            .collect()
+        let mut chain = Vec::new();
+        for res in certs(&mut &*cert_chain).into_iter() {
+            chain.push(res?);
+        }
+        chain
     };
 
     Ok(cert_chain)
 }
 
-pub fn read_certs<T: AsRef<Path>>(
+pub fn read_certs<'a, T: AsRef<Path>>(
     cert_path: T,
     key_path: T,
-) -> Result<(Vec<Certificate>, PrivateKey)> {
+) -> Result<(Vec<CertificateDer<'a>>, PrivateKeyDer<'a>)> {
     let certs = load_certs(cert_path)?;
     let key = load_key(key_path)?;
     Ok((certs, key))
@@ -101,7 +100,7 @@ pub fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStore> {
     let ca_file = ca_file.as_ref();
     let mut store = RootCertStore::empty();
     let certs = load_certs(ca_file)?;
-    store.add_parsable_certificates(&certs);
+    store.add_parsable_certificates(certs);
 
     if store.is_empty() {
         bail!("No valid certs found in file {ca_file:?}");
@@ -110,13 +109,13 @@ pub fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStore> {
     Ok(store)
 }
 
-pub fn get_pubkey_from_connection(connection: &Connection) -> Result<String> {
+pub fn get_pubkey_from_connection<'a>(connection: &Connection) -> Result<String> {
     let peer_identity = connection
         .peer_identity()
         .context("Unable to read peer identity")?;
 
     let certs = peer_identity
-        .downcast_ref::<Vec<Certificate>>()
+        .downcast_ref::<Vec<CertificateDer<'a>>>()
         .context("Unable to read cert")?;
 
     let pub_key = extract_public_key(certs)?;
@@ -124,7 +123,7 @@ pub fn get_pubkey_from_connection(connection: &Connection) -> Result<String> {
     Ok(pub_key)
 }
 
-fn extract_public_key(certs: &[Certificate]) -> Result<String> {
+fn extract_public_key<'a>(certs: &[CertificateDer<'a>]) -> Result<String> {
     let first_cert = certs.get(0).context("Failed to get first certificate.")?;
     let cert = X509::from_der(first_cert.as_ref())?;
     let pub_key = cert.public_key()?;

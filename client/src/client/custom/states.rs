@@ -1,5 +1,8 @@
 use crate::ClientCommon;
-use rustls::{Certificate, PrivateKey, RootCertStore};
+use rustls::{
+    pki_types::{CertificateDer, PrivateKeyDer},
+    RootCertStore,
+};
 
 #[doc(hidden)]
 #[derive(Debug, Default)]
@@ -43,16 +46,20 @@ impl CustomWantsCertAndKey {
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct CustomWantsConnect {
+pub struct CustomWantsConnect<'a> {
     pub(crate) common: ClientCommon,
     pub(crate) endpoint: String,
     pub(crate) root_store: RootCertStore,
-    pub(crate) certs: Vec<Certificate>,
-    pub(crate) key: PrivateKey,
+    pub(crate) certs: Vec<CertificateDer<'a>>,
+    pub(crate) key: PrivateKeyDer<'a>,
 }
 
-impl CustomWantsConnect {
-    pub fn new(prev: CustomWantsCertAndKey, certs: &[Certificate], key: PrivateKey) -> Self {
+impl<'a> CustomWantsConnect<'a> {
+    pub fn new(
+        prev: CustomWantsCertAndKey,
+        certs: &[CertificateDer<'a>],
+        key: PrivateKeyDer<'a>,
+    ) -> Self {
         Self {
             common: prev.common,
             endpoint: prev.endpoint,
