@@ -32,10 +32,9 @@ async fn main() -> Result<()> {
         .with_reply_encoder(BincodeCodec::default())
         .with_handler(|req| async move { Ok(handler(req).await?) })
         .open()
-        .await
-        .unwrap();
+        .await?;
 
-    replier.listen().await.unwrap();
+    replier.listen().await?;
 
     Ok(())
 }

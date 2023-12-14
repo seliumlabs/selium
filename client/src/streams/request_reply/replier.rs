@@ -262,8 +262,17 @@ where
     /// This method will block the current task until the stream has been exhausted.
     pub async fn listen(mut self) -> Result<()> {
         while let Some(Ok(request)) = self.stream.next().await {
-            if let Frame::Message(req_payload) = request {
-                let _ = self.handle_request(req_payload).await;
+            match request {
+                Frame::Message(req) => self.handle_request(req).await?,
+                Frame::Error(bytes) => match String::from_utf8(bytes.to_vec()) {
+                    Ok(s) => return Err(SeliumError::OpenStream(s)),
+                    Err(_) => return Err(SeliumError::OpenStream("Invalid UTF-8 error".into())),
+                },
+                _ => {
+                    return Err(SeliumError::OpenStream(
+                        "Invalid frame returned from server".into(),
+                    ))
+                }
             }
         }
 
