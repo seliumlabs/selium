@@ -25,7 +25,7 @@ type SharedReadHalf = Arc<Mutex<ReadHalf>>;
 type SharedWriteHalf = Arc<Mutex<WriteHalf>>;
 
 impl StreamBuilder<RequestorWantsRequestEncoder> {
-    /// Specifies the encoder a [Requestor](crate::Requestor) uses for encoding outgoing requests. 
+    /// Specifies the encoder a [Requestor] uses for encoding outgoing requests. 
     ///
     /// An encoder can be any type implementing
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
@@ -43,7 +43,7 @@ impl StreamBuilder<RequestorWantsRequestEncoder> {
 }
 
 impl<E, ReqItem> StreamBuilder<RequestorWantsReplyDecoder<E, ReqItem>> {
-    /// Specifies the compression implementation a [Requestor](crate::Requestor) uses for
+    /// Specifies the compression implementation a [Requestor] uses for
     /// compressing outgoing requests.
     ///
     /// A compressor can be any type implementing [Compress](crate::std::traits::compression::Compress).
@@ -55,7 +55,7 @@ impl<E, ReqItem> StreamBuilder<RequestorWantsReplyDecoder<E, ReqItem>> {
         self
     }
 
-    /// Specifies the decoder a [Requestor](crate::Requestor) uses for decoding incoming replies.
+    /// Specifies the decoder a [Requestor] uses for decoding incoming replies.
     ///
     /// A decoder can be any type implementing
     /// [MessageDecoder](crate::std::traits::codec::MessageDecoder).
@@ -73,8 +73,8 @@ impl<E, ReqItem> StreamBuilder<RequestorWantsReplyDecoder<E, ReqItem>> {
 }
 
 impl<E, D, ReqItem, ResItem> StreamBuilder<RequestorWantsOpen<E, D, ReqItem, ResItem>> {
-    /// Specifies the decompression implementation a [Requestor](crate::Requestor) uses for
-    /// decompressing incoming reply payloads.
+    /// Specifies the decompression implementation a [Requestor] uses for decompressing incoming 
+    /// reply payloads.
     ///
     /// A decompressor can be any type implementing
     /// [Decompress](crate::std::traits::compression::Decompress).
@@ -86,8 +86,7 @@ impl<E, D, ReqItem, ResItem> StreamBuilder<RequestorWantsOpen<E, D, ReqItem, Res
         self
     }
 
-    /// Overrides the default `request_timeout` setting for the [Requestor](crate::Requestor)
-    /// stream. 
+    /// Overrides the default `request_timeout` setting for the [Requestor] stream. 
     ///
     /// Requests that exceed the timeout duration will be aborted, to prevent slow replies from
     /// blocking the current task for too long.
@@ -138,11 +137,11 @@ where
     }
 }
 
-/// A Requestor stream that dispatches requests to any [Replier](crate::Replier) streams bound to the specified
-/// topic.
+/// A Requestor stream that dispatches requests to any [Replier](crate::streams::request_reply::Replier) streams 
+/// bound to the specified topic.
 ///
 /// Requestor streams are synchronous, meaning that they will block the current task while awaiting
-/// a response, as opposed to the asynchronous, non-blocking nature of [Publisher](crate::Publisher) streams. 
+/// a response, as opposed to the asynchronous, non-blocking nature of [Publisher](crate::streams::pubsub::Publisher) streams. 
 /// This makes them ideal for any use-cases relying on the RPC messaging pattern, when a response
 /// is expected before resuming the task.
 ///

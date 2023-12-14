@@ -22,8 +22,8 @@ use std::time::Instant;
 use tokio::sync::MutexGuard;
 
 impl StreamBuilder<PublisherWantsEncoder> {
-    /// Specifies the encoder a [Publisher](crate::Publisher) uses for encoding produced messages prior
-    /// to being sent over the wire.
+    /// Specifies the encoder a [Publisher] uses for encoding produced messages prior to being 
+    /// sent over the wire.
     ///
     /// An encoder can be any type implementing
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
@@ -38,8 +38,8 @@ impl StreamBuilder<PublisherWantsEncoder> {
 }
 
 impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
-    /// Specifies the compression implementation a [Publisher](crate::Publisher) uses for
-    /// compressing encoded messages prior being sent over the wire.
+    /// Specifies the compression implementation a [Publisher] uses for compressing encoded 
+    /// messages prior to being sent over the wire.
     ///
     /// If message batching is enabled for the stream, the message batch will be compressed as a
     /// single unit, rather than each message being compressed individually.
@@ -53,7 +53,7 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
         self
     }
 
-    /// Enables message batching for a [Publisher](crate::Publisher) stream.
+    /// Enables message batching for a [Publisher] stream.
     ///
     /// Relies on the specified [BatchConfig](crate::batching::BatchConfig) to tune the batching
     /// algorithm.
@@ -120,7 +120,7 @@ where
 
 /// A traditional publisher stream that produces and sends messages to a topic.
 ///
-/// A Publisher is different to a [Subscriber](crate::Subscriber), in that it holds a reference
+/// A Publisher is different to a [Subscriber](crate::streams::pubsub::Subscriber), in that it holds a reference
 /// to the client connection handle in order to facilitate duplicating the stream. This makes it
 /// possible to spawn branching streams to concurrently publish messages to the same topic.
 ///
@@ -130,7 +130,7 @@ where
 ///
 /// Publishers are asynchronous, meaning that when a message is sent over the wire, the Publisher
 /// will move on without expecting a response, and likewise, won't confirm if the message was delivered 
-/// to the [Subscriber](crate::Subscriber) streams. If you prefer synchronous messaging patterns like RPC,
+/// to the [Subscriber](crate::streams::pubsub::Subscriber) streams. If you prefer synchronous messaging patterns like RPC,
 /// the [Request/Reply](crate::streams::request_reply) streams are an implementation of this pattern.
 ///
 /// **Note:** The Publisher struct is never constructed directly, but rather, via a

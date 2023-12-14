@@ -3,15 +3,15 @@ use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
 use selium_std::errors::Result;
 
-/// A convenient builder struct used to build a [Client](selium::client) instance.
+/// A convenient builder struct used to build a [Client](crate::Client) instance.
 ///
 /// The [ClientBuilder] uses a type-level Finite State Machine to assure that a
-/// [Client](selium::Client) cannot be constructed with an invalid state. For example, the
+/// [Client](crate::Client) cannot be constructed with an invalid state. For example, the
 /// [connect](ClientBuilder::connect) method will not be in-scope unless the [ClientBuilder] is in
 /// a pre-connection state, which is achieved by first configuring the root store and keypair.
 ///
 /// **NOTE:** The [ClientBuilder] type is not intended to be used directly. Use the
-/// [cloud](selium::cloud) or [custom](selium::custom) functions to construct a [ClientBuilder] in
+/// [cloud](crate::cloud) or [custom](crate::custom) functions to construct a [ClientBuilder] in
 /// its initial state.
 #[derive(Debug)]
 pub struct ClientBuilder<T> {
@@ -81,7 +81,7 @@ impl ClientCommon {
     /// Overrides the `backoff_strategy` used to recover a connection and streams when transient
     /// errors occur. 
     ///
-    /// See the [keep_alive](selium::keep_alive) module for more information.
+    /// See the [keep_alive](crate::keep_alive) module for more information.
     ///
     /// # Examples
     ///
@@ -93,8 +93,8 @@ impl ClientCommon {
     /// use std::time::Duration;
     ///
     /// let strategy = BackoffStrategy::linear()
-    ///     .max_attempts(5)
-    ///     .step(Duration::from_secs(2));
+    ///     .with_max_attempts(5)
+    ///     .with_step(Duration::from_secs(2));
     ///
     /// let client = selium::custom()
     ///     .backoff_strategy(strategy);

@@ -1,5 +1,5 @@
 //! Much of this code was borrowed with many thanks from the Quinn project:
-//! https://github.com/quinn-rs/quinn/blob/main/quinn/examples/server.rs
+//! `<https://github.com/quinn-rs/quinn/blob/main/quinn/examples/server.rs>`
 
 use anyhow::{bail, Context, Result};
 use openssl::x509::X509;

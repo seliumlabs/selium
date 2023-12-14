@@ -7,7 +7,7 @@ use selium_std::errors::Result;
 ///
 /// Similar to the [ClientBuilder](crate::ClientBuilder) struct, the [StreamBuilder] struct uses a
 /// type-level Finite State Machine to assure that any stream instance cannot be constructed with an
-/// invalid state. Using a [Publisher](crate::Publisher) stream as an example, the `open`
+/// invalid state. Using a [Publisher](crate::streams::pubsub::Publisher) stream as an example, the `open`
 /// method will not be in-scope unless the [StreamBuilder](crate::StreamBuilder) is in a pre-open state, which
 /// requires the stream to be configured, and a decoder to have been specified.
 ///
