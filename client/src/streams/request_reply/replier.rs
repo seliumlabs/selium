@@ -224,7 +224,11 @@ where
                     Ok(s) => return Err(SeliumError::OpenStream(s)),
                     Err(_) => return Err(SeliumError::OpenStream("Invalid UTF-8 error".into())),
                 },
-                _ => unreachable!(),
+                _ => {
+                    return Err(SeliumError::OpenStream(
+                        "Invalid frame returned from server".into(),
+                    ))
+                }
             }
         }
 
