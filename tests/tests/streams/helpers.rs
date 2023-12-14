@@ -2,27 +2,27 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::Result;
-use selium::{Client, request_reply::Requestor};
-use selium::std::codecs::BincodeCodec;
-use selium_server::args::UserArgs;
-use selium_server::server::Server;
 use clap::Parser;
 use selium::prelude::*;
-use serde::{Serialize, Deserialize};
+use selium::std::codecs::BincodeCodec;
+use selium::{request_reply::Requestor, Client};
+use selium_server::args::UserArgs;
+use selium_server::server::Server;
+use serde::{Deserialize, Serialize};
 
 // Allow the operating system to assign a free port
 const SERVER_ADDR: &str = "127.0.0.1:0";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum Request { 
+pub enum Request {
     Ping,
-    Echo(String)
+    Echo(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub enum Response { 
+pub enum Response {
     Pong,
-    Echo(String)
+    Echo(String),
 }
 
 type Req = Requestor<BincodeCodec<Request>, BincodeCodec<Response>, Request, Response>;
@@ -35,11 +35,14 @@ impl TestClient {
     pub async fn start() -> Result<Self> {
         let server_addr = start_server()?;
 
-        let client = selium::custom() 
+        let client = selium::custom()
             .keep_alive(5_000)?
             .endpoint(&server_addr.to_string())
             .with_certificate_authority("../certs/client/ca.der")?
-            .with_cert_and_key("../certs/client/localhost.der", "../certs/client/localhost.key.der")?
+            .with_cert_and_key(
+                "../certs/client/localhost.der",
+                "../certs/client/localhost.key.der",
+            )?
             .connect()
             .await?;
 
@@ -51,15 +54,16 @@ impl TestClient {
             let client = self.client.clone();
 
             async move {
-                let replier = client.replier("/test/endpoint")
+                let replier = client
+                    .replier("/test/endpoint")
                     .with_request_decoder(BincodeCodec::default())
                     .with_reply_encoder(BincodeCodec::default())
-                    .with_handler(|req| async move { 
+                    .with_handler(|req| async move {
                         if let Some(delay) = delay {
-                           tokio::time::sleep(delay).await;
+                            tokio::time::sleep(delay).await;
                         }
 
-                        Ok(handler(req).await?) 
+                        Ok(handler(req).await?)
                     })
                     .open()
                     .await
@@ -71,7 +75,9 @@ impl TestClient {
     }
 
     pub async fn requestor(&self, timeout: Option<Duration>) -> Result<Req> {
-        let mut builder = self.client.requestor("/test/endpoint")
+        let mut builder = self
+            .client
+            .requestor("/test/endpoint")
             .with_request_encoder(BincodeCodec::default())
             .with_reply_decoder(BincodeCodec::default());
 
@@ -88,7 +94,7 @@ impl TestClient {
 async fn handler(req: Request) -> Result<Response> {
     let res = match req {
         Request::Ping => Response::Pong,
-        Request::Echo(msg) => Response::Echo(msg)
+        Request::Echo(msg) => Response::Echo(msg),
     };
 
     Ok(res)

@@ -1,13 +1,12 @@
+use crate::helpers::start_server;
 use anyhow::Result;
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use selium::keep_alive::KeepAlive;
 use selium::std::codecs::StringCodec;
 use selium::{prelude::*, pubsub::Subscriber};
-use crate::helpers::start_server;
 
 #[tokio::test]
 async fn test_pub_sub() -> Result<()> {
-
     let messages = run().await?;
 
     assert_eq!(messages[0], Some("foo".to_owned()));

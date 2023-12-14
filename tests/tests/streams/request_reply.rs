@@ -1,9 +1,9 @@
-use std::time::Duration;
+use crate::helpers::{Request, Response, TestClient};
 use anyhow::Result;
 use futures::future::try_join_all;
-use uuid::Uuid;
 use selium::std::errors::SeliumError;
-use crate::helpers::{TestClient, Request, Response};
+use std::time::Duration;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn request_reply_successful() -> Result<()> {
@@ -45,14 +45,17 @@ async fn concurrent_requests_are_routed_successfully() -> Result<()> {
             let uuid = Uuid::new_v4().to_string();
 
             async move {
-                let reply = requestor.request(Request::Echo(uuid.clone())).await.unwrap();
+                let reply = requestor
+                    .request(Request::Echo(uuid.clone()))
+                    .await
+                    .unwrap();
                 assert_eq!(reply, Response::Echo(uuid));
             }
         }));
     }
 
     try_join_all(tasks).await?;
-    
+
     Ok(())
 }
 
