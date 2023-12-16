@@ -181,6 +181,32 @@ mod tests {
     }
 
     #[test]
+    fn encodes_error_frame() {
+        let frame = Frame::Error("This is an error".into());
+
+        let mut codec = MessageCodec;
+        let mut buffer = BytesMut::new();
+        let expected = Bytes::from_static(b"\0\0\0\0\0\0\0\x10\x06This is an error");
+
+        codec.encode(frame, &mut buffer).unwrap();
+
+        assert_eq!(buffer, expected);
+    }
+
+    #[test]
+    fn encodes_ok_frame() {
+        let frame = Frame::Ok;
+
+        let mut codec = MessageCodec;
+        let mut buffer = BytesMut::new();
+        let expected = Bytes::from_static(b"\0\0\0\0\0\0\0\0\x07");
+
+        codec.encode(frame, &mut buffer).unwrap();
+
+        assert_eq!(buffer, expected);
+    }
+
+    #[test]
     fn fails_to_encode_if_payload_too_large() {
         const PAYLOAD: [u8; MAX_MESSAGE_SIZE as usize + 1] = [0u8; MAX_MESSAGE_SIZE as usize + 1];
 
@@ -279,6 +305,30 @@ mod tests {
         ]);
 
         let expected = Frame::BatchMessage(batch);
+        let result = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn decodes_error_frame() {
+        let mut codec = MessageCodec;
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0\x10\x06This is an error");
+
+        let expected = Frame::Error("This is an error".into());
+
+        let result = codec.decode(&mut src).unwrap().unwrap();
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn decodes_ok_frame() {
+        let mut codec = MessageCodec;
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0\0\x07");
+
+        let expected = Frame::Ok;
+
         let result = codec.decode(&mut src).unwrap().unwrap();
 
         assert_eq!(result, expected);
