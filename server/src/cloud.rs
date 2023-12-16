@@ -25,7 +25,7 @@ use crate::{
 #[cfg(debug_assertions)]
 const PROXY_PUBKEY: &[u8; 469] = include_bytes!("../../proxy.debug.der");
 #[cfg(not(debug_assertions))]
-const PROXY_PUBKEY: &[u8; 469] = include_bytes!("../../proxy.prod.der");
+const PROXY_PUBKEY: &[u8; 470] = include_bytes!("../../proxy.prod.der");
 
 // XXX This is horrendously inefficient! Caching is needed.
 pub async fn do_cloud_auth(

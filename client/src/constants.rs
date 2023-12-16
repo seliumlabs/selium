@@ -11,6 +11,6 @@ pub(crate) const CLOUD_CA: &[u8; 469] = include_bytes!("../../proxy.debug.der");
 pub(crate) const SELIUM_CLOUD_REMOTE_URL: &str = "127.0.0.1:7002";
 
 #[cfg(not(debug_assertions))]
-pub(crate) const CLOUD_CA: &[u8; 469] = include_bytes!("../../proxy.prod.der");
+pub(crate) const CLOUD_CA: &[u8; 470] = include_bytes!("../../proxy.prod.der");
 #[cfg(not(debug_assertions))]
 pub(crate) const SELIUM_CLOUD_REMOTE_URL: &str = "selium.io:7001";
