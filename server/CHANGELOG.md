@@ -17,3 +17,7 @@
 - Decoupled binary into library components for testing
 - Features for Selium Cloud
 - Bump dependency versions
+
+## v0.3.1
+
+- Remove openssl dependency

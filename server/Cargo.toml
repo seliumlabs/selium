@@ -1,6 +1,6 @@
 [package]
 name = "selium-server"
-version = "0.3.0"
+version = "0.3.1"
 description = """
 The server-side binary for Selium, an extremely developer friendly, composable
 messaging platform with zero build time configuration.
@@ -28,7 +28,6 @@ futures = "0.3"
 hex = "0.4"
 hmac-sha512 = "1.1"
 log = "0.4"
-openssl = "0.10"
 pin-project-lite = "0.2"
 quinn = "0.10"
 rcgen = { version = "0.11", features = ["pem"] }

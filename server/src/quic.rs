@@ -2,7 +2,6 @@
 //! `<https://github.com/quinn-rs/quinn/blob/main/quinn/examples/server.rs>`
 
 use anyhow::{bail, Context, Result};
-use openssl::x509::X509;
 use quinn::{Connection, IdleTimeout, ServerConfig};
 use rustls::server::AllowAnyAuthenticatedClient;
 use rustls::{Certificate, PrivateKey, RootCertStore};
@@ -126,10 +125,6 @@ pub fn get_pubkey_from_connection(connection: &Connection) -> Result<String> {
 
 fn extract_public_key(certs: &[Certificate]) -> Result<String> {
     let first_cert = certs.get(0).context("Failed to get first certificate.")?;
-    let cert = X509::from_der(first_cert.as_ref())?;
-    let pub_key = cert.public_key()?;
-    let pem = pub_key.public_key_to_pem()?;
-    let result = String::from_utf8(pem)?;
-
-    Ok(result)
+    let pair = rcgen::KeyPair::from_der(first_cert.as_ref())?;
+    Ok(pair.public_key_pem())
 }
