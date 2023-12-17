@@ -5,7 +5,7 @@ description = """
 The server-side binary for Selium, an extremely developer friendly, composable
 messaging platform with zero build time configuration.
 """
-include = ["src/**/*", "../proxy.debug.der", "../proxy.prod.der"]
+include = ["src/**/*", "proxy.debug.der", "proxy.prod.der"]
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -41,6 +41,7 @@ tokio = { version = "1.34", features = [
     "macros",
     "net",
     "rt-multi-thread",
+    "signal",
     "sync",
 ] }
 tokio-stream = "0.1"
