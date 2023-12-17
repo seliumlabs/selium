@@ -1,37 +1,37 @@
 use crate::{args::Args, results::BenchmarkResults};
 use anyhow::Result;
+use clap::Parser;
 use futures::SinkExt;
 use futures::{future::join_all, StreamExt};
 use selium::batching::BatchConfig;
 use selium::std::codecs::StringCodec;
 use selium::std::compression::lz4::{Lz4Comp, Lz4Decomp};
 use selium::{prelude::*, Client};
-use std::{
-    process::{Child, Command},
-    time::Instant,
-};
+use selium_server::args::UserArgs;
+use selium_server::server::Server;
+use std::time::Instant;
 
 const SERVER_ADDR: &str = "127.0.0.1:7001";
 
-fn start_server() -> Child {
-    Command::new(env!("CARGO"))
-        .args([
-            "run",
-            "--bin",
-            "selium-server",
-            "--release",
-            "--",
-            "--bind-addr",
-            SERVER_ADDR,
-            "--cert",
-            "certs/server/localhost.der",
-            "--key",
-            "certs/server/localhost.key.der",
-            "--ca",
-            "certs/server/ca.der",
-        ])
-        .spawn()
-        .expect("Failed to start server")
+fn start_server() -> Result<()> {
+    let args = UserArgs::parse_from([
+        "",
+        "--cert",
+        "certs/server/localhost.der",
+        "--key",
+        "certs/server/localhost.key.der",
+        "--ca",
+        "certs/server/ca.der",
+        "-vvvv",
+    ]);
+
+    let server = Server::try_from(args)?;
+
+    tokio::spawn(async move {
+        server.listen().await.expect("Failed to spawn server");
+    });
+
+    Ok(())
 }
 
 fn generate_message(message_size: usize) -> String {
@@ -41,27 +41,24 @@ fn generate_message(message_size: usize) -> String {
 }
 
 pub struct BenchmarkRunner {
-    server_handle: Child,
     connection: Client,
 }
 
 impl BenchmarkRunner {
     pub async fn init() -> Result<Self> {
-        let server_handle = start_server();
+        start_server()?;
 
-        let connection = selium::client()
+        let connection = selium::custom()
+            .endpoint(SERVER_ADDR)
             .with_certificate_authority("certs/client/ca.der")?
             .with_cert_and_key(
                 "certs/client/localhost.der",
                 "certs/client/localhost.key.der",
             )?
-            .connect(SERVER_ADDR)
+            .connect()
             .await?;
 
-        Ok(Self {
-            server_handle,
-            connection,
-        })
+        Ok(Self { connection })
     }
 
     pub async fn run(&self, args: Args) -> Result<BenchmarkResults> {
@@ -119,11 +116,5 @@ impl BenchmarkRunner {
         let elapsed = start.elapsed();
 
         Ok(BenchmarkResults::calculate(elapsed, args))
-    }
-}
-
-impl Drop for BenchmarkRunner {
-    fn drop(&mut self) {
-        self.server_handle.kill().unwrap();
     }
 }

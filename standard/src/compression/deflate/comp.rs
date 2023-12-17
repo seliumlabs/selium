@@ -1,5 +1,6 @@
 use super::types::DeflateLibrary;
 use crate::traits::compression::{Compress, CompressionLevel};
+use anyhow::Result;
 use bytes::Bytes;
 use flate2::write::{GzEncoder, ZlibEncoder};
 use flate2::Compression;
@@ -61,7 +62,7 @@ impl CompressionLevel for DeflateComp {
 }
 
 impl Compress for DeflateComp {
-    fn compress(&self, input: Bytes) -> anyhow::Result<Bytes> {
+    fn compress(&self, input: Bytes) -> Result<Bytes> {
         let bytes = match self.library {
             DeflateLibrary::Gzip => {
                 let mut encoder = GzEncoder::new(vec![], self.level);

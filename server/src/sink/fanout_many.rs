@@ -5,6 +5,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     pin::Pin,
+    slice::IterMut,
     task::{Context, Poll},
 };
 
@@ -27,6 +28,10 @@ impl<K, V> FanoutMany<K, V> {
         Self {
             entries: Vec::with_capacity(capacity),
         }
+    }
+
+    pub fn iter_mut(&mut self) -> IterMut<'_, (K, V)> {
+        self.entries.iter_mut()
     }
 
     pub fn insert(&mut self, k: K, sink: V) -> Option<V>

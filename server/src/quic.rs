@@ -1,8 +1,9 @@
 //! Much of this code was borrowed with many thanks from the Quinn project:
-//! https://github.com/quinn-rs/quinn/blob/main/quinn/examples/server.rs
+//! `<https://github.com/quinn-rs/quinn/blob/main/quinn/examples/server.rs>`
 
 use anyhow::{bail, Context, Result};
-use quinn::{IdleTimeout, ServerConfig};
+use openssl::x509::X509;
+use quinn::{Connection, IdleTimeout, ServerConfig};
 use rustls::server::AllowAnyAuthenticatedClient;
 use rustls::{Certificate, PrivateKey, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
@@ -107,4 +108,28 @@ pub fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStore> {
     }
 
     Ok(store)
+}
+
+pub fn get_pubkey_from_connection(connection: &Connection) -> Result<String> {
+    let peer_identity = connection
+        .peer_identity()
+        .context("Unable to read peer identity")?;
+
+    let certs = peer_identity
+        .downcast_ref::<Vec<Certificate>>()
+        .context("Unable to read cert")?;
+
+    let pub_key = extract_public_key(certs)?;
+
+    Ok(pub_key)
+}
+
+fn extract_public_key(certs: &[Certificate]) -> Result<String> {
+    let first_cert = certs.get(0).context("Failed to get first certificate.")?;
+    let cert = X509::from_der(first_cert.as_ref())?;
+    let pub_key = cert.public_key()?;
+    let pem = pub_key.public_key_to_pem()?;
+    let result = String::from_utf8(pem)?;
+
+    Ok(result)
 }

@@ -1,23 +1,14 @@
-use std::{
-    error::Error,
-    process::{Child, Command},
-};
-
+use crate::helpers::start_server;
+use anyhow::Result;
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
+use selium::keep_alive::KeepAlive;
 use selium::std::codecs::StringCodec;
-use selium::{prelude::*, Subscriber};
-
-const SERVER_ADDR: &'static str = "127.0.0.1:7001";
+use selium::{prelude::*, pubsub::Subscriber};
 
 #[tokio::test]
-async fn test_pub_sub() {
-    let mut handle = start_server();
+async fn test_pub_sub() -> Result<()> {
+    let messages = run().await?;
 
-    let result = run().await;
-
-    handle.kill().unwrap();
-
-    let messages = result.unwrap();
     assert_eq!(messages[0], Some("foo".to_owned()));
     assert_eq!(messages[1], Some("bar".to_owned()));
     assert_eq!(messages[2], Some("foo".to_owned()));
@@ -34,22 +25,28 @@ async fn test_pub_sub() {
     assert_eq!(messages[13], Some("foo".to_owned()));
     assert!(messages[14].is_none());
     assert!(messages[15].is_none());
+
+    Ok(())
 }
 
-async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
-    let mut subscriber1 = start_subscriber("/acmeco/stocks").await?;
-    let mut subscriber2 = start_subscriber("/acmeco/stocks").await?;
-    let subscriber3 = start_subscriber("/acmeco/something_else").await?;
-    let subscriber4 = start_subscriber("/bluthco/stocks").await?;
+async fn run() -> Result<[Option<String>; 16]> {
+    let addr = start_server()?;
+    let addr = addr.to_string();
 
-    let connection = selium::client()
+    let mut subscriber1 = start_subscriber(&addr, "/acmeco/stocks").await?;
+    let mut subscriber2 = start_subscriber(&addr, "/acmeco/stocks").await?;
+    let subscriber3 = start_subscriber(&addr, "/acmeco/something_else").await?;
+    let subscriber4 = start_subscriber(&addr, "/bluthco/stocks").await?;
+
+    let connection = selium::custom()
         .keep_alive(5_000)?
+        .endpoint(&addr)
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(
             "../certs/client/localhost.der",
             "../certs/client/localhost.key.der",
         )?
-        .connect(SERVER_ADDR)
+        .connect()
         .await?;
 
     let mut publisher = connection
@@ -102,15 +99,19 @@ async fn run() -> Result<[Option<String>; 16], Box<dyn Error>> {
     ])
 }
 
-async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>, Box<dyn Error>> {
-    let connection = selium::client()
+async fn start_subscriber(
+    addr: &str,
+    topic: &str,
+) -> Result<KeepAlive<Subscriber<StringCodec, String>, String>> {
+    let connection = selium::custom()
         .keep_alive(5_000)?
+        .endpoint(addr)
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(
             "../certs/client/localhost.der",
             "../certs/client/localhost.key.der",
         )?
-        .connect(SERVER_ADDR)
+        .connect()
         .await?;
 
     Ok(connection
@@ -120,26 +121,4 @@ async fn start_subscriber(topic: &str) -> Result<Subscriber<StringCodec, String>
         .with_decoder(StringCodec)
         .open()
         .await?)
-}
-
-fn start_server() -> Child {
-    Command::new(env!("CARGO"))
-        .args([
-            "run",
-            "--bin",
-            "selium-server",
-            "--",
-            "--bind-addr",
-            SERVER_ADDR,
-            "--cert",
-            "certs/server/localhost.der",
-            "--key",
-            "certs/server/localhost.key.der",
-            "--ca",
-            "certs/server/ca.der",
-            "-vvvv",
-        ])
-        .current_dir("..")
-        .spawn()
-        .expect("Failed to start server")
 }

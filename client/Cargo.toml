@@ -1,11 +1,11 @@
 [package]
 name = "selium"
-version = "0.2.0"
+version = "0.3.0"
 description = """
-selium is the client library for Selium, an extremely developer friendly, composable messaging
-platform with zero build time configuration.
+An extremely developer friendly, composable messaging platform with zero build
+time configuration.
 """
-include = ["src/**/*"]
+include = ["src/**/*", "../proxy.debug.der", "../proxy.prod.der"]
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -16,7 +16,6 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-anyhow = "1.0"
 async-trait = "0.1"
 bytes = "1.5"
 chrono = { version = "0.4", optional = true, default-features = false, features = [
@@ -26,20 +25,21 @@ futures = "0.3"
 quinn = "0.10"
 rustls = "0.21"
 rustls-pemfile = "1.0"
-selium-protocol = { version = "0.1", path = "../protocol" }
-selium-std = { version = "0.1", optional = true, path = "../standard" }
-tokio = { version = "1.33", features = ["full"] }
+selium-protocol = { version = "0.2", path = "../protocol" }
+selium-std = { version = "0.2", path = "../standard" }
+tokio = { version = "1.34", features = ["full"] }
 
 [dev-dependencies]
+anyhow = "1.0"
+fake = "2.9"
+rand = "0.8"
 serde = "1.0"
 
 [features]
 chrono = ["dep:chrono"]
 std-compression = ["selium-std/compression"]
-std-traits = ["selium-std/traits"]
 std-codec = ["selium-std/codec"]
 std = ["std-compression", "std-codec"]
-default = ["std-traits"]
 
 [[example]]
 name = "publish"
@@ -85,3 +85,13 @@ required-features = ["std-codec", "std-compression"]
 name = "batching_and_compression"
 path = "examples/batching_and_compression.rs"
 required-features = ["std-compression"]
+
+[[example]]
+name = "request"
+path = "examples/request.rs"
+required-features = ["std-codec"]
+
+[[example]]
+name = "reply"
+path = "examples/reply.rs"
+required-features = ["std-codec"]

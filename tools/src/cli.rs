@@ -23,4 +23,8 @@ pub struct GenCertsArgs {
     /// Output path for client certs
     #[clap(short = 'c', default_value = "certs/client/")]
     pub client_out_path: PathBuf,
+
+    /// No expiry
+    #[clap(long = "no-expiry")]
+    pub no_expiry: bool,
 }

@@ -9,3 +9,11 @@
 - Added support for message batching
 - Message payload size limit (1MB) is now enforced on wire protocol
 - Implemented QUIC Mutual TLS
+
+## v0.3.0
+
+- Added request-reply messaging pattern
+- Implement protocol graceful shutdown
+- Decoupled binary into library components for testing
+- Features for Selium Cloud
+- Bump dependency versions
