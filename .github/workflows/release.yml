@@ -11,14 +11,14 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        name: [protocol, standard, client, server, tools]
+        name: [standard, protocol, client, server, tools]
         include:
-          - name: protocol
-            display: protocol
-            repo: selium-protocol
           - name: standard
             display: Standard
             repo: selium-std
+          - name: protocol
+            display: protocol
+            repo: selium-protocol
           - name: client
             display: Client
             repo: selium
