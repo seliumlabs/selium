@@ -4,7 +4,7 @@ version = "0.2.0"
 description = """
 selium-std is a dependent crate of Selium. Do not use directly.
 """
-include = ["src/**/*", "../benchmarks/src/**/*"]
+include = ["src/**/*", "benches/**/*"]
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
