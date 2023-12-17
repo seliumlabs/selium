@@ -3,6 +3,9 @@ use futures::{sink::With, Future, Sink, SinkExt as _};
 mod fanout_many;
 pub use fanout_many::*;
 
+mod router;
+pub use router::*;
+
 // @TODO - awaiting selium#22
 // mod filter;
 // pub use filter::Filter;

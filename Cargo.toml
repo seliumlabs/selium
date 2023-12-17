@@ -1,5 +1,14 @@
 [workspace]
-members = ["client", "server", "protocol", "tests", "benchmarks", "standard", "tools"]
+members = [
+    "client",
+    "server",
+    "protocol",
+    "tests",
+    "benchmarks",
+    "standard",
+    "tools",
+]
+resolver = "2"
 
 [workspace.package]
 edition = "2021"

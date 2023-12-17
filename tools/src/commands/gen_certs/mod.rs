@@ -26,8 +26,8 @@ impl CommandRunner for GenCertsRunner {
             "Warning! Using a self-signed certificate does not protect from person-in-the-middle attacks.".yellow()
         );
 
-        let cert_gen = CertGen::generate()?;
-        cert_gen.output(self.args)?;
+        let cert_gen = CertGen::generate(self.args.no_expiry)?;
+        cert_gen.output(&self.args.client_out_path, &self.args.server_out_path)?;
 
         Ok(())
     }

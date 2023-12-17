@@ -1,39 +1,41 @@
-use crate::traits::TryIntoU64;
-use anyhow::Result;
-use quinn::Connection;
+use crate::{constants::RETENTION_POLICY_DEFAULT, traits::TryIntoU64, Client};
 use selium_protocol::Operation;
-
-/// The default `retention_policy` setting for messages.
-pub const RETENTION_POLICY_DEFAULT: u64 = 0;
+use selium_std::errors::Result;
 
 /// A convenient builder struct used to build a `Selium` stream, such as a
-/// [Publisher](crate::Publisher) or [Subscriber](crate::Subscriber).
+/// [Pub/Sub](crate::streams::pubsub) or [Request/Reply](crate::streams::request_reply) stream.
 ///
 /// Similar to the [ClientBuilder](crate::ClientBuilder) struct, the [StreamBuilder] struct uses a
 /// type-level Finite State Machine to assure that any stream instance cannot be constructed with an
-/// invalid state. Using a [Publisher](crate::Publisher) stream as an example, the `open`
+/// invalid state. Using a [Publisher](crate::streams::pubsub::Publisher) stream as an example, the `open`
 /// method will not be in-scope unless the [StreamBuilder](crate::StreamBuilder) is in a pre-open state, which
 /// requires the stream to be configured, and a decoder to have been specified.
 ///
 /// **NOTE:** The [StreamBuilder] type is not intended to be used directly, but rather, is
 /// constructed via any of the methods on a [Client](crate::Client) instance. For example, the
-/// [subscriber](crate::Client::subscriber) and [publisher](crate::Client::publisher) methods will
-/// construct the respective StreamBuilder.
-#[derive(Debug)]
+/// [subscriber](crate::Client::subscriber), [publisher](crate::Client::publisher),
+/// [requestor](crate::Client::requestor) and [replier](crate::Client::replier) methods will
+/// construct each respective StreamBuilder.
 pub struct StreamBuilder<T> {
     pub(crate) state: T,
-    pub(crate) connection: Connection,
+    pub(crate) client: Client,
+}
+
+impl<T> StreamBuilder<T> {
+    pub fn new(client: Client, state: T) -> Self {
+        Self { state, client }
+    }
 }
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct StreamCommon {
+pub struct PubSubCommon {
     pub(crate) topic: String,
     pub(crate) retention_policy: u64,
     pub(crate) operations: Vec<Operation>,
 }
 
-impl StreamCommon {
+impl PubSubCommon {
     pub fn new(topic: &str) -> Self {
         Self {
             topic: topic.to_owned(),

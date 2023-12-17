@@ -1,45 +1,51 @@
+use crate::{sink::FanoutMany, BoxSink};
+use futures::{
+    channel::{
+        mpsc::{self, Receiver, Sender},
+        oneshot,
+    },
+    ready,
+    stream::BoxStream,
+    Future, Sink, Stream,
+};
+use log::error;
+use pin_project_lite::pin_project;
+use selium_protocol::traits::{ShutdownSink, ShutdownStream};
+use selium_std::errors::Result;
 use std::{
     fmt::Debug,
     pin::Pin,
     task::{Context, Poll},
 };
-
-use anyhow::Result;
-use futures::{
-    channel::mpsc::{self, Receiver, Sender},
-    ready, Future, Sink, Stream,
-};
-use log::error;
-use pin_project_lite::pin_project;
 use tokio_stream::StreamMap;
-
-use crate::sink::FanoutMany;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
-pub enum Socket<St, Si> {
-    Stream(St),
-    Sink(Si),
+pub type TopicShutdown = oneshot::Receiver<()>;
+
+pub enum Socket<T, E> {
+    Stream(BoxStream<'static, Result<T>>),
+    Sink(BoxSink<T, E>),
 }
 
 pin_project! {
     #[project = TopicProj]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Topic<St, Si, Item> {
+    pub struct Topic<T, E> {
         #[pin]
-        stream: StreamMap<usize, St>,
+        stream: StreamMap<usize, BoxStream<'static, Result<T>>>,
         next_stream_id: usize,
         #[pin]
-        sink: FanoutMany<usize, Si>,
+        sink: FanoutMany<usize, BoxSink<T, E>>,
         next_sink_id: usize,
         #[pin]
-        handle: Receiver<Socket<St, Si>>,
-        buffered_item: Option<Item>,
+        handle: Receiver<Socket<T, E>>,
+        buffered_item: Option<T>,
     }
 }
 
-impl<St, Si, Item> Topic<St, Si, Item> {
-    pub fn pair() -> (Self, Sender<Socket<St, Si>>) {
+impl<T, E> Topic<T, E> {
+    pub fn pair() -> (Self, Sender<Socket<T, E>>) {
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
 
         (
@@ -56,12 +62,10 @@ impl<St, Si, Item> Topic<St, Si, Item> {
     }
 }
 
-impl<St, Si, Item> Future for Topic<St, Si, Item>
+impl<T, E> Future for Topic<T, E>
 where
-    St: Stream<Item = Option<Result<Item, Si::Error>>> + Unpin,
-    Si: Sink<Item> + Unpin,
-    Si::Error: Debug,
-    Item: Clone + Unpin,
+    E: Debug + Unpin,
+    T: Clone + Unpin,
 {
     type Output = ();
 
@@ -76,6 +80,16 @@ where
         } = self.project();
 
         loop {
+            // If we've got an item buffered already, we need to write it to the sink
+            // before we can do anything else.
+            if buffered_item.is_some() {
+                // Unwrapping is safe as the underlying sink is guaranteed not to error
+                ready!(sink.as_mut().poll_ready(cx)).unwrap();
+                sink.as_mut()
+                    .start_send(buffered_item.take().unwrap())
+                    .unwrap();
+            }
+
             match handle.as_mut().poll_next(cx) {
                 Poll::Ready(Some(sock)) => match sock {
                     Socket::Stream(st) => {
@@ -88,7 +102,13 @@ where
                     }
                 },
                 // If handle is terminated, the stream is dead
-                Poll::Ready(None) => return Poll::Ready(()),
+                Poll::Ready(None) => {
+                    ready!(sink.as_mut().poll_flush(cx)).unwrap();
+                    stream.iter_mut().for_each(|(_, s)| s.shutdown_stream());
+                    sink.iter_mut().for_each(|(_, s)| s.shutdown_sink());
+
+                    return Poll::Ready(());
+                }
                 // If no messages are available and there's no work to do, block this future
                 Poll::Pending if stream.is_empty() && buffered_item.is_none() => {
                     return Poll::Pending
@@ -97,25 +117,13 @@ where
                 Poll::Pending => (),
             }
 
-            // If we've got an item buffered already, we need to write it to the sink
-            // before we can do anything else.
-            if buffered_item.is_some() {
-                // Unwrapping is safe as the underlying sink is guaranteed not to error
-                ready!(sink.as_mut().poll_ready(cx)).unwrap();
-                sink.as_mut()
-                    .start_send(buffered_item.take().unwrap())
-                    .unwrap();
-            }
-
             match stream.as_mut().poll_next(cx) {
                 // Received message from an inner stream
-                Poll::Ready(Some((_, Some(Ok(item))))) => *buffered_item = Some(item),
+                Poll::Ready(Some((_, Ok(item)))) => *buffered_item = Some(item),
                 // Encountered an error whilst receiving a message from an inner stream
-                Poll::Ready(Some((_, Some(Err(e))))) => {
+                Poll::Ready(Some((_, Err(e)))) => {
                     error!("Received invalid message from stream: {e:?}")
                 }
-                // An inner stream has finished
-                Poll::Ready(Some((_, None))) => (),
                 // All streams have finished
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
                 Poll::Ready(None) => ready!(sink.as_mut().poll_flush(cx)).unwrap(),

@@ -58,7 +58,7 @@ impl BatchConfig {
 
     /// Constructs a new `BatchConfig` instance with a high throughput preset.
     ///
-    /// Typically used when a [Publisher](crate::Publisher) sends small messages at a high rate.
+    /// Typically used when a [Publisher](crate::streams::pubsub::Publisher) sends small messages at a high rate.
     pub fn high_throughput() -> Self {
         Self::new(250, Duration::from_millis(100))
     }
@@ -66,7 +66,7 @@ impl BatchConfig {
     /// Constructs a new `BatchConfig` instance with a balanced preset.
     ///
     /// Typically used to acheive a balance between throughput and payload size.
-    /// [Publisher](crate::Publisher) streams that send mid-sized messages at a high rate
+    /// [Publisher](crate::streams::pubsub::Publisher) streams that send mid-sized messages at a high rate
     /// will get the most benefit out of this preset.
     pub fn balanced() -> Self {
         Self::new(100, Duration::from_millis(100))
@@ -74,7 +74,7 @@ impl BatchConfig {
 
     /// Constructs a new `BatchConfig` instance with a preset that favours minimal payloads.
     ///
-    /// Typically used when a [Publisher](crate::Publisher) sends large messages, and wants to
+    /// Typically used when a [Publisher](crate::streams::pubsub::Publisher) sends large messages, and wants to
     /// remain mindful of the wire protocol message size limits while still optimizing network
     /// calls and compression.
     pub fn minimal_payload() -> Self {

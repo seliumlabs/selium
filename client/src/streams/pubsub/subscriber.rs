@@ -1,57 +1,41 @@
-use crate::traits::{Open, Operations, Retain, TryIntoU64};
-use crate::{StreamBuilder, StreamCommon};
-use anyhow::Result;
+use super::states::{SubscriberWantsDecoder, SubscriberWantsOpen};
+use crate::connection::{ClientConnection, SharedConnection};
+use crate::keep_alive::{AttemptFut, KeepAlive};
+use crate::streams::aliases::Decomp;
+use crate::streams::handle_reply;
+use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
+use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, Stream, StreamExt};
-use quinn::Connection;
 use selium_protocol::utils::decode_message_batch;
-use selium_protocol::{BiStream, Frame, SubscriberPayload};
+use selium_protocol::{BiStream, Frame, SubscriberPayload, TopicName};
+use selium_std::errors::{CodecError, Result};
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-
-type Decomp = Arc<dyn Decompress + Send + Sync>;
-
-#[doc(hidden)]
-pub struct SubscriberWantsDecoder {
-    pub(crate) common: StreamCommon,
-}
-
-#[doc(hidden)]
-pub struct SubscriberWantsOpen<D, Item> {
-    common: StreamCommon,
-    decoder: D,
-    decompression: Option<Decomp>,
-    _marker: PhantomData<Item>,
-}
+use tokio::sync::MutexGuard;
 
 impl StreamBuilder<SubscriberWantsDecoder> {
-    /// Specifies the decoder a [Subscriber](crate::Subscriber) uses for decoding messages
-    /// received over the wire.
+    /// Specifies the decoder a [Subscriber] uses for decoding messages received over the wire.
     ///
     /// A decoder can be any type implementing
     /// [MessageDecoder](crate::std::traits::codec::MessageDecoder).
     pub fn with_decoder<D, Item>(self, decoder: D) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
-        let state = SubscriberWantsOpen {
-            common: self.state.common,
-            decoder,
-            decompression: None,
-            _marker: PhantomData,
-        };
+        let next_state = SubscriberWantsOpen::new(self.state, decoder);
 
         StreamBuilder {
-            state,
-            connection: self.connection,
+            state: next_state,
+            client: self.client,
         }
     }
 }
 
 impl<D, Item> StreamBuilder<SubscriberWantsOpen<D, Item>> {
-    /// Specifies the decompression implementation a [Subscriber](crate::Subscriber) uses for
+    /// Specifies the decompression implementation a [Subscriber] uses for
     /// decompressing messages received over the wire prior to decoding.
     ///
     /// A decompressor can be any type implementing
@@ -87,20 +71,22 @@ impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>> {
 #[async_trait]
 impl<D, Item> Open for StreamBuilder<SubscriberWantsOpen<D, Item>>
 where
-    D: MessageDecoder<Item> + Send,
-    Item: Send,
+    D: MessageDecoder<Item> + Send + Unpin,
+    Item: Send + Unpin,
 {
-    type Output = Subscriber<D, Item>;
+    type Output = KeepAlive<Subscriber<D, Item>, Item>;
 
     async fn open(self) -> Result<Self::Output> {
+        let topic = TopicName::try_from(self.state.common.topic.as_str())?;
+
         let headers = SubscriberPayload {
-            topic: self.state.common.topic,
+            topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
         };
 
         let subscriber = Subscriber::spawn(
-            self.connection,
+            self.client,
             headers,
             self.state.decoder,
             self.state.decompression,
@@ -120,7 +106,9 @@ where
 /// **Note:** The Subscriber struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
 pub struct Subscriber<D, Item> {
+    client: Client,
     stream: BiStream,
+    headers: SubscriberPayload,
     decoder: D,
     decompression: Option<Decomp>,
     message_batch: Option<Vec<Bytes>>,
@@ -129,34 +117,53 @@ pub struct Subscriber<D, Item> {
 
 impl<D, Item> Subscriber<D, Item>
 where
-    D: MessageDecoder<Item>,
+    D: MessageDecoder<Item> + Send + Unpin,
+    Item: Unpin + Send,
 {
     async fn spawn(
-        connection: Connection,
+        client: Client,
         headers: SubscriberPayload,
         decoder: D,
         decompression: Option<Decomp>,
-    ) -> Result<Self> {
-        let mut stream = BiStream::try_from_connection(&connection).await?;
-        let frame = Frame::RegisterSubscriber(headers);
+    ) -> Result<KeepAlive<Self, Item>> {
+        let lock = client.connection.lock().await;
+        let stream = Self::open_stream(lock, headers.clone()).await?;
 
-        stream.send(frame).await?;
-        stream.finish().await?;
-
-        Ok(Self {
+        let subscriber = Self {
+            client: client.clone(),
             stream,
+            headers,
             decoder,
             message_batch: None,
             decompression,
             _marker: PhantomData,
-        })
+        };
+
+        Ok(KeepAlive::new(subscriber, client.backoff_strategy))
+    }
+
+    async fn open_stream(
+        connection: MutexGuard<'_, ClientConnection>,
+        headers: SubscriberPayload,
+    ) -> Result<BiStream> {
+        let mut stream = BiStream::try_from_connection(connection.conn()).await?;
+        drop(connection);
+
+        let frame = Frame::RegisterSubscriber(headers);
+        stream.send(frame).await?;
+
+        handle_reply(&mut stream).await?;
+        Ok(stream)
     }
 
     fn decode_message(&mut self, bytes: Bytes) -> Poll<Option<Result<Item>>> {
         let mut mut_bytes = BytesMut::with_capacity(bytes.len());
         mut_bytes.extend_from_slice(&bytes);
 
-        let decoded = self.decoder.decode(&mut mut_bytes)?;
+        let decoded = self
+            .decoder
+            .decode(&mut mut_bytes)
+            .map_err(CodecError::DecodeFailure)?;
         Poll::Ready(Some(Ok(decoded)))
     }
 }
@@ -164,7 +171,7 @@ where
 impl<D, Item> Stream for Subscriber<D, Item>
 where
     D: MessageDecoder<Item> + Send + Unpin,
-    Item: Unpin,
+    Item: Send + Unpin,
 {
     type Item = Result<Item>;
 
@@ -184,18 +191,22 @@ where
         match frame {
             // If the frame is a standard, unbatched message, then decode and return it
             // immediately.
-            Frame::Message(mut bytes) => {
+            Frame::Message(mut payload) => {
                 if let Some(decomp) = &self.decompression {
-                    bytes = decomp.decompress(bytes)?;
+                    payload.message = decomp
+                        .decompress(payload.message)
+                        .map_err(CodecError::DecompressFailure)?;
                 }
 
-                self.decode_message(bytes)
+                self.decode_message(payload.message)
             }
             // If the frame is a batched message, then set the current batch and call `poll_next`
             // again to begin popping off messages.
             Frame::BatchMessage(mut bytes) => {
                 if let Some(decomp) = &self.decompression {
-                    bytes = decomp.decompress(bytes)?;
+                    bytes = decomp
+                        .decompress(bytes)
+                        .map_err(CodecError::DecompressFailure)?;
                 }
 
                 let batch = decode_message_batch(bytes);
@@ -209,5 +220,33 @@ where
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.stream.size_hint()
+    }
+}
+
+impl<D, Item> KeepAliveStream for Subscriber<D, Item>
+where
+    D: MessageDecoder<Item> + Send + Unpin,
+    Item: Unpin + Send,
+{
+    type Headers = SubscriberPayload;
+
+    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers) -> AttemptFut {
+        Box::pin(async move {
+            let mut lock = connection.lock().await;
+            lock.reconnect().await?;
+            Self::open_stream(lock, headers).await
+        })
+    }
+
+    fn on_reconnect(&mut self, stream: BiStream) {
+        self.stream = stream;
+    }
+
+    fn get_connection(&self) -> SharedConnection {
+        self.client.connection.clone()
+    }
+
+    fn get_headers(&self) -> Self::Headers {
+        self.headers.clone()
     }
 }
