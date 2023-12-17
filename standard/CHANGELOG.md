@@ -6,8 +6,6 @@
 
 ## v0.2.0
 
-- Added request-reply messaging pattern
 - Added connection reestablishment for failed connections
-- Added graceful shutdown protocol
 - Features for Selium Cloud
 - Bump dependency versions
