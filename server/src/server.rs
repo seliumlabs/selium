@@ -162,15 +162,11 @@ async fn handle_stream(
         let frame = result?;
         let topic = frame.get_topic().ok_or(anyhow!("Expected header frame"))?;
 
-        // Note this can only occur if someone circumvents the client lib
-        if !topic.is_valid() {
-            return Err(anyhow!("Invalid topic name"));
-        }
-
         #[cfg(feature = "__cloud")]
         {
             use crate::cloud::do_cloud_auth;
             use log::debug;
+
             match do_cloud_auth(&_connection, topic, &topics).await {
                 Ok(_) => stream.send(Frame::Ok).await?,
                 Err(e) => {
@@ -185,7 +181,16 @@ async fn handle_stream(
             }
         }
         #[cfg(not(feature = "__cloud"))]
-        stream.send(Frame::Ok).await?;
+        {
+            // Note this can only occur if someone circumvents the client lib
+            if !topic.is_valid() {
+                stream
+                    .send(Frame::Error(b"Invalid topic name".to_vec().into()))
+                    .await?;
+                return Ok(());
+            }
+            stream.send(Frame::Ok).await?;
+        }
 
         let mut ts = topics.lock().await;
 

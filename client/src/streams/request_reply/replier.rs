@@ -11,6 +11,7 @@ use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload, TopicName
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use selium_std::traits::compression::{Compress, Decompress};
+use std::fmt::Debug;
 use std::{marker::PhantomData, pin::Pin, sync::Arc};
 use tokio::sync::MutexGuard;
 
@@ -113,6 +114,7 @@ impl<D, E, Err, F, Fut, ReqItem, ResItem> Open
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
+    Err: Debug,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
     Fut: Future<Output = std::result::Result<ResItem, Err>>,
     ReqItem: Unpin + Send,
@@ -164,6 +166,7 @@ impl<D, E, Err, F, Fut, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,
+    Err: Debug,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
     Fut: Future<Output = std::result::Result<ResItem, Err>>,
     ReqItem: Unpin + Send,
@@ -244,7 +247,7 @@ where
         let decoded = self.decode_message(req_payload.message)?;
         let response = (self.handler)(decoded)
             .await
-            .map_err(|_| SeliumError::RequestHandlerFailure)?;
+            .map_err(|e| SeliumError::RequestHandlerFailure(format!("{e:?}")))?;
         let encoded = self.encode_message(response)?;
 
         let res_payload = MessagePayload {
@@ -260,22 +263,31 @@ where
 
     /// Prepares a [Replier] stream to begin processing incoming messages.
     /// This method will block the current task until the stream has been exhausted.
-    pub async fn listen(mut self) -> Result<()> {
+    pub async fn listen<H>(mut self, mut error_handler: H) -> Result<()>
+    where
+        H: FnMut(&SeliumError) -> bool,
+    {
         while let Some(Ok(request)) = self.stream.next().await {
-            match request {
-                Frame::Message(req) => self.handle_request(req).await?,
-                Frame::Error(bytes) => match String::from_utf8(bytes.to_vec()) {
-                    Ok(s) => return Err(SeliumError::OpenStream(s)),
-                    Err(_) => return Err(SeliumError::OpenStream("Invalid UTF-8 error".into())),
-                },
-                _ => {
-                    return Err(SeliumError::OpenStream(
-                        "Invalid frame returned from server".into(),
-                    ))
+            if let Err(e) = self.handle_frame(request).await {
+                if !error_handler(&e) {
+                    return Err(e);
                 }
             }
         }
 
         Ok(())
+    }
+
+    async fn handle_frame(&mut self, request: Frame) -> Result<()> {
+        match request {
+            Frame::Message(req) => Ok(self.handle_request(req).await?),
+            Frame::Error(bytes) => match String::from_utf8(bytes.to_vec()) {
+                Ok(s) => Err(SeliumError::OpenStream(s)),
+                Err(_) => Err(SeliumError::OpenStream("Invalid UTF-8 error".into())),
+            },
+            _ => Err(SeliumError::OpenStream(
+                "Invalid frame returned from server".into(),
+            )),
+        }
     }
 }

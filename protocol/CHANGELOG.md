@@ -11,3 +11,7 @@
 - Added graceful shutdown protocol
 - Features for Selium Cloud
 - Bump dependency versions
+
+## v0.2.1
+
+- Bug fix for Selium Cloud
