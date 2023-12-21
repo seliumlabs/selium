@@ -34,7 +34,17 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    replier.listen().await?;
+    // To handle errors gracefully without terminating the listener, create an error
+    // handler that returns 'true'.
+    replier
+        .listen(|e| {
+            eprintln!("{e:?}");
+            true
+        })
+        .await?;
+
+    // To terminate on errors, create an error handler that returns 'false'
+    // replier.listen(|_| false).await?;
 
     Ok(())
 }

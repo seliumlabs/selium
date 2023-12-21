@@ -60,6 +60,7 @@ impl TryFrom<&str> for TopicName {
             return Err(SeliumError::ParseTopicNameError);
         }
 
+        #[cfg(not(feature = "__notopiccheck"))]
         if value[1..].starts_with(RESERVED_NAMESPACE) {
             return Err(SeliumError::ReservedNamespaceError);
         }
@@ -93,13 +94,18 @@ mod tests {
             "/namespace/",
             "/namespace/topic/other",
             "/namespace/topic!",
-            "/selium/topic",
         ];
 
         for topic_name in topic_names {
             let result = TopicName::try_from(topic_name);
             assert!(result.is_err());
         }
+    }
+
+    #[cfg(not(feature = "__notopiccheck"))]
+    #[test]
+    fn fails_to_parse_reserved_namespace() {
+        assert!(TopicName::try_from("/selium/topic").is_err());
     }
 
     #[test]
