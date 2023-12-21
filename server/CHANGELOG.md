@@ -21,3 +21,5 @@
 ## v0.3.1
 
 - Remove openssl dependency
+- Replace faulty Cloud certs
+- Bug fixes for Selium Cloud

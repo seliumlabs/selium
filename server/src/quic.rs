@@ -109,7 +109,7 @@ pub fn load_root_store<T: AsRef<Path>>(ca_file: T) -> Result<RootCertStore> {
     Ok(store)
 }
 
-pub fn get_pubkey_from_connection(connection: &Connection) -> Result<String> {
+pub fn get_pubkey_from_connection(connection: &Connection) -> Result<Vec<u8>> {
     let peer_identity = connection
         .peer_identity()
         .context("Unable to read peer identity")?;
@@ -118,13 +118,9 @@ pub fn get_pubkey_from_connection(connection: &Connection) -> Result<String> {
         .downcast_ref::<Vec<Certificate>>()
         .context("Unable to read cert")?;
 
-    let pub_key = extract_public_key(certs)?;
-
-    Ok(pub_key)
-}
-
-fn extract_public_key(certs: &[Certificate]) -> Result<String> {
-    let first_cert = certs.get(0).context("Failed to get first certificate.")?;
-    let pair = rcgen::KeyPair::from_der(first_cert.as_ref())?;
-    Ok(pair.public_key_pem())
+    Ok(certs
+        .get(0)
+        .context("Failed to get first certificate")?
+        .0
+        .clone())
 }

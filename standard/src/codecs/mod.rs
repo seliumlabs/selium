@@ -178,7 +178,9 @@
 //! ```
 
 mod bincode_codec;
+mod bytes_codec;
 mod string_codec;
 
 pub use bincode_codec::*;
+pub use bytes_codec::*;
 pub use string_codec::*;
