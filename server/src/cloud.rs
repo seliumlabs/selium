@@ -23,9 +23,9 @@ use crate::{
 };
 
 #[cfg(debug_assertions)]
-const PROXY_PUBKEY: &[u8; 405] = include_bytes!("../proxy.debug.der");
+const PROXY_PUBKEY: &[u8; 415] = include_bytes!("../proxy.debug.der");
 #[cfg(not(debug_assertions))]
-const PROXY_PUBKEY: &[u8; 405] = include_bytes!("../proxy.prod.der");
+const PROXY_PUBKEY: &[u8; 416] = include_bytes!("../proxy.prod.der");
 
 #[derive(Serialize)]
 pub enum AdminRequest {
