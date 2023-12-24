@@ -5,7 +5,7 @@ description = """
 An extremely developer friendly, composable messaging platform with zero build
 time configuration.
 """
-include = ["src/**/*", "proxy.debug.der", "proxy.prod.der"]
+include = ["src/**/*", "ca.debug.der", "ca.prod.der"]
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
