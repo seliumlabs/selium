@@ -8,12 +8,12 @@ use futures::{
 };
 use quinn::Connection;
 use selium_protocol::{Frame, MessagePayload, TopicName};
-use selium_proxy::{AdminRequest, AdminResponse};
 use selium_std::{
     codecs::BincodeCodec,
     errors::{CodecError, Result, SeliumError},
     traits::codec::{MessageDecoder, MessageEncoder},
 };
+use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
 use crate::{
@@ -23,9 +23,31 @@ use crate::{
 };
 
 #[cfg(debug_assertions)]
-const PROXY_PUBKEY: &[u8; 469] = include_bytes!("../proxy.debug.der");
+const PROXY_PUBKEY: &[u8; 415] = include_bytes!("../proxy.debug.der");
 #[cfg(not(debug_assertions))]
-const PROXY_PUBKEY: &[u8; 470] = include_bytes!("../proxy.prod.der");
+const PROXY_PUBKEY: &[u8; 416] = include_bytes!("../proxy.prod.der");
+
+#[derive(Serialize)]
+pub enum AdminRequest {
+    _Pad1,
+    _Pad2,
+    _Pad3,
+    _Pad4,
+    _Pad5,
+    _Pad6,
+    GetNamespace(Vec<u8>),
+}
+
+#[derive(Deserialize)]
+pub enum AdminResponse {
+    _Pad1,
+    _Pad2,
+    _Pad3,
+    _Pad4,
+    GetNamespaceResponse(String),
+    _Pad5,
+    _Pad6,
+}
 
 // XXX This is horrendously inefficient! Caching is needed.
 pub async fn do_cloud_auth(
@@ -36,7 +58,7 @@ pub async fn do_cloud_auth(
     let pub_key = get_pubkey_from_connection(&connection)?;
 
     // If this is the proxy, don't do auth
-    if pub_key.as_bytes() == PROXY_PUBKEY {
+    if pub_key == PROXY_PUBKEY {
         return Ok(());
     }
 
@@ -65,7 +87,6 @@ pub async fn do_cloud_auth(
             Ok((Some(Ok(AdminResponse::GetNamespaceResponse(_))), _)) => {
                 Err(anyhow!("Access denied"))
             }
-            Ok((Some(Ok(_)), _)) => Err(anyhow!("Invalid response from proxy")),
             Ok((Some(Err(e)), _)) => Err(e.into()),
             _ => Err(anyhow!("No response from proxy")),
         }

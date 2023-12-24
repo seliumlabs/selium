@@ -1,11 +1,11 @@
 [package]
 name = "selium"
-version = "0.3.0"
+version = "0.3.1"
 description = """
 An extremely developer friendly, composable messaging platform with zero build
 time configuration.
 """
-include = ["src/**/*", "proxy.debug.der", "proxy.prod.der"]
+include = ["src/**/*", "ca.debug.der", "ca.prod.der"]
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -40,6 +40,7 @@ chrono = ["dep:chrono"]
 std-compression = ["selium-std/compression"]
 std-codec = ["selium-std/codec"]
 std = ["std-compression", "std-codec"]
+__notopiccheck = ["selium-protocol/__notopiccheck"]
 
 [[example]]
 name = "publish"

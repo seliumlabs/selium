@@ -17,3 +17,9 @@
 - Added connection reestablishment for failed connections
 - Features for Selium Cloud
 - Bump dependency versions
+
+## v0.3.1
+
+- Add closure so client can gracefully handle replier errors
+- Add CA certificate
+- Bug fix for Selium Cloud

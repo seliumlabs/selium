@@ -72,7 +72,7 @@ impl TestClient {
                     .await
                     .unwrap();
 
-                replier.listen().await
+                replier.listen(|_| false).await
             }
         })
     }
