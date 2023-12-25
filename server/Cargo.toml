@@ -29,8 +29,8 @@ hmac-sha512 = "1.1"
 log = "0.4"
 pin-project-lite = "0.2"
 quinn = "0.10"
-rcgen = "0.11"
-rustls = "0.21"
+rcgen = "0.12"
+rustls = "0.22"
 rustls-pemfile = "1.0"
 selium-protocol = { version = "0.2", path = "../protocol" }
 selium-std = { version = "0.2", path = "../standard", features = ["codec"] }
