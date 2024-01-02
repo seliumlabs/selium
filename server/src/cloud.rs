@@ -36,6 +36,7 @@ pub enum AdminRequest {
     _Pad5,
     _Pad6,
     GetNamespace(Vec<u8>),
+    _Pad7,
 }
 
 #[derive(Deserialize)]
