@@ -119,7 +119,7 @@ pub fn get_pubkey_from_connection(connection: &Connection) -> Result<Vec<u8>> {
         .context("Unable to read cert")?;
 
     Ok(certs
-        .get(0)
+        .first()
         .context("Failed to get first certificate")?
         .0
         .clone())
