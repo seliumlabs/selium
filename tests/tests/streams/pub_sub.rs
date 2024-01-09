@@ -102,7 +102,7 @@ async fn run() -> Result<[Option<String>; 16]> {
 async fn start_subscriber(
     addr: &str,
     topic: &str,
-) -> Result<KeepAlive<Subscriber<StringCodec, String>, String>> {
+) -> Result<KeepAlive<Subscriber<StringCodec, String>>> {
     let connection = selium::custom()
         .keep_alive(5_000)?
         .endpoint(addr)

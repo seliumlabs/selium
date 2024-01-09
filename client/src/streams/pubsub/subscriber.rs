@@ -74,7 +74,7 @@ where
     D: MessageDecoder<Item> + Send + Unpin,
     Item: Send + Unpin,
 {
-    type Output = KeepAlive<Subscriber<D, Item>, Item>;
+    type Output = KeepAlive<Subscriber<D, Item>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.common.topic.as_str())?;
@@ -125,7 +125,7 @@ where
         headers: SubscriberPayload,
         decoder: D,
         decompression: Option<Decomp>,
-    ) -> Result<KeepAlive<Self, Item>> {
+    ) -> Result<KeepAlive<Self>> {
         let lock = client.connection.lock().await;
         let stream = Self::open_stream(lock, headers.clone()).await?;
 

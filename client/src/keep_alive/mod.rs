@@ -21,30 +21,26 @@ use selium_std::errors::{QuicError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use std::{
     io,
-    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll},
 };
 
 #[doc(hidden)]
-pub struct KeepAlive<T, Item> {
+pub struct KeepAlive<T> {
     stream: T,
     backoff_strategy: BackoffStrategy,
     status: ConnectionStatus,
-    _marker: PhantomData<Item>,
 }
 
-impl<T, Item> KeepAlive<T, Item>
+impl<T> KeepAlive<T>
 where
     T: KeepAliveStream + Send + Unpin,
-    Item: Send + Unpin,
 {
     pub fn new(stream: T, backoff_strategy: BackoffStrategy) -> Self {
         Self {
             stream,
             backoff_strategy,
             status: ConnectionStatus::Connected,
-            _marker: PhantomData,
         }
     }
 
@@ -102,7 +98,7 @@ where
         )
     }
 
-    fn is_stream_disconnected(result: &Result<Item>) -> bool {
+    fn is_stream_disconnected<Item>(result: &Result<Item>) -> bool {
         matches!(result,
             Err(SeliumError::IoError(err)) if Self::is_disconnect_error(err))
     }
@@ -113,7 +109,7 @@ where
     }
 }
 
-impl<E, Item> KeepAlive<Publisher<E, Item>, Item>
+impl<E, Item> KeepAlive<Publisher<E, Item>>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
     Item: Unpin + Send,
@@ -127,7 +123,7 @@ where
     }
 }
 
-impl<T, Item> Sink<Item> for KeepAlive<T, Item>
+impl<T, Item> Sink<Item> for KeepAlive<T>
 where
     T: KeepAliveStream + Sink<Item, Error = SeliumError> + Send + Unpin,
     Item: Unpin + Send,
@@ -195,7 +191,7 @@ where
     }
 }
 
-impl<T, Item> Stream for KeepAlive<T, Item>
+impl<T, Item> Stream for KeepAlive<T>
 where
     T: KeepAliveStream + Stream<Item = Result<Item>> + Send + Unpin,
     Item: Unpin + Send,
