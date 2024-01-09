@@ -1,8 +1,9 @@
 use super::states::*;
-use crate::connection::ClientConnection;
+use crate::connection::{ClientConnection, SharedConnection};
+use crate::keep_alive::{KeepAlive, AttemptFut};
 use crate::streams::aliases::{Comp, Decomp};
 use crate::streams::handle_reply;
-use crate::traits::Open;
+use crate::traits::{Open, KeepAliveStream};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -120,7 +121,7 @@ where
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
-    type Output = Replier<E, D, F, ReqItem, ResItem>;
+    type Output = KeepAlive<Replier<E, D, F, ReqItem, ResItem>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.endpoint.as_str())?;
@@ -152,7 +153,9 @@ where
 /// that only one active stream can bind to a namespace/topic combination at any given time. Trying
 /// to bind to an already occupied topic will result in a runtime error.
 pub struct Replier<E, D, F, ReqItem, ResItem> {
+    client: Client,
     stream: BiStream,
+    headers: ReplierPayload,
     encoder: E,
     decoder: D,
     compression: Option<Comp>,
@@ -180,12 +183,14 @@ where
         compression: Option<Comp>,
         decompression: Option<Decomp>,
         handler: Pin<Box<F>>,
-    ) -> Result<Self> {
+    ) -> Result<KeepAlive<Self>> {
         let lock = client.connection.lock().await;
-        let stream = Self::open_stream(lock, headers).await?;
+        let stream = Self::open_stream(lock, headers.clone()).await?;
 
         let replier = Self {
+            client: client.clone(),
             stream,
+            headers,
             encoder,
             decoder,
             compression,
@@ -195,7 +200,7 @@ where
             _res_marker: PhantomData,
         };
 
-        Ok(replier)
+        Ok(KeepAlive::new(replier, client.backoff_strategy))
     }
 
     async fn open_stream(
@@ -289,5 +294,39 @@ where
                 "Invalid frame returned from server".into(),
             )),
         }
+    }
+}
+
+impl<D, E, Err, F, Fut, ReqItem, ResItem> KeepAliveStream for Replier<E, D, F, ReqItem, ResItem>
+where
+    D: MessageDecoder<ReqItem> + Send + Unpin,
+    E: MessageEncoder<ResItem> + Send + Unpin,
+    Err: Debug,
+    F: FnMut(ReqItem) -> Fut + Send + Unpin,
+    Fut: Future<Output = std::result::Result<ResItem, Err>>,
+    ReqItem: Unpin + Send,
+    ResItem: Unpin + Send,
+
+{
+    type Headers = ReplierPayload;
+
+    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers) -> AttemptFut {
+        Box::pin(async move {
+            let mut connection = connection.lock().await;
+            connection.reconnect().await?;
+            Self::open_stream(connection, headers).await
+        })
+    }
+
+    fn on_reconnect(&mut self, stream: BiStream) {
+        self.stream = stream;
+    }
+
+    fn get_connection(&self) -> SharedConnection {
+        self.client.connection.clone()
+    }
+
+    fn get_headers(&self) -> Self::Headers {
+        self.headers.clone()
     }
 }

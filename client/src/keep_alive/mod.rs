@@ -15,10 +15,13 @@ pub use backoff_strategy::*;
 pub(crate) use connection_status::*;
 
 use crate::pubsub::Publisher;
+use crate::request_reply::Replier;
 use crate::traits::KeepAliveStream;
-use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
+use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt, Future};
 use selium_std::errors::{QuicError, Result, SeliumError};
-use selium_std::traits::codec::MessageEncoder;
+use selium_std::traits::codec::{MessageEncoder, MessageDecoder};
+use std::fmt::Debug;
+use std::ops::{Deref, DerefMut};
 use std::{
     io,
     pin::Pin,
@@ -120,6 +123,23 @@ where
 
     pub async fn duplicate(&self) -> Result<Self> {
         self.stream.duplicate().await
+    }
+}
+
+impl<D, E, Err, F, Fut, ReqItem, ResItem> KeepAlive<Replier<E, D, F, ReqItem, ResItem>>
+where
+    D: MessageDecoder<ReqItem> + Send + Unpin,
+    E: MessageEncoder<ResItem> + Send + Unpin,
+    Err: Debug,
+    F: FnMut(ReqItem) -> Fut + Send + Unpin,
+    Fut: Future<Output = std::result::Result<ResItem, Err>>,
+    ReqItem: Unpin + Send,
+    ResItem: Unpin + Send,
+{
+    pub async fn listen<H>(self, error_handler: H) -> Result<()> 
+    where
+        H: FnMut(&SeliumError) -> bool {
+        self.stream.listen(error_handler).await
     }
 }
 
@@ -225,5 +245,25 @@ where
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.stream.size_hint()
+    }
+}
+
+impl<T> Deref for KeepAlive<T>
+where
+    T: KeepAliveStream + Send + Unpin,
+{
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.stream     
+    }
+}
+
+impl<T> DerefMut for KeepAlive<T>
+where
+    T: KeepAliveStream + Send + Unpin,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.stream
     }
 }
