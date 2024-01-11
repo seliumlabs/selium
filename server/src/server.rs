@@ -5,7 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
 use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
-use selium_protocol::{error_codes, BiStream, Frame, TopicName, ErrorPayload};
+use selium_protocol::{error_codes, BiStream, ErrorPayload, Frame, TopicName};
 use selium_std::errors::SeliumError;
 use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
@@ -67,8 +67,10 @@ impl Server {
         topics.values_mut().for_each(|t| t.close_channel());
         join_all(topic_handles.iter_mut()).await;
 
-        self.endpoint
-            .close(VarInt::from_u32(error_codes::SHUTDOWN), b"Scheduled shutdown.");
+        self.endpoint.close(
+            VarInt::from_u32(error_codes::SHUTDOWN),
+            b"Scheduled shutdown.",
+        );
         self.endpoint.wait_idle().await;
 
         Ok(())
@@ -165,8 +167,8 @@ async fn handle_stream(
         #[cfg(feature = "__cloud")]
         {
             use crate::cloud::do_cloud_auth;
-            use selium_protocol::error_codes::CLOUD_AUTH_FAILED;
             use log::debug;
+            use selium_protocol::error_codes::CLOUD_AUTH_FAILED;
 
             match do_cloud_auth(&_connection, topic, &topics).await {
                 Ok(_) => stream.send(Frame::Ok).await?,
@@ -178,9 +180,7 @@ async fn handle_stream(
                         message: e.to_string().into(),
                     };
 
-                    stream
-                        .send(Frame::Error(payload))
-                        .await?;
+                    stream.send(Frame::Error(payload)).await?;
 
                     return Ok(());
                 }
@@ -194,11 +194,9 @@ async fn handle_stream(
             if !topic.is_valid() {
                 let payload = ErrorPayload {
                     code: REPLIER_ALREADY_BOUND,
-                    message: "Invalid topic name".into()
+                    message: "Invalid topic name".into(),
                 };
-                stream
-                    .send(Frame::Error(payload))
-                    .await?;
+                stream.send(Frame::Error(payload)).await?;
                 return Ok(());
             }
             stream.send(Frame::Ok).await?;

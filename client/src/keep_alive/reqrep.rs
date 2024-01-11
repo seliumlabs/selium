@@ -1,11 +1,11 @@
 use super::backoff_strategy::*;
 use super::helpers::is_recoverable_error;
-use selium_std::errors::QuicError;
 use crate::request_reply::{Replier, Requestor};
 use crate::traits::KeepAliveStream;
 use futures::Future;
+use selium_std::errors::QuicError;
 use selium_std::errors::Result;
-use selium_std::traits::codec::{MessageEncoder, MessageDecoder};
+use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use std::fmt::Debug;
 
 pub struct KeepAliveReqRep<T> {
@@ -13,7 +13,10 @@ pub struct KeepAliveReqRep<T> {
     backoff_strategy: BackoffStrategy,
 }
 
-impl<T> KeepAliveReqRep<T> where T: KeepAliveStream {
+impl<T> KeepAliveReqRep<T>
+where
+    T: KeepAliveStream,
+{
     pub fn new(stream: T, backoff_strategy: BackoffStrategy) -> Self {
         Self {
             stream,
@@ -33,9 +36,9 @@ impl<T> KeepAliveReqRep<T> where T: KeepAliveStream {
                 Ok(stream) => {
                     self.stream.on_reconnect(stream);
                     return Ok(());
-                },
+                }
                 Err(err) if is_recoverable_error(&err) => (),
-                Err(err) => return Err(err)
+                Err(err) => return Err(err),
             }
         }
     }
@@ -55,7 +58,7 @@ where
             match self.stream.request(req.clone()).await {
                 Ok(res) => return Ok(res),
                 Err(err) if is_recoverable_error(&err) => self.try_reconnect(&mut attempts).await?,
-                Err(err) => return Err(err)
+                Err(err) => return Err(err),
             };
         }
     }
@@ -77,7 +80,7 @@ where
         loop {
             match self.stream.listen().await {
                 Err(err) if !is_recoverable_error(&err) => return Err(err),
-                _ => self.try_reconnect(&mut attempts).await?
+                _ => self.try_reconnect(&mut attempts).await?,
             };
         }
     }

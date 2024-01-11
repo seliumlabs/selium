@@ -3,7 +3,7 @@ use crate::connection::{ClientConnection, SharedConnection};
 use crate::keep_alive::{AttemptFut, KeepAliveReqRep};
 use crate::streams::aliases::{Comp, Decomp};
 use crate::streams::handle_reply;
-use crate::traits::{Open, KeepAliveStream};
+use crate::traits::{KeepAliveStream, Open};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -269,8 +269,7 @@ where
 
     /// Prepares a [Replier] stream to begin processing incoming messages.
     /// This method will block the current task until the stream has been exhausted.
-    pub async fn listen(&mut self) -> Result<()>
-    {
+    pub async fn listen(&mut self) -> Result<()> {
         while let Some(frame) = self.stream.next().await {
             self.handle_frame(frame).await?;
         }
@@ -283,9 +282,13 @@ where
             Ok(Frame::Message(req)) => Ok(self.handle_request(req).await?),
             Ok(Frame::Error(payload)) => match String::from_utf8(payload.message.to_vec()) {
                 Ok(s) => Err(SeliumError::OpenStream(payload.code, s)),
-                Err(_) => Err(SeliumError::OpenStream(payload.code, "Invalid UTF-8 error".into())),
+                Err(_) => Err(SeliumError::OpenStream(
+                    payload.code,
+                    "Invalid UTF-8 error".into(),
+                )),
             },
-            Ok(_) => Err(SeliumError::OpenStream(UNKNOWN_ERROR,
+            Ok(_) => Err(SeliumError::OpenStream(
+                UNKNOWN_ERROR,
                 "Invalid frame returned from server".into(),
             )),
             Err(err) => Err(err),

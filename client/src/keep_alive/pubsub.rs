@@ -1,3 +1,5 @@
+use super::helpers::{is_sink_disconnected, is_stream_disconnected};
+use super::{BackoffStrategy, ConnectionStatus};
 use crate::pubsub::Publisher;
 use crate::traits::KeepAliveStream;
 use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
@@ -8,8 +10,6 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use super::{ConnectionStatus, BackoffStrategy};
-use super::helpers::{is_sink_disconnected, is_stream_disconnected};
 
 #[doc(hidden)]
 pub struct KeepAlive<T> {
@@ -204,7 +204,7 @@ where
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.stream     
+        &self.stream
     }
 }
 

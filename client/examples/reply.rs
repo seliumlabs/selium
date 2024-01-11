@@ -1,6 +1,6 @@
 use anyhow::Result;
-use selium::{prelude::*, keep_alive::BackoffStrategy};
 use selium::std::codecs::BincodeCodec;
+use selium::{keep_alive::BackoffStrategy, prelude::*};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -17,10 +17,7 @@ enum Response {
 async fn main() -> Result<()> {
     let connection = selium::custom()
         .keep_alive(5_000)?
-        .backoff_strategy(
-            BackoffStrategy::constant()
-                .with_max_attempts(1)
-        )
+        .backoff_strategy(BackoffStrategy::constant().with_max_attempts(1))
         .endpoint("127.0.0.1:7001")
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(

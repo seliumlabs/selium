@@ -3,13 +3,13 @@ use crate::connection::{ClientConnection, SharedConnection};
 use crate::keep_alive::AttemptFut;
 use crate::streams::aliases::{Comp, Decomp};
 use crate::streams::handle_reply;
-use crate::traits::{Open, TryIntoU64, KeepAliveStream};
+use crate::traits::{KeepAliveStream, Open, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use selium_protocol::{
-    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequestorPayload, TopicName, WriteHalf
+    BiStream, Frame, MessagePayload, ReadHalf, RequestId, RequestorPayload, TopicName, WriteHalf,
 };
 use selium_std::errors::Result;
 use selium_std::errors::{CodecError, SeliumError};
