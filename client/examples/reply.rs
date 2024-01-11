@@ -1,5 +1,5 @@
 use anyhow::Result;
-use selium::prelude::*;
+use selium::{prelude::*, keep_alive::BackoffStrategy};
 use selium::std::codecs::BincodeCodec;
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +17,10 @@ enum Response {
 async fn main() -> Result<()> {
     let connection = selium::custom()
         .keep_alive(5_000)?
+        .backoff_strategy(
+            BackoffStrategy::constant()
+                .with_max_attempts(1)
+        )
         .endpoint("127.0.0.1:7001")
         .with_certificate_authority("../certs/client/ca.der")?
         .with_cert_and_key(
@@ -26,7 +30,7 @@ async fn main() -> Result<()> {
         .connect()
         .await?;
 
-    let replier = connection
+    let mut replier = connection
         .replier("/some/endpoint")
         .with_request_decoder(BincodeCodec::default())
         .with_reply_encoder(BincodeCodec::default())
@@ -34,17 +38,7 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    // To handle errors gracefully without terminating the listener, create an error
-    // handler that returns 'true'.
-    replier
-        .listen(|e| {
-            eprintln!("{e:?}");
-            true
-        })
-        .await?;
-
-    // To terminate on errors, create an error handler that returns 'false'
-    // replier.listen(|_| false).await?;
+    replier.listen().await?;
 
     Ok(())
 }

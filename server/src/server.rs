@@ -5,7 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
 use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
-use selium_protocol::{error_codes, BiStream, Frame, TopicName};
+use selium_protocol::{error_codes, BiStream, Frame, TopicName, ErrorPayload};
 use selium_std::errors::SeliumError;
 use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
@@ -68,7 +68,7 @@ impl Server {
         join_all(topic_handles.iter_mut()).await;
 
         self.endpoint
-            .close(error_codes::SHUTDOWN, b"Scheduled shutdown.");
+            .close(VarInt::from_u32(error_codes::SHUTDOWN), b"Scheduled shutdown.");
         self.endpoint.wait_idle().await;
 
         Ok(())
@@ -165,6 +165,7 @@ async fn handle_stream(
         #[cfg(feature = "__cloud")]
         {
             use crate::cloud::do_cloud_auth;
+            use selium_protocol::error_codes::CLOUD_AUTH_FAILED;
             use log::debug;
 
             match do_cloud_auth(&_connection, topic, &topics).await {
@@ -172,8 +173,13 @@ async fn handle_stream(
                 Err(e) => {
                     debug!("Cloud authentication error: {e:?}");
 
+                    let payload = ErrorPayload {
+                        code: CLOUD_AUTH_FAILED,
+                        message: e.to_string().into(),
+                    };
+
                     stream
-                        .send(Frame::Error(e.to_string().into_bytes().into()))
+                        .send(Frame::Error(payload))
                         .await?;
 
                     return Ok(());
@@ -182,10 +188,16 @@ async fn handle_stream(
         }
         #[cfg(not(feature = "__cloud"))]
         {
+            use selium_protocol::error_codes::REPLIER_ALREADY_BOUND;
+
             // Note this can only occur if someone circumvents the client lib
             if !topic.is_valid() {
+                let payload = ErrorPayload {
+                    code: REPLIER_ALREADY_BOUND,
+                    message: "Invalid topic name".into()
+                };
                 stream
-                    .send(Frame::Error(b"Invalid topic name".to_vec().into()))
+                    .send(Frame::Error(payload))
                     .await?;
                 return Ok(());
             }

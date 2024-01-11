@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use selium::keep_alive::BackoffStrategy;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
 use selium::std::errors::SeliumError;
@@ -37,6 +38,7 @@ impl TestClient {
 
         let client = selium::custom()
             .keep_alive(5_000)?
+            .backoff_strategy(BackoffStrategy::constant().with_max_attempts(0))
             .endpoint(&server_addr.to_string())
             .with_certificate_authority("../certs/client/ca.der")?
             .with_cert_and_key(
@@ -57,7 +59,7 @@ impl TestClient {
             let client = self.client.clone();
 
             async move {
-                let replier = client
+                let mut replier = client
                     .replier("/test/endpoint")
                     .with_request_decoder(BincodeCodec::default())
                     .with_reply_encoder(BincodeCodec::default())
@@ -72,7 +74,7 @@ impl TestClient {
                     .await
                     .unwrap();
 
-                replier.listen(|_| false).await
+                replier.listen().await
             }
         })
     }

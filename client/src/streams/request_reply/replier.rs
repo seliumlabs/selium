@@ -1,6 +1,6 @@
 use super::states::*;
 use crate::connection::{ClientConnection, SharedConnection};
-use crate::keep_alive::{KeepAlive, AttemptFut};
+use crate::keep_alive::{AttemptFut, KeepAliveReqRep};
 use crate::streams::aliases::{Comp, Decomp};
 use crate::streams::handle_reply;
 use crate::traits::{Open, KeepAliveStream};
@@ -8,6 +8,7 @@ use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{Future, SinkExt, StreamExt};
+use selium_protocol::error_codes::UNKNOWN_ERROR;
 use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload, TopicName};
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
@@ -121,7 +122,7 @@ where
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
-    type Output = KeepAlive<Replier<E, D, F, ReqItem, ResItem>>;
+    type Output = KeepAliveReqRep<Replier<E, D, F, ReqItem, ResItem>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.endpoint.as_str())?;
@@ -183,7 +184,7 @@ where
         compression: Option<Comp>,
         decompression: Option<Decomp>,
         handler: Pin<Box<F>>,
-    ) -> Result<KeepAlive<Self>> {
+    ) -> Result<KeepAliveReqRep<Self>> {
         let lock = client.connection.lock().await;
         let stream = Self::open_stream(lock, headers.clone()).await?;
 
@@ -200,7 +201,7 @@ where
             _res_marker: PhantomData,
         };
 
-        Ok(KeepAlive::new(replier, client.backoff_strategy))
+        Ok(KeepAliveReqRep::new(replier, client.backoff_strategy))
     }
 
     async fn open_stream(
@@ -268,31 +269,26 @@ where
 
     /// Prepares a [Replier] stream to begin processing incoming messages.
     /// This method will block the current task until the stream has been exhausted.
-    pub async fn listen<H>(mut self, mut error_handler: H) -> Result<()>
-    where
-        H: FnMut(&SeliumError) -> bool,
+    pub async fn listen(&mut self) -> Result<()>
     {
-        while let Some(Ok(request)) = self.stream.next().await {
-            if let Err(e) = self.handle_frame(request).await {
-                if !error_handler(&e) {
-                    return Err(e);
-                }
-            }
+        while let Some(frame) = self.stream.next().await {
+            self.handle_frame(frame).await?;
         }
 
         Ok(())
     }
 
-    async fn handle_frame(&mut self, request: Frame) -> Result<()> {
-        match request {
-            Frame::Message(req) => Ok(self.handle_request(req).await?),
-            Frame::Error(bytes) => match String::from_utf8(bytes.to_vec()) {
-                Ok(s) => Err(SeliumError::OpenStream(s)),
-                Err(_) => Err(SeliumError::OpenStream("Invalid UTF-8 error".into())),
+    async fn handle_frame(&mut self, frame: Result<Frame>) -> Result<()> {
+        match frame {
+            Ok(Frame::Message(req)) => Ok(self.handle_request(req).await?),
+            Ok(Frame::Error(payload)) => match String::from_utf8(payload.message.to_vec()) {
+                Ok(s) => Err(SeliumError::OpenStream(payload.code, s)),
+                Err(_) => Err(SeliumError::OpenStream(payload.code, "Invalid UTF-8 error".into())),
             },
-            _ => Err(SeliumError::OpenStream(
+            Ok(_) => Err(SeliumError::OpenStream(UNKNOWN_ERROR,
                 "Invalid frame returned from server".into(),
             )),
+            Err(err) => Err(err),
         }
     }
 }
@@ -306,7 +302,6 @@ where
     Fut: Future<Output = std::result::Result<ResItem, Err>>,
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
-
 {
     type Headers = ReplierPayload;
 
