@@ -1,7 +1,7 @@
 use super::states::{SubscriberWantsDecoder, SubscriberWantsOpen};
 use crate::connection::{ClientConnection, SharedConnection};
-use crate::keep_alive::AttemptFut;
 use crate::keep_alive::pubsub::KeepAlive;
+use crate::keep_alive::AttemptFut;
 use crate::streams::aliases::Decomp;
 use crate::streams::handle_reply;
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};

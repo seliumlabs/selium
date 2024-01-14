@@ -17,5 +17,3 @@ pub mod reqrep;
 
 pub use backoff_strategy::*;
 pub(crate) use connection_status::*;
-
-

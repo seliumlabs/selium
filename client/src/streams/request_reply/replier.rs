@@ -1,7 +1,7 @@
 use super::states::*;
 use crate::connection::{ClientConnection, SharedConnection};
-use crate::keep_alive::AttemptFut;
 use crate::keep_alive::reqrep::KeepAlive;
+use crate::keep_alive::AttemptFut;
 use crate::streams::aliases::{Comp, Decomp};
 use crate::streams::handle_reply;
 use crate::traits::{KeepAliveStream, Open};

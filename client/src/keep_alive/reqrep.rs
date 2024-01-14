@@ -45,13 +45,12 @@ where
     }
 }
 
-
-impl<E, D, ReqItem, ResItem> Clone for KeepAlive<Requestor<E, D, ReqItem, ResItem>> 
+impl<E, D, ReqItem, ResItem> Clone for KeepAlive<Requestor<E, D, ReqItem, ResItem>>
 where
     E: MessageEncoder<ReqItem> + Send + Unpin + Clone,
     D: MessageDecoder<ResItem> + Send + Unpin + Clone,
     ReqItem: Unpin + Send + Clone,
-    ResItem: Unpin + Send + Clone 
+    ResItem: Unpin + Send + Clone,
 {
     fn clone(&self) -> Self {
         Self {
