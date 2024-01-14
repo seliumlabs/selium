@@ -1,6 +1,7 @@
 use super::states::*;
 use crate::connection::{ClientConnection, SharedConnection};
-use crate::keep_alive::{AttemptFut, KeepAliveReqRep};
+use crate::keep_alive::AttemptFut;
+use crate::keep_alive::reqrep::KeepAlive;
 use crate::streams::aliases::{Comp, Decomp};
 use crate::streams::handle_reply;
 use crate::traits::{KeepAliveStream, Open};
@@ -122,7 +123,7 @@ where
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
-    type Output = KeepAliveReqRep<Replier<E, D, F, ReqItem, ResItem>>;
+    type Output = KeepAlive<Replier<E, D, F, ReqItem, ResItem>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.endpoint.as_str())?;
@@ -184,7 +185,7 @@ where
         compression: Option<Comp>,
         decompression: Option<Decomp>,
         handler: Pin<Box<F>>,
-    ) -> Result<KeepAliveReqRep<Self>> {
+    ) -> Result<KeepAlive<Self>> {
         let lock = client.connection.lock().await;
         let stream = Self::open_stream(lock, headers.clone()).await?;
 
@@ -201,7 +202,7 @@ where
             _res_marker: PhantomData,
         };
 
-        Ok(KeepAliveReqRep::new(replier, client.backoff_strategy))
+        Ok(KeepAlive::new(replier, client.backoff_strategy))
     }
 
     async fn open_stream(

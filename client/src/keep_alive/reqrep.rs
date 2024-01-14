@@ -8,12 +8,13 @@ use selium_std::errors::Result;
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use std::fmt::Debug;
 
-pub struct KeepAliveReqRep<T> {
+#[doc(hidden)]
+pub struct KeepAlive<T> {
     stream: T,
     backoff_strategy: BackoffStrategy,
 }
 
-impl<T> KeepAliveReqRep<T>
+impl<T> KeepAlive<T>
 where
     T: KeepAliveStream,
 {
@@ -44,12 +45,28 @@ where
     }
 }
 
-impl<E, D, ReqItem, ResItem> KeepAliveReqRep<Requestor<E, D, ReqItem, ResItem>>
+
+impl<E, D, ReqItem, ResItem> Clone for KeepAlive<Requestor<E, D, ReqItem, ResItem>> 
 where
-    E: MessageEncoder<ReqItem> + Send + Unpin,
-    D: MessageDecoder<ResItem> + Send + Unpin,
+    E: MessageEncoder<ReqItem> + Send + Unpin + Clone,
+    D: MessageDecoder<ResItem> + Send + Unpin + Clone,
     ReqItem: Unpin + Send + Clone,
-    ResItem: Unpin + Send,
+    ResItem: Unpin + Send + Clone 
+{
+    fn clone(&self) -> Self {
+        Self {
+            stream: self.stream.clone(),
+            backoff_strategy: self.backoff_strategy.clone(),
+        }
+    }
+}
+
+impl<E, D, ReqItem, ResItem> KeepAlive<Requestor<E, D, ReqItem, ResItem>>
+where
+    E: MessageEncoder<ReqItem> + Send + Unpin + Clone,
+    D: MessageDecoder<ResItem> + Send + Unpin + Clone,
+    ReqItem: Unpin + Send + Clone,
+    ResItem: Unpin + Send + Clone,
 {
     pub async fn request(&mut self, req: ReqItem) -> Result<ResItem> {
         let mut attempts = self.backoff_strategy.clone().into_iter();
@@ -64,7 +81,7 @@ where
     }
 }
 
-impl<D, E, Err, F, Fut, ReqItem, ResItem> KeepAliveReqRep<Replier<E, D, F, ReqItem, ResItem>>
+impl<D, E, Err, F, Fut, ReqItem, ResItem> KeepAlive<Replier<E, D, F, ReqItem, ResItem>>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
     E: MessageEncoder<ResItem> + Send + Unpin,

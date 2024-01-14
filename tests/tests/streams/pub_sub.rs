@@ -1,7 +1,7 @@
 use crate::helpers::start_server;
 use anyhow::Result;
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
-use selium::keep_alive::KeepAlive;
+use selium::keep_alive::pubsub::KeepAlive;
 use selium::std::codecs::StringCodec;
 use selium::{prelude::*, pubsub::Subscriber};
 

@@ -8,6 +8,7 @@ use selium::{request_reply::Requestor, Client};
 use selium_server::args::UserArgs;
 use selium_server::server::Server;
 use serde::{Deserialize, Serialize};
+use selium::keep_alive::reqrep::KeepAlive;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -26,7 +27,8 @@ pub enum Response {
     Echo(String),
 }
 
-type Req = Requestor<BincodeCodec<Request>, BincodeCodec<Response>, Request, Response>;
+// TODO: Improve generic types for streams, as this is too unwieldy for library developers.
+type Req = KeepAlive<Requestor<BincodeCodec<Request>, BincodeCodec<Response>, Request, Response>>;
 
 pub struct TestClient {
     client: Client,

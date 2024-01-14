@@ -11,11 +11,11 @@
 mod backoff_strategy;
 mod connection_status;
 mod helpers;
-mod pubsub;
-mod reqrep;
+
+pub mod pubsub;
+pub mod reqrep;
 
 pub use backoff_strategy::*;
 pub(crate) use connection_status::*;
 
-pub use pubsub::*;
-pub use reqrep::*;
+

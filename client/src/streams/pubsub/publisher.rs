@@ -1,7 +1,8 @@
 use super::states::{PublisherWantsEncoder, PublisherWantsOpen};
 use crate::batching::{BatchConfig, MessageBatch};
 use crate::connection::{ClientConnection, SharedConnection};
-use crate::keep_alive::{AttemptFut, KeepAlive};
+use crate::keep_alive::AttemptFut;
+use crate::keep_alive::pubsub::KeepAlive;
 use crate::streams::aliases::Comp;
 use crate::streams::handle_reply;
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};

@@ -5,6 +5,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
 use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
+use selium_protocol::error_codes::INVALID_TOPIC_NAME;
 use selium_protocol::{error_codes, BiStream, ErrorPayload, Frame, TopicName};
 use selium_std::errors::SeliumError;
 use std::net::SocketAddr;
@@ -188,12 +189,10 @@ async fn handle_stream(
         }
         #[cfg(not(feature = "__cloud"))]
         {
-            use selium_protocol::error_codes::REPLIER_ALREADY_BOUND;
-
             // Note this can only occur if someone circumvents the client lib
             if !topic.is_valid() {
                 let payload = ErrorPayload {
-                    code: REPLIER_ALREADY_BOUND,
+                    code: INVALID_TOPIC_NAME,
                     message: "Invalid topic name".into(),
                 };
                 stream.send(Frame::Error(payload)).await?;

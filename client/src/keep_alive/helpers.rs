@@ -10,7 +10,7 @@ pub fn is_disconnect_error(err: &io::Error) -> bool {
 }
 
 pub fn is_bind_error(code: u32) -> bool {
-    matches!(code, REPLIER_ALREADY_BOUND)
+    code == REPLIER_ALREADY_BOUND
 }
 
 pub fn is_recoverable_error(err: &SeliumError) -> bool {
