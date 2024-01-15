@@ -14,11 +14,12 @@ pub fn is_bind_error(code: u32) -> bool {
 }
 
 pub fn is_recoverable_error(err: &SeliumError) -> bool {
-    let disconnect_error = matches!(err, SeliumError::IoError(err) if is_disconnect_error(err));
-    let timeout_error = matches!(err, SeliumError::Quic(QuicError::ConnectionError(_)));
-    let bind_error = matches!(err, SeliumError::OpenStream(code, _) if is_bind_error(*code));
-
-    timeout_error || disconnect_error || bind_error
+    match err {
+        SeliumError::IoError(err) => is_disconnect_error(err),
+        SeliumError::Quic(QuicError::ConnectionError(_)) => true,
+        SeliumError::OpenStream(code, _) => is_bind_error(*code),
+        _ => false,
+    }
 }
 
 pub fn is_stream_disconnected<Item>(result: &Result<Item>) -> bool {
