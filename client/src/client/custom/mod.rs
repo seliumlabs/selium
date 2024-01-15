@@ -102,7 +102,7 @@ impl ClientBuilder<CustomWantsConnect> {
             root_store,
         } = self.state;
         if endpoint == SELIUM_CLOUD_REMOTE_URL {
-            return Err(SeliumError::ConnectDirectToCloud)
+            return Err(SeliumError::ConnectDirectToCloud);
         }
 
         let ClientCommon {
