@@ -135,6 +135,9 @@ pub enum SeliumError {
     #[error("Failed to retrieve server address from Selium Cloud.")]
     GetServerAddressFailed,
 
+    #[error("Cannot connect directly to the Selium cloud endpoint. Use the `selium::cloud` builder instead.")]
+    ConnectDirectToCloud,
+
     #[error("Poorly formatted topic name, must be in the format [namespace]/[topic]")]
     ParseTopicNameError,
 

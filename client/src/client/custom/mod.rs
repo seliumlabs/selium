@@ -2,11 +2,12 @@ mod states;
 pub use states::*;
 
 use crate::connection::{ClientConnection, ConnectionOptions};
+use crate::constants::SELIUM_CLOUD_REMOTE_URL;
 use crate::crypto::cert::{load_certs, load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
 use crate::{Client, ClientBuilder, ClientCommon};
-use selium_std::errors::Result;
+use selium_std::errors::{Result, SeliumError};
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -100,13 +101,16 @@ impl ClientBuilder<CustomWantsConnect> {
             endpoint,
             root_store,
         } = self.state;
+        if endpoint == SELIUM_CLOUD_REMOTE_URL {
+            return Err(SeliumError::ConnectDirectToCloud);
+        }
+
         let ClientCommon {
             keep_alive,
             backoff_strategy,
         } = common;
 
         let options = ConnectionOptions::new(certs.as_slice(), key, root_store, keep_alive);
-
         let connection = ClientConnection::connect(&endpoint, options).await?;
         let connection = Arc::new(Mutex::new(connection));
 
