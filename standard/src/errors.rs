@@ -144,6 +144,6 @@ pub enum SeliumError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
 
-    #[error("Failed to open stream with error: {0}.")]
-    OpenStream(String),
+    #[error("Failed to open stream with error: {1}.")]
+    OpenStream(u32, String),
 }

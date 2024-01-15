@@ -23,7 +23,7 @@ pub enum Frame {
     RegisterRequestor(RequestorPayload),
     Message(MessagePayload),
     BatchMessage(Bytes),
-    Error(Bytes),
+    Error(ErrorPayload),
     Ok,
 }
 
@@ -46,7 +46,9 @@ impl Frame {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
             Self::BatchMessage(bytes) => bytes.len() as u64,
-            Self::Error(bytes) => bytes.len() as u64,
+            Self::Error(payload) => {
+                bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
+            }
             Self::Ok => 0,
         })
     }
@@ -89,8 +91,9 @@ impl Frame {
                 .map_err(ProtocolError::SerdeError)?,
             Frame::Message(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
+            Frame::Error(payload) => bincode::serialize_into(dst.writer(), &payload)
+                .map_err(ProtocolError::SerdeError)?,
             Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes),
-            Frame::Error(bytes) => dst.extend_from_slice(&bytes),
             Frame::Ok => (),
         }
 
@@ -128,7 +131,7 @@ impl TryFrom<(u8, BytesMut)> for Frame {
                 Frame::Message(bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?)
             }
             BATCH_MESSAGE => Frame::BatchMessage(bytes.into()),
-            ERROR => Frame::Error(bytes.into()),
+            ERROR => Frame::Error(bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?),
             OK => Frame::Ok,
             _type => return Err(ProtocolError::UnknownMessageType(_type))?,
         };
@@ -164,5 +167,11 @@ pub struct RequestorPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MessagePayload {
     pub headers: Headers,
+    pub message: Bytes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ErrorPayload {
+    pub code: u32,
     pub message: Bytes,
 }

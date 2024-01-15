@@ -1,12 +1,15 @@
 use super::states::*;
-use crate::connection::ClientConnection;
+use crate::connection::{ClientConnection, SharedConnection};
+use crate::keep_alive::reqrep::KeepAlive;
+use crate::keep_alive::AttemptFut;
 use crate::streams::aliases::{Comp, Decomp};
 use crate::streams::handle_reply;
-use crate::traits::Open;
+use crate::traits::{KeepAliveStream, Open};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{Future, SinkExt, StreamExt};
+use selium_protocol::error_codes::UNKNOWN_ERROR;
 use selium_protocol::{BiStream, Frame, MessagePayload, ReplierPayload, TopicName};
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
@@ -120,7 +123,7 @@ where
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
-    type Output = Replier<E, D, F, ReqItem, ResItem>;
+    type Output = KeepAlive<Replier<E, D, F, ReqItem, ResItem>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.endpoint.as_str())?;
@@ -152,7 +155,9 @@ where
 /// that only one active stream can bind to a namespace/topic combination at any given time. Trying
 /// to bind to an already occupied topic will result in a runtime error.
 pub struct Replier<E, D, F, ReqItem, ResItem> {
+    client: Client,
     stream: BiStream,
+    headers: ReplierPayload,
     encoder: E,
     decoder: D,
     compression: Option<Comp>,
@@ -180,12 +185,14 @@ where
         compression: Option<Comp>,
         decompression: Option<Decomp>,
         handler: Pin<Box<F>>,
-    ) -> Result<Self> {
+    ) -> Result<KeepAlive<Self>> {
         let lock = client.connection.lock().await;
-        let stream = Self::open_stream(lock, headers).await?;
+        let stream = Self::open_stream(lock, headers.clone()).await?;
 
         let replier = Self {
+            client: client.clone(),
             stream,
+            headers,
             encoder,
             decoder,
             compression,
@@ -195,7 +202,7 @@ where
             _res_marker: PhantomData,
         };
 
-        Ok(replier)
+        Ok(KeepAlive::new(replier, client.backoff_strategy))
     }
 
     async fn open_stream(
@@ -263,31 +270,62 @@ where
 
     /// Prepares a [Replier] stream to begin processing incoming messages.
     /// This method will block the current task until the stream has been exhausted.
-    pub async fn listen<H>(mut self, mut error_handler: H) -> Result<()>
-    where
-        H: FnMut(&SeliumError) -> bool,
-    {
-        while let Some(Ok(request)) = self.stream.next().await {
-            if let Err(e) = self.handle_frame(request).await {
-                if !error_handler(&e) {
-                    return Err(e);
-                }
-            }
+    pub async fn listen(&mut self) -> Result<()> {
+        while let Some(frame) = self.stream.next().await {
+            self.handle_frame(frame).await?;
         }
 
         Ok(())
     }
 
-    async fn handle_frame(&mut self, request: Frame) -> Result<()> {
-        match request {
-            Frame::Message(req) => Ok(self.handle_request(req).await?),
-            Frame::Error(bytes) => match String::from_utf8(bytes.to_vec()) {
-                Ok(s) => Err(SeliumError::OpenStream(s)),
-                Err(_) => Err(SeliumError::OpenStream("Invalid UTF-8 error".into())),
+    async fn handle_frame(&mut self, frame: Result<Frame>) -> Result<()> {
+        match frame {
+            Ok(Frame::Message(req)) => Ok(self.handle_request(req).await?),
+            Ok(Frame::Error(payload)) => match String::from_utf8(payload.message.to_vec()) {
+                Ok(s) => Err(SeliumError::OpenStream(payload.code, s)),
+                Err(_) => Err(SeliumError::OpenStream(
+                    payload.code,
+                    "Invalid UTF-8 error".into(),
+                )),
             },
-            _ => Err(SeliumError::OpenStream(
+            Ok(_) => Err(SeliumError::OpenStream(
+                UNKNOWN_ERROR,
                 "Invalid frame returned from server".into(),
             )),
+            Err(err) => Err(err),
         }
+    }
+}
+
+impl<D, E, Err, F, Fut, ReqItem, ResItem> KeepAliveStream for Replier<E, D, F, ReqItem, ResItem>
+where
+    D: MessageDecoder<ReqItem> + Send + Unpin,
+    E: MessageEncoder<ResItem> + Send + Unpin,
+    Err: Debug,
+    F: FnMut(ReqItem) -> Fut + Send + Unpin,
+    Fut: Future<Output = std::result::Result<ResItem, Err>>,
+    ReqItem: Unpin + Send,
+    ResItem: Unpin + Send,
+{
+    type Headers = ReplierPayload;
+
+    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers) -> AttemptFut {
+        Box::pin(async move {
+            let mut connection = connection.lock().await;
+            connection.reconnect().await?;
+            Self::open_stream(connection, headers).await
+        })
+    }
+
+    fn on_reconnect(&mut self, stream: BiStream) {
+        self.stream = stream;
+    }
+
+    fn get_connection(&self) -> SharedConnection {
+        self.client.connection.clone()
+    }
+
+    fn get_headers(&self) -> Self::Headers {
+        self.headers.clone()
     }
 }
