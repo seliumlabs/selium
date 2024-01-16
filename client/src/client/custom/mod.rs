@@ -5,6 +5,7 @@ use crate::connection::{ClientConnection, ConnectionOptions};
 use crate::constants::SELIUM_CLOUD_REMOTE_URL;
 use crate::crypto::cert::{load_certs, load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
+use crate::logging;
 use crate::traits::TryIntoU64;
 use crate::{Client, ClientBuilder, ClientCommon};
 use selium_std::errors::{Result, SeliumError};
@@ -111,8 +112,10 @@ impl ClientBuilder<CustomWantsConnect> {
         } = common;
 
         let options = ConnectionOptions::new(certs.as_slice(), key, root_store, keep_alive);
+        logging::connection::connect_to_address(&endpoint);
         let connection = ClientConnection::connect(&endpoint, options).await?;
         let connection = Arc::new(Mutex::new(connection));
+        logging::connection::successful_connection(&endpoint);
 
         Ok(Client {
             connection,
