@@ -1,11 +1,10 @@
-use super::BackoffStrategy;
+use super::{BackoffStrategy, NextAttempt};
 use futures::Future;
 use selium_protocol::BiStream;
 use selium_std::errors::Result;
 use std::pin::Pin;
-use std::time::Duration;
 
-pub type AttemptsIterator = Box<dyn Iterator<Item = Duration> + Send>;
+pub type AttemptsIterator = Box<dyn Iterator<Item = NextAttempt> + Send>;
 pub type AttemptFut = Pin<Box<dyn Future<Output = Result<BiStream>> + Send>>;
 
 pub enum ConnectionStatus {

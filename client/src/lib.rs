@@ -6,6 +6,7 @@ pub mod constants;
 pub mod keep_alive;
 pub mod prelude;
 pub mod traits;
+pub mod logging;
 
 pub(crate) mod connection;
 pub(crate) mod crypto;

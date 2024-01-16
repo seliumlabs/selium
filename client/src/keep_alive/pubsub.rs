@@ -1,7 +1,9 @@
-use super::helpers::{is_sink_disconnected, is_stream_disconnected};
+use super::helpers::{is_sink_disconnected, is_recoverable_error, is_stream_disconnected};
 use super::{BackoffStrategy, ConnectionStatus};
+use crate::keep_alive::NextAttempt;
 use crate::pubsub::Publisher;
 use crate::traits::KeepAliveStream;
+use crate::logging;
 use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use selium_std::errors::{QuicError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
@@ -32,26 +34,32 @@ where
 
     fn on_disconnect(&mut self, cx: &mut Context<'_>) {
         if let ConnectionStatus::Connected = self.status {
+            logging::keep_alive::connection_lost();
             self.status = ConnectionStatus::disconnected(self.backoff_strategy.clone());
         }
 
         if let ConnectionStatus::Disconnected(ref mut state) = self.status {
-            let duration = match state.attempts.next() {
-                Some(duration) => duration,
+            let NextAttempt { duration, attempt_num, max_attempts } = match state.attempts.next() {
+                Some(next) => next,
                 None => {
+                    logging::keep_alive::too_many_retries();
                     self.status = ConnectionStatus::Exhausted;
                     cx.waker().wake_by_ref();
                     return;
                 }
             };
 
+
+
             let connection = self.stream.get_connection();
             let headers = self.stream.get_headers();
+            logging::keep_alive::reconnect_attempt(attempt_num, max_attempts);
 
             state.current_attempt = Box::pin(async move {
                 tokio::time::sleep(duration).await;
                 T::reestablish_connection(connection, headers).await
             });
+
         } else {
             unreachable!();
         }
@@ -59,19 +67,27 @@ where
         cx.waker().wake_by_ref();
     }
 
-    fn poll_reconnect(&mut self, cx: &mut Context<'_>) {
+    fn poll_reconnect(&mut self, cx: &mut Context<'_>) -> Result<()> {
         if let ConnectionStatus::Disconnected(ref mut state) = self.status {
             match state.current_attempt.poll_unpin(cx) {
                 Poll::Ready(Ok(stream)) => {
                     self.status = ConnectionStatus::Connected;
                     self.stream.on_reconnect(stream);
+                    logging::keep_alive::successful_reconnection();
                     cx.waker().wake_by_ref();
                 }
-                Poll::Ready(Err(_)) => {
+                Poll::Ready(Err(err)) if is_recoverable_error(&err) => {
+                    logging::keep_alive::reconnect_error(&err);
                     self.on_disconnect(cx);
+                }
+                Poll::Ready(Err(err)) => {
+                    logging::keep_alive::unrecoverable_error(&err);
+                    return Err(err);
                 }
                 _ => (),
             }
+
+            Ok(())
         } else {
             unreachable!();
         }
@@ -112,7 +128,7 @@ where
                 }
             }
             ConnectionStatus::Disconnected(_) => {
-                self.poll_reconnect(cx);
+                self.poll_reconnect(cx)?;
                 Poll::Pending
             }
             ConnectionStatus::Exhausted => Poll::Ready(Err(QuicError::TooManyRetries)?),
@@ -136,7 +152,7 @@ where
                 }
             }
             ConnectionStatus::Disconnected(_) => {
-                self.poll_reconnect(cx);
+                self.poll_reconnect(cx)?;
                 Poll::Pending
             }
             ConnectionStatus::Exhausted => Poll::Ready(Ok(())),
@@ -185,7 +201,7 @@ where
                 }
             }
             ConnectionStatus::Disconnected(_) => {
-                self.poll_reconnect(cx);
+                self.poll_reconnect(cx)?;
                 Poll::Pending
             }
             ConnectionStatus::Exhausted => Poll::Ready(Some(Err(QuicError::TooManyRetries)?)),

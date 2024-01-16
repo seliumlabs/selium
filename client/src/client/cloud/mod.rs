@@ -6,6 +6,7 @@ use crate::constants::SELIUM_CLOUD_REMOTE_URL;
 use crate::crypto::cert::load_keypair;
 use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
+use crate::logging;
 use crate::{Client, ClientBuilder, ClientCommon};
 use selium_std::errors::{Result, SeliumError};
 use std::path::Path;
@@ -76,9 +77,13 @@ impl ClientBuilder<CloudWantsConnect> {
         } = common;
 
         let options = ConnectionOptions::new(certs.as_slice(), key, root_store, keep_alive);
+        logging::connection::get_cloud_endpoint();
         let endpoint = get_cloud_endpoint(options.clone()).await?;
+
+        logging::connection::connect_to_address(&endpoint);
         let connection = ClientConnection::connect(&endpoint, options).await?;
         let connection = Arc::new(Mutex::new(connection));
+        logging::connection::successful_connection(&endpoint);
 
         Ok(Client {
             connection,
@@ -87,6 +92,7 @@ impl ClientBuilder<CloudWantsConnect> {
     }
 }
 
+#[tracing::instrument]
 async fn get_cloud_endpoint(options: ConnectionOptions) -> Result<String> {
     let connection = ClientConnection::connect(SELIUM_CLOUD_REMOTE_URL, options).await?;
     let (_, mut read) = connection

@@ -1,5 +1,6 @@
 use super::backoff_strategy::*;
 use super::helpers::is_recoverable_error;
+use crate::logging;
 use crate::request_reply::{Replier, Requestor};
 use crate::traits::KeepAliveStream;
 use futures::Future;
@@ -26,20 +27,34 @@ where
     }
 
     async fn try_reconnect(&mut self, attempts: &mut BackoffStrategyIter) -> Result<()> {
+        logging::keep_alive::connection_lost();
+
         loop {
-            let duration = attempts.next().ok_or(QuicError::TooManyRetries)?;
+            let NextAttempt { duration, attempt_num, max_attempts } = match attempts.next() {
+                Some(next) => next,
+                None => {
+                    logging::keep_alive::too_many_retries();
+                    return Err(QuicError::TooManyRetries)?;
+                }
+            };
+
             let connection = self.stream.get_connection();
             let headers = self.stream.get_headers();
 
+            logging::keep_alive::reconnect_attempt(attempt_num, max_attempts);
             tokio::time::sleep(duration).await;
 
             match T::reestablish_connection(connection, headers).await {
                 Ok(stream) => {
+                    logging::keep_alive::successful_reconnection();
                     self.stream.on_reconnect(stream);
                     return Ok(());
                 }
-                Err(err) if is_recoverable_error(&err) => (),
-                Err(err) => return Err(err),
+                Err(err) if is_recoverable_error(&err) => logging::keep_alive::reconnect_error(&err),
+                Err(err) => {
+                    logging::keep_alive::unrecoverable_error(&err);
+                    return Err(err)
+                },
             }
         }
     }
@@ -74,7 +89,10 @@ where
             match self.stream.request(req.clone()).await {
                 Ok(res) => return Ok(res),
                 Err(err) if is_recoverable_error(&err) => self.try_reconnect(&mut attempts).await?,
-                Err(err) => return Err(err),
+                Err(err) => {
+                    logging::keep_alive::unrecoverable_error(&err);
+                    return Err(err)
+                },
             };
         }
     }
@@ -95,7 +113,10 @@ where
 
         loop {
             match self.stream.listen().await {
-                Err(err) if !is_recoverable_error(&err) => return Err(err),
+                Err(err) if !is_recoverable_error(&err) => {
+                    logging::keep_alive::unrecoverable_error(&err);
+                    return Err(err)
+                }
                 _ => self.try_reconnect(&mut attempts).await?,
             };
         }

@@ -5,6 +5,13 @@ pub const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 /// Default attempt duration step.
 pub const DEFAULT_STEP: Duration = Duration::from_secs(1);
 
+#[derive(Debug, PartialEq)]
+pub struct NextAttempt {
+    pub duration: Duration,
+    pub attempt_num: u32,
+    pub max_attempts: u32,
+}
+
 #[derive(Debug, Clone)]
 enum Strategy {
     Linear,
@@ -246,7 +253,7 @@ impl BackoffStrategy {
 /// Consumes the `BackoffStrategy` instance to create an iterator that produces [Duration] values
 /// representing a sequence of retry attempts.
 impl IntoIterator for BackoffStrategy {
-    type Item = Duration;
+    type Item = NextAttempt;
     type IntoIter = BackoffStrategyIter;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -266,7 +273,7 @@ pub struct BackoffStrategyIter {
 }
 
 impl Iterator for BackoffStrategyIter {
-    type Item = Duration;
+    type Item = NextAttempt;
 
     fn next(&mut self) -> Option<Self::Item> {
         let step = self.state.step;
@@ -278,7 +285,7 @@ impl Iterator for BackoffStrategyIter {
             return None;
         }
 
-        let mut next = match self.strategy_type {
+        let mut next_duration = match self.strategy_type {
             Strategy::Linear => step * current_attempt,
             Strategy::Constant => step,
             Strategy::Exponential(factor) => step.mul_f64(factor.pow(current_attempt - 1) as f64),
@@ -287,8 +294,14 @@ impl Iterator for BackoffStrategyIter {
         self.current_attempt += 1;
 
         if let Some(max) = max_duration {
-            next = next.min(max);
+            next_duration = next_duration.min(max);
         }
+
+        let next = NextAttempt {
+            duration: next_duration,
+            attempt_num: current_attempt,
+            max_attempts,
+        };
 
         Some(next)
     }
@@ -316,7 +329,7 @@ mod tests {
         let expected = (1..=attempts).map(|i| i * step).collect::<Vec<_>>();
 
         for value in expected {
-            assert_eq!(strategy.next().unwrap(), value);
+            assert_eq!(strategy.next().unwrap().duration, value);
         }
     }
 
@@ -336,7 +349,7 @@ mod tests {
         let expected = (0..attempts).map(|_| step).collect::<Vec<_>>();
 
         for value in expected {
-            assert_eq!(strategy.next().unwrap(), value);
+            assert_eq!(strategy.next().unwrap().duration, value);
         }
     }
 
@@ -359,7 +372,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         for value in expected {
-            assert_eq!(strategy.next().unwrap(), value);
+            assert_eq!(strategy.next().unwrap().duration, value);
         }
     }
 
@@ -387,7 +400,7 @@ mod tests {
         expected.push(max_duration);
 
         for value in expected {
-            assert_eq!(strategy.next().unwrap(), value);
+            assert_eq!(strategy.next().unwrap().duration, value);
         }
     }
 
@@ -407,7 +420,7 @@ mod tests {
         let expected = (0..attempts).map(|_| step).collect::<Vec<_>>();
 
         for value in expected {
-            assert_eq!(strategy.next().unwrap(), value);
+            assert_eq!(strategy.next().unwrap().duration, value);
         }
 
         // We should have fully consumed the iterator in the previous step
