@@ -5,6 +5,8 @@ use selium::std::codecs::StringCodec;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt().init();
+
     let connection = selium::custom()
         .keep_alive(5_000)?
         .endpoint("127.0.0.1:7001")
