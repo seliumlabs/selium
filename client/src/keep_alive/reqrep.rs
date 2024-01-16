@@ -30,7 +30,11 @@ where
         logging::keep_alive::connection_lost();
 
         loop {
-            let NextAttempt { duration, attempt_num, max_attempts } = match attempts.next() {
+            let NextAttempt {
+                duration,
+                attempt_num,
+                max_attempts,
+            } = match attempts.next() {
                 Some(next) => next,
                 None => {
                     logging::keep_alive::too_many_retries();
@@ -50,11 +54,13 @@ where
                     self.stream.on_reconnect(stream);
                     return Ok(());
                 }
-                Err(err) if is_recoverable_error(&err) => logging::keep_alive::reconnect_error(&err),
+                Err(err) if is_recoverable_error(&err) => {
+                    logging::keep_alive::reconnect_error(&err)
+                }
                 Err(err) => {
                     logging::keep_alive::unrecoverable_error(&err);
-                    return Err(err)
-                },
+                    return Err(err);
+                }
             }
         }
     }
@@ -91,8 +97,8 @@ where
                 Err(err) if is_recoverable_error(&err) => self.try_reconnect(&mut attempts).await?,
                 Err(err) => {
                     logging::keep_alive::unrecoverable_error(&err);
-                    return Err(err)
-                },
+                    return Err(err);
+                }
             };
         }
     }
@@ -115,7 +121,7 @@ where
             match self.stream.listen().await {
                 Err(err) if !is_recoverable_error(&err) => {
                     logging::keep_alive::unrecoverable_error(&err);
-                    return Err(err)
+                    return Err(err);
                 }
                 _ => self.try_reconnect(&mut attempts).await?,
             };

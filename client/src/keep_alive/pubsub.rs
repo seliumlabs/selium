@@ -1,9 +1,9 @@
-use super::helpers::{is_sink_disconnected, is_recoverable_error, is_stream_disconnected};
+use super::helpers::{is_recoverable_error, is_sink_disconnected, is_stream_disconnected};
 use super::{BackoffStrategy, ConnectionStatus};
 use crate::keep_alive::NextAttempt;
+use crate::logging;
 use crate::pubsub::Publisher;
 use crate::traits::KeepAliveStream;
-use crate::logging;
 use futures::{ready, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use selium_std::errors::{QuicError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
@@ -39,7 +39,11 @@ where
         }
 
         if let ConnectionStatus::Disconnected(ref mut state) = self.status {
-            let NextAttempt { duration, attempt_num, max_attempts } = match state.attempts.next() {
+            let NextAttempt {
+                duration,
+                attempt_num,
+                max_attempts,
+            } = match state.attempts.next() {
                 Some(next) => next,
                 None => {
                     logging::keep_alive::too_many_retries();
@@ -49,8 +53,6 @@ where
                 }
             };
 
-
-
             let connection = self.stream.get_connection();
             let headers = self.stream.get_headers();
             logging::keep_alive::reconnect_attempt(attempt_num, max_attempts);
@@ -59,7 +61,6 @@ where
                 tokio::time::sleep(duration).await;
                 T::reestablish_connection(connection, headers).await
             });
-
         } else {
             unreachable!();
         }
