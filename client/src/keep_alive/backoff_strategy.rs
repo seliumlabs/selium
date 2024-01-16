@@ -5,6 +5,7 @@ pub const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 /// Default attempt duration step.
 pub const DEFAULT_STEP: Duration = Duration::from_secs(1);
 
+#[doc(hidden)]
 #[derive(Debug, PartialEq)]
 pub struct NextAttempt {
     pub duration: Duration,
