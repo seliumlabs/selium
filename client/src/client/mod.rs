@@ -19,6 +19,7 @@ pub use custom::*;
 pub fn custom() -> ClientBuilder<CustomWantsEndpoint> {
     ClientBuilder {
         state: CustomWantsEndpoint::default(),
+        client_type: ClientType::Custom,
     }
 }
 
@@ -33,6 +34,7 @@ pub fn custom() -> ClientBuilder<CustomWantsEndpoint> {
 pub fn cloud() -> ClientBuilder<CloudWantsCertAndKey> {
     ClientBuilder {
         state: CloudWantsCertAndKey::default(),
+        client_type: ClientType::Cloud,
     }
 }
 

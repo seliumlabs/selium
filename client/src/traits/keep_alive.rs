@@ -7,7 +7,7 @@ pub trait KeepAliveStream {
     type Headers: Sized + Clone + Unpin + Send + 'static;
 
     /// Callback that is invoked to attempt to reconnect to the `Selium` server.
-    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers) -> AttemptFut;
+    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers, cloud: bool) -> AttemptFut;
 
     /// Callback that is invoked upon successful reconnection.
     fn on_reconnect(&mut self, stream: BiStream);

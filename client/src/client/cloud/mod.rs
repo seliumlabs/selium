@@ -1,7 +1,7 @@
 mod states;
 pub use states::*;
 
-use crate::connection::{ClientConnection, ConnectionOptions};
+use crate::connection::{ClientConnection, ConnectionOptions, configure_client, get_cloud_endpoint};
 use crate::constants::SELIUM_CLOUD_REMOTE_URL;
 use crate::crypto::cert::load_keypair;
 use crate::keep_alive::BackoffStrategy;
@@ -49,7 +49,7 @@ impl ClientBuilder<CloudWantsCertAndKey> {
     ) -> Result<ClientBuilder<CloudWantsConnect>> {
         let (certs, key) = load_keypair(cert_file, key_file)?;
         let next_state = CloudWantsConnect::new(self.state, &certs, key);
-        Ok(ClientBuilder { state: next_state })
+        Ok(ClientBuilder { state: next_state, client_type: self.client_type })
     }
 }
 
@@ -78,10 +78,11 @@ impl ClientBuilder<CloudWantsConnect> {
 
         let options = ConnectionOptions::new(certs.as_slice(), key, root_store, keep_alive);
         logging::connection::get_cloud_endpoint();
-        let endpoint = get_cloud_endpoint(options.clone()).await?;
+        let client_config = configure_client(options).await; 
+        let endpoint = get_cloud_endpoint(client_config.clone()).await?;
 
         logging::connection::connect_to_address(&endpoint);
-        let connection = ClientConnection::connect(&endpoint, options).await?;
+        let connection = ClientConnection::connect(&endpoint, client_config).await?;
         let connection = Arc::new(Mutex::new(connection));
         logging::connection::successful_connection(&endpoint);
 
@@ -90,22 +91,4 @@ impl ClientBuilder<CloudWantsConnect> {
             backoff_strategy,
         })
     }
-}
-
-#[tracing::instrument]
-async fn get_cloud_endpoint(options: ConnectionOptions) -> Result<String> {
-    let connection = ClientConnection::connect(SELIUM_CLOUD_REMOTE_URL, options).await?;
-    let (_, mut read) = connection
-        .conn()
-        .open_bi()
-        .await
-        .map_err(SeliumError::OpenCloudStreamFailed)?;
-    let endpoint_bytes = read
-        .read_to_end(2048)
-        .await
-        .map_err(|_| SeliumError::GetServerAddressFailed)?;
-    let endpoint =
-        String::from_utf8(endpoint_bytes).map_err(|_| SeliumError::GetServerAddressFailed)?;
-
-    Ok(endpoint)
 }

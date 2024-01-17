@@ -309,10 +309,10 @@ where
 {
     type Headers = ReplierPayload;
 
-    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers) -> AttemptFut {
+    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers, cloud: bool) -> AttemptFut {
         Box::pin(async move {
             let mut connection = connection.lock().await;
-            connection.reconnect().await?;
+            connection.reconnect(cloud).await?;
             Self::open_stream(connection, headers).await
         })
     }

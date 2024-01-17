@@ -1,7 +1,9 @@
+use crate::ClientType;
+use crate::constants::SELIUM_CLOUD_REMOTE_URL;
 use crate::utils::net::get_socket_addrs;
 use quinn::{ClientConfig, Connection, Endpoint, TransportConfig};
 use rustls::{Certificate, PrivateKey, RootCertStore};
-use selium_std::errors::{ParseEndpointAddressError, QuicError, Result};
+use selium_std::errors::{ParseEndpointAddressError, QuicError, Result, SeliumError};
 use std::sync::Arc;
 use std::{net::SocketAddr, time::Duration};
 use tokio::sync::Mutex;
@@ -43,8 +45,7 @@ pub struct ClientConnection {
 }
 
 impl ClientConnection {
-    pub async fn connect(addr: &str, options: ConnectionOptions) -> Result<Self> {
-        let client_config = configure_client(options);
+    pub async fn connect(addr: &str, client_config: ClientConfig) -> Result<Self> {
         let addr = get_socket_addrs(addr)?;
         let connection = connect_to_endpoint(addr, client_config.clone()).await?;
 
@@ -59,17 +60,38 @@ impl ClientConnection {
         &self.connection
     }
 
-    pub async fn reconnect(&mut self) -> Result<()> {
+    async fn reconnect_cloud(&mut self) -> Result<()> {
+        let addr = get_cloud_endpoint(self.client_config.clone()).await?;
+        let addr = get_socket_addrs(&addr)?;
+        let connection = connect_to_endpoint(addr, self.client_config.clone()).await?;
+
+        self.connection = connection;
+        self.addr = addr;
+
+        Ok(())
+    }
+
+    async fn reconnect_custom(&mut self) -> Result<()> {
+        let connection = connect_to_endpoint(self.addr, self.client_config.clone()).await?;
+        self.connection = connection;
+
+        Ok(())
+    }
+
+    pub async fn reconnect(&mut self, cloud: bool) -> Result<()> {
         if self.connection.close_reason().is_some() {
-            let connection = connect_to_endpoint(self.addr, self.client_config.clone()).await?;
-            self.connection = connection;
+            if cloud { 
+                self.reconnect_cloud(); 
+            } else { 
+                self.reconnect_custom(); 
+            }
         }
 
         Ok(())
     }
 }
 
-fn configure_client(options: ConnectionOptions) -> ClientConfig {
+pub async fn configure_client(options: ConnectionOptions) -> ClientConfig {
     let mut crypto = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(options.root_store)
@@ -102,4 +124,22 @@ async fn connect_to_endpoint(addr: SocketAddr, config: ClientConfig) -> Result<C
         .map_err(QuicError::ConnectionError)?;
 
     Ok(connection)
+}
+
+#[tracing::instrument]
+pub async fn get_cloud_endpoint(client_config: ClientConfig) -> Result<String> {
+    let connection = ClientConnection::connect(SELIUM_CLOUD_REMOTE_URL, client_config).await?;
+    let (_, mut read) = connection
+        .conn()
+        .open_bi()
+        .await
+        .map_err(SeliumError::OpenCloudStreamFailed)?;
+    let endpoint_bytes = read
+        .read_to_end(2048)
+        .await
+        .map_err(|_| SeliumError::GetServerAddressFailed)?;
+    let endpoint =
+        String::from_utf8(endpoint_bytes).map_err(|_| SeliumError::GetServerAddressFailed)?;
+
+    Ok(endpoint)
 }

@@ -1,7 +1,7 @@
 mod states;
 pub use states::*;
 
-use crate::connection::{ClientConnection, ConnectionOptions};
+use crate::connection::{ClientConnection, ConnectionOptions, configure_client};
 use crate::constants::SELIUM_CLOUD_REMOTE_URL;
 use crate::crypto::cert::{load_certs, load_keypair, load_root_store};
 use crate::keep_alive::BackoffStrategy;
@@ -29,7 +29,7 @@ impl ClientBuilder<CustomWantsEndpoint> {
     /// Specifies the remote server address to connect to.
     pub fn endpoint(self, endpoint: &str) -> ClientBuilder<CustomWantsRootCert> {
         let next_state = CustomWantsRootCert::new(self.state, endpoint);
-        ClientBuilder { state: next_state }
+        ClientBuilder { state: next_state, client_type: self.client_type }
     }
 }
 
@@ -50,7 +50,7 @@ impl ClientBuilder<CustomWantsRootCert> {
         let ca_certs = load_certs(ca_path)?;
         let root_store = load_root_store(&ca_certs)?;
         let next_state = CustomWantsCertAndKey::new(self.state, root_store);
-        Ok(ClientBuilder { state: next_state })
+        Ok(ClientBuilder { state: next_state, client_type: self.client_type })
     }
 }
 
@@ -78,7 +78,7 @@ impl ClientBuilder<CustomWantsCertAndKey> {
     ) -> Result<ClientBuilder<CustomWantsConnect>> {
         let (certs, key) = load_keypair(cert_file, key_file)?;
         let next_state = CustomWantsConnect::new(self.state, &certs, key);
-        Ok(ClientBuilder { state: next_state })
+        Ok(ClientBuilder { state: next_state, client_type: self.client_type })
     }
 }
 
@@ -112,8 +112,10 @@ impl ClientBuilder<CustomWantsConnect> {
         } = common;
 
         let options = ConnectionOptions::new(certs.as_slice(), key, root_store, keep_alive);
+        let client_config = configure_client(options).await; 
+
         logging::connection::connect_to_address(&endpoint);
-        let connection = ClientConnection::connect(&endpoint, options).await?;
+        let connection = ClientConnection::connect(&endpoint, client_config).await?;
         let connection = Arc::new(Mutex::new(connection));
         logging::connection::successful_connection(&endpoint);
 

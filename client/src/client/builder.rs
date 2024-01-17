@@ -3,6 +3,12 @@ use crate::keep_alive::BackoffStrategy;
 use crate::traits::TryIntoU64;
 use selium_std::errors::Result;
 
+#[derive(Debug, Clone)]
+pub enum ClientType {
+    Custom,
+    Cloud,
+}
+
 /// A convenient builder struct used to build a [Client](crate::Client) instance.
 ///
 /// The [ClientBuilder] uses a type-level Finite State Machine to assure that a
@@ -16,11 +22,12 @@ use selium_std::errors::Result;
 #[derive(Debug)]
 pub struct ClientBuilder<T> {
     pub(crate) state: T,
+    pub(crate) client_type: ClientType,
 }
 
 impl<T> ClientBuilder<T> {
-    pub fn new(state: T) -> Self {
-        Self { state }
+    pub fn new(state: T, client_type: ClientType) -> Self {
+        Self { state, client_type }
     }
 }
 
