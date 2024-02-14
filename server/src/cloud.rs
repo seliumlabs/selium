@@ -46,7 +46,7 @@ pub enum AdminResponse {
     _Pad3,
     _Pad4,
     GetNamespaceResponse(String),
-    _Pad5,
+    ServerError(String),
     _Pad6,
 }
 
@@ -85,9 +85,8 @@ pub async fn do_cloud_auth(
         let result = timeout(Duration::from_secs(5), rx.into_future()).await;
         match result {
             Ok((Some(Ok(AdminResponse::GetNamespaceResponse(ns))), _)) if ns == namespace => Ok(()),
-            Ok((Some(Ok(AdminResponse::GetNamespaceResponse(_))), _)) => {
-                Err(anyhow!("Access denied"))
-            }
+            Ok((Some(Ok(AdminResponse::GetNamespaceResponse(_))), _))
+            | Ok((Some(Ok(AdminResponse::ServerError(_))), _)) => Err(anyhow!("Access denied")),
             Ok((Some(Err(e)), _)) => Err(e.into()),
             _ => Err(anyhow!("No response from proxy")),
         }
