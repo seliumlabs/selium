@@ -74,4 +74,4 @@ my_stream.forward(publisher);
 Now you're publishing messages!
 
 There's lots more Selium can do, like sending things other than strings. Be sure to
-[checkout the wiki](../../../wiki/Getting-Started) for more details.
+[checkout the user guide](https://guide.selium.com) for more details.
