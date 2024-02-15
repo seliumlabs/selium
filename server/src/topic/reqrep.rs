@@ -1,5 +1,4 @@
 use crate::{sink::Router, BoxSink};
-use bytes::Bytes;
 use futures::{
     channel::mpsc::{self, Receiver, Sender},
     ready,
@@ -9,8 +8,9 @@ use futures::{
 use log::{error, warn};
 use pin_project_lite::pin_project;
 use selium_protocol::{
+    error_codes::REPLIER_ALREADY_BOUND,
     traits::{ShutdownSink, ShutdownStream},
-    Frame,
+    ErrorPayload, Frame,
 };
 use selium_std::errors::Result;
 use std::{
@@ -45,7 +45,7 @@ pin_project! {
         handle: Receiver<Socket<E>>,
         buffered_req: Option<Frame>,
         buffered_rep: Option<Frame>,
-        buffered_err: Option<(Option<Bytes>, BoxSink<Frame, E>)>,
+        buffered_err: Option<(Option<ErrorPayload>, BoxSink<Frame, E>)>,
     }
 }
 
@@ -102,17 +102,17 @@ where
 
             // If we've got an error buffered already, we need to write it to the client
             // before we can do anything else.
-            if let Some((maybe_bytes, mut si)) = buffered_err.take() {
-                if let Some(bytes) = maybe_bytes {
+            if let Some((maybe_err, mut si)) = buffered_err.take() {
+                if let Some(err) = maybe_err {
                     match si.poll_ready_unpin(cx) {
                         Poll::Ready(Ok(_)) => {
-                            if si.start_send_unpin(Frame::Error(bytes)).is_ok() {
+                            if si.start_send_unpin(Frame::Error(err)).is_ok() {
                                 *buffered_err = Some((None, si));
                             }
                         }
                         Poll::Ready(Err(e)) => warn!("Could not poll replier sink: {e:?}"),
                         Poll::Pending => {
-                            *buffered_err = Some((Some(bytes), si));
+                            *buffered_err = Some((Some(err), si));
                             return Poll::Pending;
                         }
                     }
@@ -138,8 +138,11 @@ where
                     }
                     Socket::Server((si, st)) => {
                         if server.is_some() {
-                            *buffered_err =
-                                Some((Some("A replier already exists for this topic".into()), si));
+                            let error_payload = ErrorPayload {
+                                code: REPLIER_ALREADY_BOUND,
+                                message: "A replier already exists for this topic".into(),
+                            };
+                            *buffered_err = Some((Some(error_payload), si));
                         } else {
                             let _ = server.insert((si, st));
                         }
@@ -184,11 +187,8 @@ where
                     }
                     // Server has finished
                     Poll::Ready(None) => {
-                        if server.is_some() {
-                            let si = &mut server.as_mut().as_pin_mut().unwrap().0;
-                            ready!(si.poll_flush_unpin(cx)).unwrap();
-                        }
-
+                        let si = &mut server.as_mut().as_pin_mut().unwrap().0;
+                        ready!(si.poll_flush_unpin(cx)).unwrap();
                         ready!(sink.as_mut().poll_flush(cx)).unwrap();
                         *server = None;
                     }

@@ -76,8 +76,11 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::error_codes::UNKNOWN_ERROR;
     use crate::utils::encode_message_batch;
-    use crate::{MessagePayload, Operation, PublisherPayload, SubscriberPayload, TopicName};
+    use crate::{
+        ErrorPayload, MessagePayload, Operation, PublisherPayload, SubscriberPayload, TopicName,
+    };
     use bytes::Bytes;
 
     #[test]
@@ -182,11 +185,15 @@ mod tests {
 
     #[test]
     fn encodes_error_frame() {
-        let frame = Frame::Error("This is an error".into());
+        let frame = Frame::Error(ErrorPayload {
+            code: UNKNOWN_ERROR,
+            message: "This is an error".into(),
+        });
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from_static(b"\0\0\0\0\0\0\0\x10\x06This is an error");
+        let expected =
+            Bytes::from_static(b"\0\0\0\0\0\0\0\x1c\x06\0\0\0\0\x10\0\0\0\0\0\0\0This is an error");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -313,9 +320,13 @@ mod tests {
     #[test]
     fn decodes_error_frame() {
         let mut codec = MessageCodec;
-        let mut src = BytesMut::from("\0\0\0\0\0\0\0\x10\x06This is an error");
+        let mut src =
+            BytesMut::from("\0\0\0\0\0\0\0\x1c\x06\0\0\0\0\x10\0\0\0\0\0\0\0This is an error");
 
-        let expected = Frame::Error("This is an error".into());
+        let expected = Frame::Error(ErrorPayload {
+            code: UNKNOWN_ERROR,
+            message: "This is an error".into(),
+        });
 
         let result = codec.decode(&mut src).unwrap().unwrap();
 

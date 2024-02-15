@@ -103,9 +103,9 @@ $ cargo run
 
 ### Running Benchmarks
 
-Included in the repository is a `benchmarks` binary containing end-to-end benchmarks for the publisher/subscriber clients. 
+Included in the repository is a `benchmarks` binary containing end-to-end benchmarks for the publisher/subscriber clients.
 
-These benchmarks measure the performance of both encoding/decoding message payloads on the client, as well the responsiveness of the 
+These benchmarks measure the performance of both encoding/decoding message payloads on the client, as well the responsiveness of the
 Selium server.
 
 To run the benchmarks with the default options, execute the following commands:
@@ -115,7 +115,7 @@ $ cd benchmarks
 $ cargo run --release
 ```
 
-This will run the benchmarks with default values provided for the benchmark configuration arguments, which should produce a summary 
+This will run the benchmarks with default values provided for the benchmark configuration arguments, which should produce a summary
 similar to the following:
 
 ```bash
@@ -131,19 +131,20 @@ Message Size (Bytes): 32
 | 1.3476 Secs          | 30.52 MB             | 22.65 MB/s           | 1347.56 ns           |
 ```
 
-If the default configuration is not sufficient, execute the following command to see a list of benchmark arguments. 
+If the default configuration is not sufficient, execute the following command to see a list of benchmark arguments.
 ```bash
 $ cargo run -- --help
-``` 
+```
 
 ### Next Steps
 
 Selium is a brokered messaging platform, meaning that it has a client and a server component. Check
 out the [`client`](client/) and [`server`](server/) crates for more details.
 
-We also have [the wiki](../../wiki) that includes all of this information and much more. Our
-[Getting Started](../../wiki/Getting-Started) guide will step you through the process of setting up
-a secure, working Selium platform in 5 minutes or less.
+We also have [the user guide](https://guide.selium.com) that includes all of this information and
+much more. Our [Getting Started](https://guide.selium.com/getting_started/first_steps.html) chapters
+will step you through the process of setting up a secure, working Selium platform in 5 minutes or
+less.
 
 ## Contributing to Selium
 

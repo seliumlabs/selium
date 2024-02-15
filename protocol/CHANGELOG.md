@@ -15,3 +15,7 @@
 ## v0.2.1
 
 - Bug fix for Selium Cloud
+
+## v0.3.0
+
+- Improve error handling and reporting between clients and servers

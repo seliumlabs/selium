@@ -1,7 +1,7 @@
 use crate::helpers::start_server;
 use anyhow::Result;
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
-use selium::keep_alive::KeepAlive;
+use selium::keep_alive::pubsub::KeepAlive;
 use selium::std::codecs::StringCodec;
 use selium::{prelude::*, pubsub::Subscriber};
 
@@ -102,7 +102,7 @@ async fn run() -> Result<[Option<String>; 16]> {
 async fn start_subscriber(
     addr: &str,
     topic: &str,
-) -> Result<KeepAlive<Subscriber<StringCodec, String>, String>> {
+) -> Result<KeepAlive<Subscriber<StringCodec, String>>> {
     let connection = selium::custom()
         .keep_alive(5_000)?
         .endpoint(addr)

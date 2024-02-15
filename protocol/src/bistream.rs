@@ -1,6 +1,7 @@
 use crate::traits::{ShutdownSink, ShutdownStream};
 use crate::{error_codes, Frame, MessageCodec};
 use futures::{Sink, SinkExt, Stream, StreamExt};
+use quinn::VarInt;
 use quinn::{Connection, RecvStream, SendStream, StreamId};
 use selium_std::errors::{QuicError, Result, SeliumError};
 use std::{
@@ -41,7 +42,10 @@ impl Sink<Frame> for WriteHalf {
 
 impl ShutdownSink for WriteHalf {
     fn shutdown_sink(&mut self) {
-        let _ = self.0.get_mut().reset(error_codes::SHUTDOWN_IN_PROGRESS);
+        let _ = self
+            .0
+            .get_mut()
+            .reset(VarInt::from_u32(error_codes::SHUTDOWN_IN_PROGRESS));
     }
 }
 
@@ -79,7 +83,10 @@ impl Stream for ReadHalf {
 
 impl ShutdownStream for ReadHalf {
     fn shutdown_stream(&mut self) {
-        let _ = self.0.get_mut().stop(error_codes::SHUTDOWN_IN_PROGRESS);
+        let _ = self
+            .0
+            .get_mut()
+            .stop(VarInt::from_u32(error_codes::SHUTDOWN_IN_PROGRESS));
     }
 }
 
@@ -181,12 +188,16 @@ impl Stream for BiStream {
 
 impl ShutdownSink for BiStream {
     fn shutdown_sink(&mut self) {
-        let _ = self.write().reset(error_codes::SHUTDOWN_IN_PROGRESS);
+        let _ = self
+            .write()
+            .reset(VarInt::from_u32(error_codes::SHUTDOWN_IN_PROGRESS));
     }
 }
 
 impl ShutdownStream for BiStream {
     fn shutdown_stream(&mut self) {
-        let _ = self.read().stop(error_codes::SHUTDOWN_IN_PROGRESS);
+        let _ = self
+            .read()
+            .stop(VarInt::from_u32(error_codes::SHUTDOWN_IN_PROGRESS));
     }
 }

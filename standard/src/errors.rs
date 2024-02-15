@@ -135,6 +135,9 @@ pub enum SeliumError {
     #[error("Failed to retrieve server address from Selium Cloud.")]
     GetServerAddressFailed,
 
+    #[error("Cannot connect directly to the Selium cloud endpoint. Use the `selium::cloud` builder instead.")]
+    ConnectDirectToCloud,
+
     #[error("Poorly formatted topic name, must be in the format [namespace]/[topic]")]
     ParseTopicNameError,
 
@@ -144,6 +147,6 @@ pub enum SeliumError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
 
-    #[error("Failed to open stream with error: {0}.")]
-    OpenStream(String),
+    #[error("Failed to open stream with error: {1}.")]
+    OpenStream(u32, String),
 }

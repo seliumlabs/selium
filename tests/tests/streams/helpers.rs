@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use selium::keep_alive::reqrep::KeepAlive;
+use selium::keep_alive::BackoffStrategy;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
 use selium::std::errors::SeliumError;
@@ -25,7 +27,8 @@ pub enum Response {
     Echo(String),
 }
 
-type Req = Requestor<BincodeCodec<Request>, BincodeCodec<Response>, Request, Response>;
+// TODO: Improve generic types for streams, as this is too unwieldy for library developers.
+type Req = KeepAlive<Requestor<BincodeCodec<Request>, BincodeCodec<Response>, Request, Response>>;
 
 pub struct TestClient {
     client: Client,
@@ -37,6 +40,7 @@ impl TestClient {
 
         let client = selium::custom()
             .keep_alive(5_000)?
+            .backoff_strategy(BackoffStrategy::constant().with_max_attempts(0))
             .endpoint(&server_addr.to_string())
             .with_certificate_authority("../certs/client/ca.der")?
             .with_cert_and_key(
@@ -57,7 +61,7 @@ impl TestClient {
             let client = self.client.clone();
 
             async move {
-                let replier = client
+                let mut replier = client
                     .replier("/test/endpoint")
                     .with_request_decoder(BincodeCodec::default())
                     .with_reply_encoder(BincodeCodec::default())
@@ -72,7 +76,7 @@ impl TestClient {
                     .await
                     .unwrap();
 
-                replier.listen(|_| false).await
+                replier.listen().await
             }
         })
     }
