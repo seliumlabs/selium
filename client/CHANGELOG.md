@@ -23,3 +23,8 @@
 - Add closure so client can gracefully handle replier errors
 - Add CA certificate
 - Bug fix for Selium Cloud
+
+## v0.4.0
+
+- Add `tracing` lib to improve visibility
+- Improve and customise keepalive semantics for each stream type

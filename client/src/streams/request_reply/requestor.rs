@@ -1,8 +1,10 @@
 use super::states::*;
-use crate::connection::ClientConnection;
+use crate::connection::{ClientConnection, SharedConnection};
+use crate::keep_alive::reqrep::KeepAlive;
+use crate::keep_alive::AttemptFut;
 use crate::streams::aliases::{Comp, Decomp};
 use crate::streams::handle_reply;
-use crate::traits::{Open, TryIntoU64};
+use crate::traits::{KeepAliveStream, Open, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -115,7 +117,7 @@ where
     ReqItem: Unpin + Send,
     ResItem: Unpin + Send,
 {
-    type Output = Requestor<E, D, ReqItem, ResItem>;
+    type Output = KeepAlive<Requestor<E, D, ReqItem, ResItem>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.endpoint.as_str())?;
@@ -154,8 +156,11 @@ where
 /// will implicitly handle routing replies to the correct task.
 #[derive(Clone)]
 pub struct Requestor<E, D, ReqItem, ResItem> {
+    client: Client,
     request_id: Arc<RequestId>,
+    read_half: SharedReadHalf,
     write_half: SharedWriteHalf,
+    headers: RequestorPayload,
     encoder: E,
     decoder: D,
     compression: Option<Comp>,
@@ -181,13 +186,11 @@ where
         compression: Option<Comp>,
         decompression: Option<Decomp>,
         request_timeout: Duration,
-    ) -> Result<Self> {
+    ) -> Result<KeepAlive<Self>> {
         let lock = client.connection.lock().await;
 
-        let stream = Self::open_stream(lock, headers).await?;
-        let (write_half, read_half) = stream.split();
-        let write_half = Arc::new(Mutex::new(write_half));
-        let read_half = Arc::new(Mutex::new(read_half));
+        let stream = Self::open_stream(lock, headers.clone()).await?;
+        let (write_half, read_half) = Self::split_stream(stream);
 
         let pending_requests = Arc::new(Mutex::new(HashMap::new()));
         let request_id = Arc::new(RequestId::default());
@@ -195,8 +198,11 @@ where
         poll_replies(read_half.clone(), pending_requests.clone());
 
         let requestor = Self {
+            client: client.clone(),
             request_id,
+            read_half,
             write_half,
+            headers,
             encoder,
             decoder,
             compression,
@@ -207,7 +213,7 @@ where
             _res_marker: PhantomData,
         };
 
-        Ok(requestor)
+        Ok(KeepAlive::new(requestor, client.backoff_strategy))
     }
 
     async fn open_stream(
@@ -221,7 +227,16 @@ where
         stream.send(frame).await?;
 
         handle_reply(&mut stream).await?;
+
         Ok(stream)
+    }
+
+    fn split_stream(stream: BiStream) -> (SharedWriteHalf, SharedReadHalf) {
+        let (write_half, read_half) = stream.split();
+        let write_half = Arc::new(Mutex::new(write_half));
+        let read_half = Arc::new(Mutex::new(read_half));
+
+        (write_half, read_half)
     }
 
     fn encode_request(&mut self, item: ReqItem) -> Result<Bytes> {
@@ -320,4 +335,36 @@ fn poll_replies(read_half: SharedReadHalf, pending_requests: SharedPendingReques
             }
         }
     });
+}
+
+impl<E, D, ReqItem, ResItem> KeepAliveStream for Requestor<E, D, ReqItem, ResItem>
+where
+    E: MessageEncoder<ReqItem> + Send + Unpin,
+    D: MessageDecoder<ResItem> + Send + Unpin,
+    ReqItem: Unpin + Send,
+    ResItem: Unpin + Send,
+{
+    type Headers = RequestorPayload;
+
+    fn reestablish_connection(connection: SharedConnection, headers: Self::Headers) -> AttemptFut {
+        Box::pin(async move {
+            let mut connection = connection.lock().await;
+            connection.reconnect().await?;
+            Self::open_stream(connection, headers).await
+        })
+    }
+
+    fn on_reconnect(&mut self, stream: BiStream) {
+        let (write_half, read_half) = Self::split_stream(stream);
+        self.write_half = write_half;
+        self.read_half = read_half;
+    }
+
+    fn get_connection(&self) -> SharedConnection {
+        self.client.connection.clone()
+    }
+
+    fn get_headers(&self) -> Self::Headers {
+        self.headers.clone()
+    }
 }

@@ -14,3 +14,7 @@
 
 - Improve RequestHandlerFailure error
 - Added BytesCodec to transmit raw bytes
+
+## v0.2.2
+
+- New error types

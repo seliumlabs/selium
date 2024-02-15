@@ -1,7 +1,8 @@
 use super::states::{PublisherWantsEncoder, PublisherWantsOpen};
 use crate::batching::{BatchConfig, MessageBatch};
 use crate::connection::{ClientConnection, SharedConnection};
-use crate::keep_alive::{AttemptFut, KeepAlive};
+use crate::keep_alive::pubsub::KeepAlive;
+use crate::keep_alive::AttemptFut;
 use crate::streams::aliases::Comp;
 use crate::streams::handle_reply;
 use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
@@ -94,7 +95,7 @@ where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
     Item: Unpin + Send,
 {
-    type Output = KeepAlive<Publisher<E, Item>, Item>;
+    type Output = KeepAlive<Publisher<E, Item>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.common.topic.as_str())?;
@@ -157,7 +158,7 @@ where
         encoder: E,
         compression: Option<Comp>,
         batch_config: Option<BatchConfig>,
-    ) -> Result<KeepAlive<Self, Item>> {
+    ) -> Result<KeepAlive<Self>> {
         let batch = batch_config.as_ref().map(|c| MessageBatch::from(c.clone()));
         let lock = client.connection.lock().await;
         let stream = Self::open_stream(lock, headers.clone()).await?;
@@ -188,7 +189,7 @@ where
     /// # Errors
     ///
     /// Returns [Err] if a new stream cannot be opened on the current client connection.
-    pub async fn duplicate(&self) -> Result<KeepAlive<Self, Item>> {
+    pub async fn duplicate(&self) -> Result<KeepAlive<Self>> {
         let publisher = Publisher::spawn(
             self.client.clone(),
             self.headers.clone(),
