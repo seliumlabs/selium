@@ -1342,6 +1342,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "selium-log"
+version = "0.1.0"
+
+[[package]]
 name = "selium-protocol"
 version = "0.2.1"
 dependencies = [
