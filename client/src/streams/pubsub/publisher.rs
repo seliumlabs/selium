@@ -15,7 +15,6 @@ use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload, TopicNa
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -28,7 +27,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
     ///
     /// An encoder can be any type implementing
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
-    pub fn with_encoder<E, Item>(self, encoder: E) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
+    pub fn with_encoder<E>(self, encoder: E) -> StreamBuilder<PublisherWantsOpen<E>> {
         let next_state = PublisherWantsOpen::new(self.state, encoder);
 
         StreamBuilder {
@@ -38,7 +37,7 @@ impl StreamBuilder<PublisherWantsEncoder> {
     }
 }
 
-impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
+impl<E> StreamBuilder<PublisherWantsOpen<E>> {
     /// Specifies the compression implementation a [Publisher] uses for compressing encoded
     /// messages prior to being sent over the wire.
     ///
@@ -46,7 +45,7 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
     /// single unit, rather than each message being compressed individually.
     ///
     /// A compressor can be any type implementing [Compress](crate::std::traits::compression::Compress).
-    pub fn with_compression<T>(mut self, comp: T) -> StreamBuilder<PublisherWantsOpen<E, Item>>
+    pub fn with_compression<T>(mut self, comp: T) -> StreamBuilder<PublisherWantsOpen<E>>
     where
         T: Compress + Send + Sync + 'static,
     {
@@ -61,23 +60,20 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
     ///
     /// When opted in for a stream, batching will happen automatically without any
     /// additional intervention.
-    pub fn with_batching(
-        mut self,
-        config: BatchConfig,
-    ) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
+    pub fn with_batching(mut self, config: BatchConfig) -> StreamBuilder<PublisherWantsOpen<E>> {
         self.state.batch_config = Some(config);
         self
     }
 }
 
-impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>> {
+impl<E> Retain for StreamBuilder<PublisherWantsOpen<E>> {
     fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
         self.state.common.retain(policy)?;
         Ok(self)
     }
 }
 
-impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>> {
+impl<E> Operations for StreamBuilder<PublisherWantsOpen<E>> {
     fn map(mut self, module_path: &str) -> Self {
         self.state.common.map(module_path);
         self
@@ -90,12 +86,11 @@ impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>> {
 }
 
 #[async_trait]
-impl<E, Item> Open for StreamBuilder<PublisherWantsOpen<E, Item>>
+impl<E> Open for StreamBuilder<PublisherWantsOpen<E>>
 where
-    E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    E: MessageEncoder + Clone + Send + Unpin,
 {
-    type Output = KeepAlive<Publisher<E, Item>>;
+    type Output = KeepAlive<Publisher<E>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.common.topic.as_str())?;
@@ -136,7 +131,7 @@ where
 ///
 /// **Note:** The Publisher struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
-pub struct Publisher<E, Item> {
+pub struct Publisher<E> {
     client: Client,
     stream: BiStream,
     headers: PublisherPayload,
@@ -144,13 +139,11 @@ pub struct Publisher<E, Item> {
     compression: Option<Comp>,
     batch: Option<MessageBatch>,
     batch_config: Option<BatchConfig>,
-    _marker: PhantomData<Item>,
 }
 
-impl<E, Item> Publisher<E, Item>
+impl<E> Publisher<E>
 where
-    E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    E: MessageEncoder + Clone + Send + Unpin,
 {
     async fn spawn(
         client: Client,
@@ -171,7 +164,6 @@ where
             compression,
             batch,
             batch_config,
-            _marker: PhantomData,
         };
 
         Ok(KeepAlive::new(publisher, client.backoff_strategy))
@@ -273,10 +265,9 @@ where
     }
 }
 
-impl<E, Item> Sink<Item> for Publisher<E, Item>
+impl<E> Sink<E::Item> for Publisher<E>
 where
-    E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    E: MessageEncoder + Clone + Send + Unpin,
 {
     type Error = SeliumError;
 
@@ -294,7 +285,7 @@ where
         self.stream.poll_ready_unpin(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: E::Item) -> Result<(), Self::Error> {
         let bytes = self
             .encoder
             .encode(item)
@@ -317,10 +308,9 @@ where
     }
 }
 
-impl<E, Item> KeepAliveStream for Publisher<E, Item>
+impl<E> KeepAliveStream for Publisher<E>
 where
-    E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    E: MessageEncoder + Clone + Send + Unpin,
 {
     type Headers = PublisherPayload;
 

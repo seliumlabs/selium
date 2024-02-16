@@ -95,10 +95,9 @@ where
     }
 }
 
-impl<E, Item> KeepAlive<Publisher<E, Item>>
+impl<E> KeepAlive<Publisher<E>>
 where
-    E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    E: MessageEncoder + Clone + Send + Unpin,
 {
     pub async fn finish(self) -> Result<()> {
         self.stream.finish().await

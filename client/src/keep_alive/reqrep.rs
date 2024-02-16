@@ -66,11 +66,10 @@ where
     }
 }
 
-impl<E, D, ReqItem, ResItem> Clone for KeepAlive<Requestor<E, D, ReqItem, ResItem>>
+impl<E, D, ResItem> Clone for KeepAlive<Requestor<E, D, ResItem>>
 where
-    E: MessageEncoder<ReqItem> + Send + Unpin + Clone,
+    E: MessageEncoder + Send + Unpin + Clone,
     D: MessageDecoder<ResItem> + Send + Unpin + Clone,
-    ReqItem: Unpin + Send + Clone,
     ResItem: Unpin + Send + Clone,
 {
     fn clone(&self) -> Self {
@@ -81,14 +80,13 @@ where
     }
 }
 
-impl<E, D, ReqItem, ResItem> KeepAlive<Requestor<E, D, ReqItem, ResItem>>
+impl<E, D, ResItem> KeepAlive<Requestor<E, D, ResItem>>
 where
-    E: MessageEncoder<ReqItem> + Send + Unpin + Clone,
+    E: MessageEncoder + Send + Unpin + Clone,
     D: MessageDecoder<ResItem> + Send + Unpin + Clone,
-    ReqItem: Unpin + Send + Clone,
     ResItem: Unpin + Send + Clone,
 {
-    pub async fn request(&mut self, req: ReqItem) -> Result<ResItem> {
+    pub async fn request(&mut self, req: E::Item) -> Result<ResItem> {
         let mut attempts = self.backoff_strategy.clone().into_iter();
 
         loop {
@@ -104,15 +102,14 @@ where
     }
 }
 
-impl<D, E, Err, F, Fut, ReqItem, ResItem> KeepAlive<Replier<E, D, F, ReqItem, ResItem>>
+impl<D, E, Err, F, Fut, ReqItem> KeepAlive<Replier<E, D, F, ReqItem>>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
-    E: MessageEncoder<ResItem> + Send + Unpin,
+    E: MessageEncoder + Send + Unpin,
     Err: Debug,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = std::result::Result<ResItem, Err>>,
+    Fut: Future<Output = std::result::Result<E::Item, Err>>,
     ReqItem: Unpin + Send,
-    ResItem: Unpin + Send,
 {
     pub async fn listen(&mut self) -> Result<()> {
         let mut attempts = self.backoff_strategy.clone().into_iter();

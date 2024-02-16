@@ -16,37 +16,34 @@ impl RequestorWantsRequestEncoder {
     }
 }
 
-pub struct RequestorWantsReplyDecoder<E, ReqItem> {
+pub struct RequestorWantsReplyDecoder<E> {
     pub(crate) endpoint: String,
     pub(crate) encoder: E,
     pub(crate) compression: Option<Comp>,
-    _req_marker: PhantomData<ReqItem>,
 }
 
-impl<E, ReqItem> RequestorWantsReplyDecoder<E, ReqItem> {
+impl<E> RequestorWantsReplyDecoder<E> {
     pub fn new(prev: RequestorWantsRequestEncoder, encoder: E) -> Self {
         Self {
             endpoint: prev.endpoint,
             encoder,
             compression: None,
-            _req_marker: PhantomData,
         }
     }
 }
 
-pub struct RequestorWantsOpen<E, D, ReqItem, ResItem> {
+pub struct RequestorWantsOpen<E, D, ResItem> {
     pub(crate) endpoint: String,
     pub(crate) encoder: E,
     pub(crate) compression: Option<Comp>,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
     pub(crate) request_timeout: Duration,
-    _req_marker: PhantomData<ReqItem>,
     _res_marker: PhantomData<ResItem>,
 }
 
-impl<E, D, ReqItem, ResItem> RequestorWantsOpen<E, D, ReqItem, ResItem> {
-    pub fn new(prev: RequestorWantsReplyDecoder<E, ReqItem>, decoder: D) -> Self {
+impl<E, D, ResItem> RequestorWantsOpen<E, D, ResItem> {
+    pub fn new(prev: RequestorWantsReplyDecoder<E>, decoder: D) -> Self {
         Self {
             endpoint: prev.endpoint,
             encoder: prev.encoder,
@@ -54,7 +51,6 @@ impl<E, D, ReqItem, ResItem> RequestorWantsOpen<E, D, ReqItem, ResItem> {
             decoder,
             decompression: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
-            _req_marker: prev._req_marker,
             _res_marker: PhantomData,
         }
     }
@@ -93,17 +89,16 @@ impl<D, ReqItem> ReplierWantsReplyEncoder<D, ReqItem> {
 }
 
 #[doc(hidden)]
-pub struct ReplierWantsHandler<D, E, ReqItem, ResItem> {
+pub struct ReplierWantsHandler<D, E, ReqItem> {
     pub(crate) endpoint: String,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
     pub(crate) encoder: E,
     pub(crate) compression: Option<Comp>,
     pub(crate) _req_marker: PhantomData<ReqItem>,
-    pub(crate) _res_marker: PhantomData<ResItem>,
 }
 
-impl<D, E, ReqItem, ResItem> ReplierWantsHandler<D, E, ReqItem, ResItem> {
+impl<D, E, ReqItem> ReplierWantsHandler<D, E, ReqItem> {
     pub fn new(prev: ReplierWantsReplyEncoder<D, ReqItem>, encoder: E) -> Self {
         Self {
             endpoint: prev.endpoint,
@@ -112,13 +107,12 @@ impl<D, E, ReqItem, ResItem> ReplierWantsHandler<D, E, ReqItem, ResItem> {
             encoder,
             compression: None,
             _req_marker: prev._req_marker,
-            _res_marker: PhantomData,
         }
     }
 }
 
 #[doc(hidden)]
-pub struct ReplierWantsOpen<D, E, F, ReqItem, ResItem> {
+pub struct ReplierWantsOpen<D, E, F, ReqItem> {
     pub(crate) endpoint: String,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
@@ -126,11 +120,10 @@ pub struct ReplierWantsOpen<D, E, F, ReqItem, ResItem> {
     pub(crate) compression: Option<Comp>,
     pub(crate) handler: Pin<Box<F>>,
     pub(crate) _req_marker: PhantomData<ReqItem>,
-    pub(crate) _res_marker: PhantomData<ResItem>,
 }
 
-impl<D, E, F, ReqItem, ResItem> ReplierWantsOpen<D, E, F, ReqItem, ResItem> {
-    pub fn new(prev: ReplierWantsHandler<D, E, ReqItem, ResItem>, handler: F) -> Self {
+impl<D, E, F, ReqItem> ReplierWantsOpen<D, E, F, ReqItem> {
+    pub fn new(prev: ReplierWantsHandler<D, E, ReqItem>, handler: F) -> Self {
         Self {
             endpoint: prev.endpoint,
             decoder: prev.decoder,
@@ -139,7 +132,6 @@ impl<D, E, F, ReqItem, ResItem> ReplierWantsOpen<D, E, F, ReqItem, ResItem> {
             compression: prev.compression,
             handler: Box::pin(handler),
             _req_marker: prev._req_marker,
-            _res_marker: prev._res_marker,
         }
     }
 }

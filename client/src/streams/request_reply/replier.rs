@@ -55,10 +55,10 @@ impl<D, ReqItem> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
     ///
     /// An encoder can be any type implementing
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
-    pub fn with_reply_encoder<E, ResItem>(
+    pub fn with_reply_encoder<E>(
         self,
         encoder: E,
-    ) -> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, ResItem>> {
+    ) -> StreamBuilder<ReplierWantsHandler<D, E, ReqItem>> {
         let next_state = ReplierWantsHandler::new(self.state, encoder);
 
         StreamBuilder {
@@ -68,7 +68,7 @@ impl<D, ReqItem> StreamBuilder<ReplierWantsReplyEncoder<D, ReqItem>> {
     }
 }
 
-impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, ResItem>> {
+impl<D, E, ReqItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem>> {
     /// Specifies the compression implementation a [Replier] uses for
     /// compressing outgoing replies.
     ///
@@ -93,14 +93,13 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
     pub fn with_handler<Err, F, Fut>(
         self,
         handler: F,
-    ) -> StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem, ResItem>>
+    ) -> StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem>>
     where
         D: MessageDecoder<ReqItem> + Send + Unpin,
-        E: MessageEncoder<ResItem> + Send + Unpin,
+        E: MessageEncoder + Send + Unpin,
         F: FnMut(ReqItem) -> Fut,
-        Fut: Future<Output = std::result::Result<ResItem, Err>>,
+        Fut: Future<Output = std::result::Result<E::Item, Err>>,
         ReqItem: Unpin + Send,
-        ResItem: Unpin + Send,
     {
         let next_state = ReplierWantsOpen::new(self.state, handler);
 
@@ -112,18 +111,16 @@ impl<D, E, ReqItem, ResItem> StreamBuilder<ReplierWantsHandler<D, E, ReqItem, Re
 }
 
 #[async_trait]
-impl<D, E, Err, F, Fut, ReqItem, ResItem> Open
-    for StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem, ResItem>>
+impl<D, E, Err, F, Fut, ReqItem> Open for StreamBuilder<ReplierWantsOpen<D, E, F, ReqItem>>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
-    E: MessageEncoder<ResItem> + Send + Unpin,
+    E: MessageEncoder + Send + Unpin,
     Err: Debug,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = std::result::Result<ResItem, Err>>,
+    Fut: Future<Output = std::result::Result<E::Item, Err>>,
     ReqItem: Unpin + Send,
-    ResItem: Unpin + Send,
 {
-    type Output = KeepAlive<Replier<E, D, F, ReqItem, ResItem>>;
+    type Output = KeepAlive<Replier<E, D, F, ReqItem>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.endpoint.as_str())?;
@@ -154,7 +151,7 @@ where
 /// When a Replier stream is spawned, it will bind to the specified topic. A consequence of this is
 /// that only one active stream can bind to a namespace/topic combination at any given time. Trying
 /// to bind to an already occupied topic will result in a runtime error.
-pub struct Replier<E, D, F, ReqItem, ResItem> {
+pub struct Replier<E, D, F, ReqItem> {
     client: Client,
     stream: BiStream,
     headers: ReplierPayload,
@@ -164,18 +161,16 @@ pub struct Replier<E, D, F, ReqItem, ResItem> {
     decompression: Option<Decomp>,
     handler: Pin<Box<F>>,
     _req_marker: PhantomData<ReqItem>,
-    _res_marker: PhantomData<ResItem>,
 }
 
-impl<D, E, Err, F, Fut, ReqItem, ResItem> Replier<E, D, F, ReqItem, ResItem>
+impl<D, E, Err, F, Fut, ReqItem> Replier<E, D, F, ReqItem>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
-    E: MessageEncoder<ResItem> + Send + Unpin,
+    E: MessageEncoder + Send + Unpin,
     Err: Debug,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = std::result::Result<ResItem, Err>>,
+    Fut: Future<Output = std::result::Result<E::Item, Err>>,
     ReqItem: Unpin + Send,
-    ResItem: Unpin + Send,
 {
     async fn spawn(
         client: Client,
@@ -199,7 +194,6 @@ where
             decompression,
             handler,
             _req_marker: PhantomData,
-            _res_marker: PhantomData,
         };
 
         Ok(KeepAlive::new(replier, client.backoff_strategy))
@@ -235,7 +229,7 @@ where
             .map_err(CodecError::DecodeFailure)?)
     }
 
-    fn encode_message(&mut self, item: ResItem) -> Result<Bytes> {
+    fn encode_message(&mut self, item: E::Item) -> Result<Bytes> {
         let mut encoded = self
             .encoder
             .encode(item)
@@ -297,15 +291,14 @@ where
     }
 }
 
-impl<D, E, Err, F, Fut, ReqItem, ResItem> KeepAliveStream for Replier<E, D, F, ReqItem, ResItem>
+impl<D, E, Err, F, Fut, ReqItem> KeepAliveStream for Replier<E, D, F, ReqItem>
 where
     D: MessageDecoder<ReqItem> + Send + Unpin,
-    E: MessageEncoder<ResItem> + Send + Unpin,
+    E: MessageEncoder + Send + Unpin,
     Err: Debug,
     F: FnMut(ReqItem) -> Fut + Send + Unpin,
-    Fut: Future<Output = std::result::Result<ResItem, Err>>,
+    Fut: Future<Output = std::result::Result<E::Item, Err>>,
     ReqItem: Unpin + Send,
-    ResItem: Unpin + Send,
 {
     type Headers = ReplierPayload;
 

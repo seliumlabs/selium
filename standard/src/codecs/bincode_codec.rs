@@ -2,30 +2,11 @@ use crate::traits::codec::{MessageDecoder, MessageEncoder};
 use anyhow::Result;
 use bytes::{Buf, Bytes, BytesMut};
 use serde::{de::DeserializeOwned, Serialize};
-use std::marker::PhantomData;
 
 /// A basic codec that uses [bincode] to serialize and deserialize
 /// binary message payloads.
-#[derive(Debug)]
-pub struct BincodeCodec<Item> {
-    _marker: PhantomData<Item>,
-}
-
-impl<Item> Clone for BincodeCodec<Item> {
-    fn clone(&self) -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<T> Default for BincodeCodec<T> {
-    fn default() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
+#[derive(Debug, Default, Clone)]
+pub struct BincodeCodec;
 
 /// Encodes any `Item` implementing [Serialize](serde::Serialize) into a binary format via
 /// [bincode].
@@ -33,8 +14,10 @@ impl<T> Default for BincodeCodec<T> {
 /// # Errors
 ///
 /// Returns [Err] if `item` fails to serialize.
-impl<Item: Serialize> MessageEncoder<Item> for BincodeCodec<Item> {
-    fn encode(&self, item: Item) -> Result<Bytes> {
+impl<Item: Serialize + Clone> MessageEncoder for BincodeCodec {
+    type Item = Item;
+
+    fn encode(&self, item: Self::Item) -> Result<Bytes> {
         Ok(bincode::serialize(&item)?.into())
     }
 }
@@ -45,8 +28,10 @@ impl<Item: Serialize> MessageEncoder<Item> for BincodeCodec<Item> {
 /// # Errors
 ///
 /// Returns [Err] if the [BytesMut](bytes::BytesMut) payload fails to deserialize into `Item`.
-impl<Item: DeserializeOwned> MessageDecoder<Item> for BincodeCodec<Item> {
-    fn decode(&self, buffer: &mut BytesMut) -> Result<Item> {
+impl<Item: DeserializeOwned + Clone> MessageDecoder for BincodeCodec {
+    type Item = Item;
+
+    fn decode(&self, buffer: &mut BytesMut) -> Result<Self::Item> {
         Ok(bincode::deserialize_from(buffer.reader())?)
     }
 }

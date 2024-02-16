@@ -7,7 +7,9 @@ use bytes::{Bytes, BytesMut};
 pub struct StringCodec;
 
 /// Encodes a [&str] slice into [Bytes](bytes::Bytes).
-impl MessageEncoder<String> for StringCodec {
+impl MessageEncoder for StringCodec {
+    type Item = String;
+
     fn encode(&self, item: String) -> Result<Bytes> {
         Ok(item.into())
     }
