@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, Stream, StreamExt};
 use selium_protocol::utils::decode_message_batch;
-use selium_protocol::{BiStream, Frame, SubscriberPayload, TopicName};
+use selium_protocol::{BiStream, Frame, Offset, SubscriberPayload, TopicName};
 use selium_std::errors::{CodecError, Result};
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
@@ -46,6 +46,11 @@ impl<D, Item> StreamBuilder<SubscriberWantsOpen<D, Item>> {
         T: Decompress + Send + Sync + 'static,
     {
         self.state.decompression = Some(Arc::new(decomp));
+        self
+    }
+
+    pub fn seek(mut self, offset: Offset) -> Self {
+        self.state.offset = offset;
         self
     }
 }
@@ -84,6 +89,7 @@ where
             topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
+            offset: self.state.offset,
         };
 
         let subscriber = Subscriber::spawn(

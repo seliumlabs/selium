@@ -179,7 +179,7 @@ where
 
     /// Spawns a new [Publisher] stream with the same configuration as the current stream, without
     /// having to specify the same configuration options again.
-    ///  
+    ///
     /// This method is especially convenient in cases where multiple streams will be concurrently
     /// publishing messages to the same topic, via cooperative-multitasking, e.g. within [tokio] tasks
     /// spawned by [tokio::spawn].

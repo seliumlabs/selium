@@ -1,3 +1,5 @@
+use selium_protocol::Offset;
+
 use crate::{
     batching::BatchConfig,
     streams::aliases::{Comp, Decomp},
@@ -23,6 +25,7 @@ pub struct SubscriberWantsOpen<D, Item> {
     pub(crate) common: PubSubCommon,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
+    pub(crate) offset: Offset,
     _marker: PhantomData<Item>,
 }
 
@@ -32,6 +35,7 @@ impl<D, Item> SubscriberWantsOpen<D, Item> {
             common: prev.common,
             decoder,
             decompression: None,
+            offset: Offset::default(),
             _marker: PhantomData,
         }
     }

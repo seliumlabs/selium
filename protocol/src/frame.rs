@@ -1,4 +1,4 @@
-use crate::{Operation, TopicName};
+use crate::{Offset, Operation, TopicName};
 use bytes::{BufMut, Bytes, BytesMut};
 use selium_std::errors::{ProtocolError, Result, SeliumError};
 use serde::{Deserialize, Serialize};
@@ -152,6 +152,7 @@ pub struct SubscriberPayload {
     pub topic: TopicName,
     pub retention_policy: u64,
     pub operations: Vec<Operation>,
+    pub offset: Offset,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
