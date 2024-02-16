@@ -27,8 +27,7 @@ pub enum Response {
     Echo(String),
 }
 
-// TODO: Improve generic types for streams, as this is too unwieldy for library developers.
-type Req = KeepAlive<Requestor<BincodeCodec<Request>, BincodeCodec<Response>, Request, Response>>;
+type Req = KeepAlive<Requestor<BincodeCodec<Request>, BincodeCodec<Response>>>;
 
 pub struct TestClient {
     client: Client,

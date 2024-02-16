@@ -79,7 +79,8 @@ mod tests {
     use crate::error_codes::UNKNOWN_ERROR;
     use crate::utils::encode_message_batch;
     use crate::{
-        ErrorPayload, MessagePayload, Operation, PublisherPayload, SubscriberPayload, TopicName,
+        ErrorPayload, MessagePayload, Offset, Operation, PublisherPayload, SubscriberPayload,
+        TopicName,
     };
     use bytes::Bytes;
 
@@ -95,11 +96,12 @@ mod tests {
                 Operation::Map("second/module.wasm".into()),
                 Operation::Filter("third/module.wasm".into()),
             ],
+            offset: Offset::default(),
         });
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from_static(b"\0\0\0\0\0\0\0\x86\x01\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm");
+        let expected = Bytes::from_static(b"\0\0\0\0\0\0\0\x92\x01\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm\x01\0\0\0\0\0\0\0\0\0\0\0");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -230,7 +232,7 @@ mod tests {
     #[test]
     fn decodes_register_subscriber_frame() {
         let mut codec = MessageCodec;
-        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x86\x01\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm"[..]);
+        let mut src = BytesMut::from(&b"\0\0\0\0\0\0\0\x92\x01\t\0\0\0\0\0\0\0namespace\x05\0\0\0\0\0\0\0topic\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\0\0\0\0\x11\0\0\0\0\0\0\0first/module.wasm\0\0\0\0\x12\0\0\0\0\0\0\0second/module.wasm\x01\0\0\0\x11\0\0\0\0\0\0\0third/module.wasm\x01\0\0\0\0\0\0\0\0\0\0\0"[..]);
         let topic = TopicName::try_from("/namespace/topic").unwrap();
 
         let expected = Frame::RegisterSubscriber(SubscriberPayload {
@@ -241,6 +243,7 @@ mod tests {
                 Operation::Map("second/module.wasm".into()),
                 Operation::Filter("third/module.wasm".into()),
             ],
+            offset: Offset::default(),
         });
 
         let result = codec.decode(&mut src).unwrap().unwrap();
