@@ -4,7 +4,7 @@ use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct StockEvent {
     ticker: String,
     change: f64,
@@ -17,6 +17,11 @@ impl StockEvent {
             change,
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct SomeStock {
+    other: String,
 }
 
 #[tokio::main]

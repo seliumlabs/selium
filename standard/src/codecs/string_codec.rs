@@ -21,7 +21,9 @@ impl MessageEncoder for StringCodec {
 ///
 /// Returns [Err] if a valid UTF-8 [String] cannot be constructed from the
 /// [BytesMut](bytes::BytesMut) slice.
-impl MessageDecoder<String> for StringCodec {
+impl MessageDecoder for StringCodec {
+    type Item = String;
+
     fn decode(&self, buffer: &mut BytesMut) -> Result<String> {
         Ok(String::from_utf8(buffer[..].into())?)
     }

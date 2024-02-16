@@ -14,7 +14,7 @@ pub trait MessageEncoder {
 ///
 /// See [codecs](crate::codecs) for more information.
 pub trait MessageDecoder {
-    type Item: Clone;
+    type Item;
 
     fn decode(&self, buffer: &mut BytesMut) -> Result<Self::Item>;
 }

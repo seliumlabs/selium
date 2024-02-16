@@ -1,5 +1,5 @@
 use crate::streams::aliases::{Comp, Decomp};
-use std::{marker::PhantomData, pin::Pin, time::Duration};
+use std::{pin::Pin, time::Duration};
 
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -32,17 +32,16 @@ impl<E> RequestorWantsReplyDecoder<E> {
     }
 }
 
-pub struct RequestorWantsOpen<E, D, ResItem> {
+pub struct RequestorWantsOpen<E, D> {
     pub(crate) endpoint: String,
     pub(crate) encoder: E,
     pub(crate) compression: Option<Comp>,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
     pub(crate) request_timeout: Duration,
-    _res_marker: PhantomData<ResItem>,
 }
 
-impl<E, D, ResItem> RequestorWantsOpen<E, D, ResItem> {
+impl<E, D> RequestorWantsOpen<E, D> {
     pub fn new(prev: RequestorWantsReplyDecoder<E>, decoder: D) -> Self {
         Self {
             endpoint: prev.endpoint,
@@ -51,7 +50,6 @@ impl<E, D, ResItem> RequestorWantsOpen<E, D, ResItem> {
             decoder,
             decompression: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
-            _res_marker: PhantomData,
         }
     }
 }
@@ -70,60 +68,55 @@ impl ReplierWantsRequestDecoder {
 }
 
 #[doc(hidden)]
-pub struct ReplierWantsReplyEncoder<D, ReqItem> {
+pub struct ReplierWantsReplyEncoder<D> {
     pub(crate) endpoint: String,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
-    pub(crate) _req_marker: PhantomData<ReqItem>,
 }
 
-impl<D, ReqItem> ReplierWantsReplyEncoder<D, ReqItem> {
+impl<D> ReplierWantsReplyEncoder<D> {
     pub fn new(prev: ReplierWantsRequestDecoder, decoder: D) -> Self {
         Self {
             endpoint: prev.endpoint,
             decoder,
             decompression: None,
-            _req_marker: PhantomData,
         }
     }
 }
 
 #[doc(hidden)]
-pub struct ReplierWantsHandler<D, E, ReqItem> {
+pub struct ReplierWantsHandler<D, E> {
     pub(crate) endpoint: String,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
     pub(crate) encoder: E,
     pub(crate) compression: Option<Comp>,
-    pub(crate) _req_marker: PhantomData<ReqItem>,
 }
 
-impl<D, E, ReqItem> ReplierWantsHandler<D, E, ReqItem> {
-    pub fn new(prev: ReplierWantsReplyEncoder<D, ReqItem>, encoder: E) -> Self {
+impl<D, E> ReplierWantsHandler<D, E> {
+    pub fn new(prev: ReplierWantsReplyEncoder<D>, encoder: E) -> Self {
         Self {
             endpoint: prev.endpoint,
             decoder: prev.decoder,
             decompression: prev.decompression,
             encoder,
             compression: None,
-            _req_marker: prev._req_marker,
         }
     }
 }
 
 #[doc(hidden)]
-pub struct ReplierWantsOpen<D, E, F, ReqItem> {
+pub struct ReplierWantsOpen<D, E, F> {
     pub(crate) endpoint: String,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
     pub(crate) encoder: E,
     pub(crate) compression: Option<Comp>,
     pub(crate) handler: Pin<Box<F>>,
-    pub(crate) _req_marker: PhantomData<ReqItem>,
 }
 
-impl<D, E, F, ReqItem> ReplierWantsOpen<D, E, F, ReqItem> {
-    pub fn new(prev: ReplierWantsHandler<D, E, ReqItem>, handler: F) -> Self {
+impl<D, E, F> ReplierWantsOpen<D, E, F> {
+    pub fn new(prev: ReplierWantsHandler<D, E>, handler: F) -> Self {
         Self {
             endpoint: prev.endpoint,
             decoder: prev.decoder,
@@ -131,7 +124,6 @@ impl<D, E, F, ReqItem> ReplierWantsOpen<D, E, F, ReqItem> {
             encoder: prev.encoder,
             compression: prev.compression,
             handler: Box::pin(handler),
-            _req_marker: prev._req_marker,
         }
     }
 }
