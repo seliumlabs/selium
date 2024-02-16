@@ -19,11 +19,6 @@ impl StockEvent {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct SomeStock {
-    other: String,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let connection = selium::custom()

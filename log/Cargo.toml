@@ -13,3 +13,5 @@ categories.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+memmap2 = "0.9"
+selium-protocol = { version = "0.2", path = "../protocol" }
