@@ -53,10 +53,27 @@ pub struct MutSegment {
     data: MutData,
     base_offset: u64,
     end_offset: u64,
-    created_timestamp: u64,
 }
 
 impl MutSegment {
+    pub async fn open(
+        path: impl AsRef<Path>,
+        base_offset: u64,
+        config: SharedLogConfig,
+    ) -> Result<Self> {
+        let (index_path, data_path) = get_segment_paths(path, base_offset);
+        let index = MutIndex::open(index_path, config.clone()).await?;
+        let data = MutData::open(data_path, config).await?;
+        let end_offset = index.next_offset() as u64;
+
+        Ok(Self {
+            index,
+            data,
+            base_offset,
+            end_offset,
+        })
+    }
+
     pub async fn create(
         path: impl AsRef<Path>,
         base_offset: u64,
@@ -71,7 +88,6 @@ impl MutSegment {
             data,
             base_offset,
             end_offset: 0,
-            created_timestamp: 0,
         })
     }
 

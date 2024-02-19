@@ -39,13 +39,12 @@ pub struct MutData {
 }
 
 impl MutData {
-    pub async fn create(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
+    pub async fn open(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
         let path = path.as_ref();
 
         let file = OpenOptions::new()
-            .create(true)
-            .write(true)
             .read(true)
+            .write(true)
             .open(&path)
             .await?;
 
@@ -56,6 +55,26 @@ impl MutData {
             path: path.to_owned(),
             writer,
             position,
+            config,
+        })
+    }
+
+    pub async fn create(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
+        let path = path.as_ref();
+
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .read(true)
+            .open(&path)
+            .await?;
+
+        let writer = BufWriter::new(file);
+
+        Ok(Self {
+            path: path.to_owned(),
+            writer,
+            position: 0,
             config,
         })
     }

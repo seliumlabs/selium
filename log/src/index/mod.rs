@@ -41,6 +41,10 @@ impl Index {
 
         Ok(entry)
     }
+
+    pub fn next_offset(&self) -> u32 {
+        self.next_offset
+    }
 }
 
 #[derive(Debug)]
@@ -91,5 +95,9 @@ impl MutIndex {
             .find(|entry| entry.relative_offset() == relative_offset);
 
         Ok(entry)
+    }
+
+    pub fn next_offset(&self) -> u32 {
+        self.next_offset
     }
 }
