@@ -1,3 +1,7 @@
+use bytes::Buf;
+
+pub const SIZE_OF_INDEX_ENTRY: usize = 20;
+
 /// Represents an entry in a corresponding index file.
 #[derive(Debug)]
 pub struct IndexEntry {
@@ -15,6 +19,19 @@ pub struct IndexEntry {
 
 impl IndexEntry {
     pub fn new(relative_offset: u32, timestamp: u64, physical_position: u64) -> Self {
+        Self {
+            relative_offset,
+            timestamp,
+            physical_position,
+        }
+    }
+
+    pub fn from_slice(slice: &[u8]) -> Self {
+        let mut slice = slice;
+        let relative_offset = slice.get_u32();
+        let timestamp = slice.get_u64();
+        let physical_position = slice.get_u64();
+
         Self {
             relative_offset,
             timestamp,
