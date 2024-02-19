@@ -1,7 +1,7 @@
 use super::entry::SIZE_OF_INDEX_ENTRY;
 use crate::{index::IndexEntry, traits::MmapCommon};
 use anyhow::{anyhow, Result};
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::Buf;
 use std::{ops::Deref, path::Path};
 use tokio::fs::OpenOptions;
 
@@ -51,14 +51,9 @@ impl MmapMut {
     }
 
     pub fn push(&mut self, entry: IndexEntry) {
-        let mut bytes = BytesMut::with_capacity(SIZE_OF_INDEX_ENTRY);
-        bytes.put_u32(entry.relative_offset());
-        bytes.put_u64(entry.timestamp());
-        bytes.put_u64(entry.physical_position());
-
         let slice_start = entry.relative_offset() as usize * SIZE_OF_INDEX_ENTRY;
         let slice_end = slice_start + SIZE_OF_INDEX_ENTRY;
-        self.0[slice_start..slice_end].copy_from_slice(&bytes);
+        self.0[slice_start..slice_end].copy_from_slice(&entry.into_slice());
     }
 }
 

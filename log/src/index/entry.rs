@@ -1,4 +1,4 @@
-use bytes::Buf;
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 pub const SIZE_OF_INDEX_ENTRY: usize = 20;
 
@@ -37,6 +37,14 @@ impl IndexEntry {
             timestamp,
             physical_position,
         }
+    }
+
+    pub fn into_slice(self) -> Bytes {
+        let mut bytes = BytesMut::with_capacity(SIZE_OF_INDEX_ENTRY);
+        bytes.put_u32(self.relative_offset);
+        bytes.put_u64(self.timestamp);
+        bytes.put_u64(self.physical_position);
+        bytes.into()
     }
 
     pub fn relative_offset(&self) -> u32 {

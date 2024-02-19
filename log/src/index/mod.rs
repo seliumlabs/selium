@@ -12,17 +12,22 @@ use std::path::Path;
 pub struct Index {
     mmap: Mmap,
     next_offset: u32,
+    config: SharedLogConfig,
 }
 
 impl Index {
-    pub fn new(mmap: Mmap, next_offset: u32) -> Self {
-        Self { mmap, next_offset }
+    pub fn new(mmap: Mmap, next_offset: u32, config: SharedLogConfig) -> Self {
+        Self {
+            mmap,
+            next_offset,
+            config,
+        }
     }
 
-    pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn open(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
         let mmap = Mmap::load(path).await?;
         let next_offset = mmap.get_next_offset()?;
-        Ok(Self::new(mmap, next_offset))
+        Ok(Self::new(mmap, next_offset, config))
     }
 
     pub fn lookup(&self, relative_offset: u32) -> Result<Option<IndexEntry>> {
