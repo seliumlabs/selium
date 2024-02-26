@@ -14,8 +14,8 @@ categories.workspace = true
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 colored = "2.0"
-rcgen = "0.11"
-rustls = "0.21"
+rcgen = "0.12"
+rustls = "0.22"
 time = "0.3"
