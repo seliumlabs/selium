@@ -1,6 +1,7 @@
-mod config;
-mod data;
-mod index;
-mod message_log;
-mod segment;
-mod traits;
+pub mod config;
+pub mod data;
+pub mod index;
+pub mod message;
+pub mod message_log;
+pub mod segment;
+pub mod traits;

@@ -1,6 +1,6 @@
 use super::entry::SIZE_OF_INDEX_ENTRY;
-use crate::{index::IndexEntry, traits::MmapCommon};
-use anyhow::{anyhow, Result};
+use crate::{config::SharedLogConfig, index::IndexEntry, traits::MmapCommon};
+use anyhow::Result;
 use bytes::Buf;
 use std::{ops::Deref, path::Path};
 use tokio::fs::OpenOptions;
@@ -21,7 +21,7 @@ impl MmapCommon for Mmap {
         find(&self.0, f)
     }
 
-    fn get_next_offset(&self) -> Result<u32> {
+    fn get_next_offset(&self) -> u32 {
         get_next_offset(&self.0)
     }
 }
@@ -38,7 +38,7 @@ impl Deref for Mmap {
 pub struct MmapMut(memmap2::MmapMut);
 
 impl MmapMut {
-    pub async fn load(path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn load(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -46,12 +46,15 @@ impl MmapMut {
             .open(path)
             .await?;
 
+        let length = config.max_index_entries() as u64 * SIZE_OF_INDEX_ENTRY as u64;
+        file.set_len(length).await?;
         let mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
+
         Ok(Self(mmap))
     }
 
     pub fn push(&mut self, entry: IndexEntry) {
-        let slice_start = entry.relative_offset() as usize * SIZE_OF_INDEX_ENTRY;
+        let slice_start = (entry.relative_offset() - 1) as usize * SIZE_OF_INDEX_ENTRY;
         let slice_end = slice_start + SIZE_OF_INDEX_ENTRY;
         self.0[slice_start..slice_end].copy_from_slice(&entry.into_slice());
     }
@@ -70,7 +73,7 @@ impl MmapCommon for MmapMut {
         find(&self.0, f)
     }
 
-    fn get_next_offset(&self) -> Result<u32> {
+    fn get_next_offset(&self) -> u32 {
         get_next_offset(&self.0)
     }
 }
@@ -89,22 +92,18 @@ fn find<F: Fn(&IndexEntry) -> bool>(mmap: &[u8], f: F) -> Option<IndexEntry> {
     None
 }
 
-fn get_next_offset(mmap: &[u8]) -> Result<u32> {
-    // If the memory mapped file is empty, there are no relative offsets in the index yet.
-    if mmap.is_empty() {
-        return Ok(1);
-    }
-
+fn get_next_offset(mmap: &[u8]) -> u32 {
     for i in get_offset_range(mmap) {
         let offset = i * SIZE_OF_INDEX_ENTRY;
         let mut slice = get_entry_slice(mmap, offset);
 
-        if slice.get_u64() == 0 {
-            return Ok(i as u32);
+        if slice.get_u32() == 0 {
+            return (i + 1) as u32;
         }
     }
 
-    Err(anyhow!("Unable to find free offset in index"))
+    // If the memory mapped file is empty, there are no relative offsets in the index yet.
+    1
 }
 
 fn get_entry_slice(mmap: &[u8], offset: usize) -> &[u8] {

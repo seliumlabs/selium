@@ -26,7 +26,7 @@ impl Index {
 
     pub async fn open(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
         let mmap = Mmap::load(path).await?;
-        let next_offset = mmap.get_next_offset()?;
+        let next_offset = mmap.get_next_offset();
         Ok(Self::new(mmap, next_offset, config))
     }
 
@@ -64,13 +64,13 @@ impl MutIndex {
     }
 
     pub async fn create(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
-        let mmap = MmapMut::load(path).await?;
-        Ok(Self::new(mmap, 0, config))
+        let mmap = MmapMut::load(path, config.clone()).await?;
+        Ok(Self::new(mmap, 1, config))
     }
 
     pub async fn open(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
-        let mmap = MmapMut::load(path).await?;
-        let next_offset = mmap.get_next_offset()?;
+        let mmap = MmapMut::load(path, config.clone()).await?;
+        let next_offset = mmap.get_next_offset();
         Ok(Self::new(mmap, next_offset, config))
     }
 
