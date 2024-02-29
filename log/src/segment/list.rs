@@ -1,8 +1,7 @@
 use super::Segment;
 use crate::config::SharedLogConfig;
 use crate::message::Message;
-use crate::traits::SegmentCommon;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::StreamExt;
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -21,6 +20,12 @@ impl Default for SegmentList {
 impl SegmentList {
     pub fn new(segments: BTreeMap<u64, Segment>) -> Self {
         Self(Arc::new(RwLock::new(segments)))
+    }
+
+    pub async fn create(config: SharedLogConfig) -> Result<Self> {
+        let hot_segment = Segment::create(0, config).await?;
+        let segments = BTreeMap::from([(0, hot_segment)]);
+        Ok(Self::new(segments))
     }
 
     pub async fn from_offsets(offsets: &[u64], config: SharedLogConfig) -> Result<Self> {
@@ -44,16 +49,6 @@ impl SegmentList {
         Ok(Self::new(segments))
     }
 
-    pub async fn push(&self, segment: Segment) {
-        let mut list = self.0.write().await;
-        list.insert(segment.base_offset(), segment);
-    }
-
-    pub async fn remove(&self, offset: u64) {
-        let mut list = self.0.write().await;
-        list.remove(&offset);
-    }
-
     pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<Vec<Message>> {
         let list = self.0.read().await;
 
@@ -67,5 +62,22 @@ impl SegmentList {
         } else {
             Ok(vec![])
         }
+    }
+
+    pub async fn push(&self, segment: Segment) {
+        let mut list = self.0.write().await;
+        list.insert(segment.base_offset(), segment);
+    }
+
+    pub async fn remove(&self, offset: u64) {
+        let mut list = self.0.write().await;
+        list.remove(&offset);
+    }
+
+    pub async fn write(&mut self, message: Message) -> Result<()> {
+        let mut list = self.0.write().await;
+        let (_, segment) = list.iter_mut().last().context("Segment list is empty")?;
+        segment.write(message).await?;
+        Ok(())
     }
 }

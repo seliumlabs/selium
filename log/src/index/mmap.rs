@@ -1,44 +1,24 @@
 use super::entry::SIZE_OF_INDEX_ENTRY;
-use crate::{config::SharedLogConfig, index::IndexEntry, traits::MmapCommon};
+use crate::{config::SharedLogConfig, index::IndexEntry};
 use anyhow::Result;
 use bytes::Buf;
-use std::{ops::Deref, path::Path};
+use std::{
+    ops::{Deref, DerefMut},
+    path::Path,
+};
 use tokio::fs::OpenOptions;
 
 #[derive(Debug)]
-pub struct Mmap(memmap2::Mmap);
+pub struct Mmap(memmap2::MmapMut);
 
 impl Mmap {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self> {
-        let file = OpenOptions::new().read(true).open(path).await?;
-        let mmap = unsafe { memmap2::Mmap::map(&file)? };
+        let file = OpenOptions::new().write(true).read(true).open(path).await?;
+        let mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
         Ok(Self(mmap))
     }
-}
 
-impl MmapCommon for Mmap {
-    fn find<F: Fn(&IndexEntry) -> bool>(&self, f: F) -> Option<IndexEntry> {
-        find(&self.0, f)
-    }
-
-    fn get_next_offset(&self) -> u32 {
-        get_next_offset(&self.0)
-    }
-}
-
-impl Deref for Mmap {
-    type Target = memmap2::Mmap;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Debug)]
-pub struct MmapMut(memmap2::MmapMut);
-
-impl MmapMut {
-    pub async fn load(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
+    pub async fn create(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -58,9 +38,58 @@ impl MmapMut {
         let slice_end = slice_start + SIZE_OF_INDEX_ENTRY;
         self.0[slice_start..slice_end].copy_from_slice(&entry.into_slice());
     }
+
+    pub fn find<F: Fn(&IndexEntry) -> bool>(&self, f: F) -> Option<IndexEntry> {
+        for relative_offset in self.get_offset_range() {
+            let index_pos = relative_offset * SIZE_OF_INDEX_ENTRY;
+            let slice = self.get_entry_slice(index_pos);
+            let entry = IndexEntry::from_slice(slice);
+
+            if f(&entry) {
+                return Some(entry);
+            };
+        }
+
+        None
+    }
+
+    pub fn get_current_offset(&self) -> u32 {
+        let last_offset = self.get_last_offset();
+
+        if last_offset != 0 {
+            return last_offset;
+        }
+
+        for i in self.get_offset_range() {
+            let offset = i * SIZE_OF_INDEX_ENTRY;
+            let mut slice = self.get_entry_slice(offset);
+
+            if slice.get_u32() == 0 {
+                return i as u32;
+            }
+        }
+
+        // If the memory mapped file is empty, there are no relative offsets in the index yet.
+        1
+    }
+
+    fn get_last_offset(&self) -> u32 {
+        let range_start = self.0.len() - SIZE_OF_INDEX_ENTRY;
+        let mut slice = &self.0[range_start..];
+        slice.get_u32()
+    }
+
+    fn get_entry_slice(&self, offset: usize) -> &[u8] {
+        let length = offset + SIZE_OF_INDEX_ENTRY;
+        &self.0[offset..length]
+    }
+
+    fn get_offset_range(&self) -> std::ops::Range<usize> {
+        0..&self.0.len() / SIZE_OF_INDEX_ENTRY
+    }
 }
 
-impl Deref for MmapMut {
+impl Deref for Mmap {
     type Target = memmap2::MmapMut;
 
     fn deref(&self) -> &Self::Target {
@@ -68,49 +97,8 @@ impl Deref for MmapMut {
     }
 }
 
-impl MmapCommon for MmapMut {
-    fn find<F: Fn(&IndexEntry) -> bool>(&self, f: F) -> Option<IndexEntry> {
-        find(&self.0, f)
+impl DerefMut for Mmap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
-
-    fn get_next_offset(&self) -> u32 {
-        get_next_offset(&self.0)
-    }
-}
-
-fn find<F: Fn(&IndexEntry) -> bool>(mmap: &[u8], f: F) -> Option<IndexEntry> {
-    for relative_offset in get_offset_range(mmap) {
-        let index_pos = relative_offset * SIZE_OF_INDEX_ENTRY;
-        let slice = get_entry_slice(mmap, index_pos);
-        let entry = IndexEntry::from_slice(slice);
-
-        if f(&entry) {
-            return Some(entry);
-        };
-    }
-
-    None
-}
-
-fn get_next_offset(mmap: &[u8]) -> u32 {
-    for i in get_offset_range(mmap) {
-        let offset = i * SIZE_OF_INDEX_ENTRY;
-        let mut slice = get_entry_slice(mmap, offset);
-
-        if slice.get_u32() == 0 {
-            return (i + 1) as u32;
-        }
-    }
-
-    // If the memory mapped file is empty, there are no relative offsets in the index yet.
-    1
-}
-
-fn get_entry_slice(mmap: &[u8], offset: usize) -> &[u8] {
-    let length = offset + SIZE_OF_INDEX_ENTRY;
-    &mmap[offset..length]
-}
-
-fn get_offset_range(mmap: &[u8]) -> std::ops::Range<usize> {
-    0..mmap.len() / SIZE_OF_INDEX_ENTRY
 }

@@ -1,92 +1,53 @@
 mod entry;
 mod mmap;
 
-pub use entry::IndexEntry;
-
-use crate::{config::SharedLogConfig, traits::MmapCommon};
+use crate::config::SharedLogConfig;
 use anyhow::Result;
-use mmap::{Mmap, MmapMut};
+pub use entry::IndexEntry;
+use mmap::Mmap;
 use std::path::Path;
 
 #[derive(Debug)]
 pub struct Index {
     mmap: Mmap,
-    next_offset: u32,
+    current_offset: u32,
     config: SharedLogConfig,
 }
 
 impl Index {
-    pub fn new(mmap: Mmap, next_offset: u32, config: SharedLogConfig) -> Self {
+    pub fn new(mmap: Mmap, current_offset: u32, config: SharedLogConfig) -> Self {
         Self {
             mmap,
-            next_offset,
+            current_offset,
             config,
         }
     }
 
     pub async fn open(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
         let mmap = Mmap::load(path).await?;
-        let next_offset = mmap.get_next_offset();
+        let next_offset = mmap.get_current_offset();
         Ok(Self::new(mmap, next_offset, config))
-    }
-
-    pub fn lookup(&self, relative_offset: u32) -> Result<Option<IndexEntry>> {
-        if relative_offset > self.next_offset {
-            return Ok(None);
-        }
-
-        let entry = self
-            .mmap
-            .find(|entry| entry.relative_offset() == relative_offset);
-
-        Ok(entry)
-    }
-
-    pub fn next_offset(&self) -> u32 {
-        self.next_offset
-    }
-}
-
-#[derive(Debug)]
-pub struct MutIndex {
-    mmap: MmapMut,
-    next_offset: u32,
-    config: SharedLogConfig,
-}
-
-impl MutIndex {
-    pub fn new(mmap: MmapMut, next_offset: u32, config: SharedLogConfig) -> Self {
-        Self {
-            mmap,
-            next_offset,
-            config,
-        }
     }
 
     pub async fn create(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
-        let mmap = MmapMut::load(path, config.clone()).await?;
-        Ok(Self::new(mmap, 1, config))
-    }
-
-    pub async fn open(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
-        let mmap = MmapMut::load(path, config.clone()).await?;
-        let next_offset = mmap.get_next_offset();
-        Ok(Self::new(mmap, next_offset, config))
+        let mmap = Mmap::create(path, config.clone()).await?;
+        Ok(Self::new(mmap, 0, config))
     }
 
     pub async fn append(&mut self, timestamp: u64, file_position: u64) -> Result<()> {
-        if self.next_offset < self.config.max_index_entries() {
-            let entry = IndexEntry::new(self.next_offset, timestamp, file_position);
+        if self.current_offset <= self.config.max_index_entries() {
+            let next_offset = self.current_offset + 1;
+            let entry = IndexEntry::new(next_offset, timestamp, file_position);
             self.mmap.push(entry);
             self.mmap.flush()?;
-            self.next_offset += 1;
+            self.current_offset = next_offset;
         }
 
         Ok(())
     }
 
     pub fn lookup(&self, relative_offset: u32) -> Result<Option<IndexEntry>> {
-        if relative_offset > self.next_offset {
+        if relative_offset > self.current_offset {
             return Ok(None);
         }
 
@@ -97,7 +58,7 @@ impl MutIndex {
         Ok(entry)
     }
 
-    pub fn next_offset(&self) -> u32 {
-        self.next_offset
+    pub fn current_offset(&self) -> u32 {
+        self.current_offset
     }
 }

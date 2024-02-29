@@ -5,7 +5,6 @@ pub use codec::LogCodec;
 pub use headers::Headers;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::mem::size_of;
 
 pub const LEN_MARKER_SIZE: usize = 8;
 pub const CRC_SIZE: usize = 4;
