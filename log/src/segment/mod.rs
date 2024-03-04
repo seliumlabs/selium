@@ -9,6 +9,7 @@ pub use list::SegmentList;
 use std::cmp;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Segment {
@@ -66,6 +67,10 @@ impl Segment {
         Ok(vec![])
     }
 
+    pub fn is_stale(&self, stale_duration: Duration) -> bool {
+        self.data.is_stale(stale_duration)
+    }
+
     pub async fn write(&mut self, message: Message) -> Result<()> {
         let position = self.data.position();
         let timestamp = message.headers().timestamp();
@@ -74,6 +79,12 @@ impl Segment {
         self.index.append(timestamp, position).await?;
         self.end_offset += 1;
 
+        Ok(())
+    }
+
+    pub async fn remove(self) -> Result<()> {
+        self.data.remove().await?;
+        self.index.remove().await?;
         Ok(())
     }
 

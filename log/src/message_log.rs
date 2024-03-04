@@ -1,9 +1,12 @@
-use crate::{config::SharedLogConfig, message::Message, segment::SegmentList};
+use crate::{
+    config::SharedLogConfig, log_cleaner::LogCleaner, message::Message, segment::SegmentList,
+};
 use anyhow::Result;
 use std::{
     ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use tokio::fs;
 
@@ -11,6 +14,7 @@ use tokio::fs;
 pub struct MessageLog {
     segments: SegmentList,
     config: SharedLogConfig,
+    _cleaner: Arc<LogCleaner>,
 }
 
 impl MessageLog {
@@ -18,8 +22,13 @@ impl MessageLog {
         let path = config.segments_path();
         fs::create_dir_all(path).await?;
         let segments = load_segments(config.clone()).await?;
+        let _cleaner = LogCleaner::start(config.clone(), segments.clone());
 
-        Ok(Self { segments, config })
+        Ok(Self {
+            segments,
+            config,
+            _cleaner,
+        })
     }
 
     pub async fn write(&mut self, message: Message) -> Result<()> {

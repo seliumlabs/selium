@@ -58,6 +58,11 @@ impl Index {
         Ok(entry)
     }
 
+    pub async fn remove(self) -> Result<()> {
+        self.mmap.remove().await?;
+        Ok(())
+    }
+
     pub fn current_offset(&self) -> u32 {
         self.current_offset
     }

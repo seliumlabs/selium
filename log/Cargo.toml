@@ -16,10 +16,15 @@ categories.workspace = true
 anyhow = "1.0"
 bytes = "1.5.0"
 chrono = "0.4.34"
-crc32c = "0.6.5"
 futures = "0.3.30"
 memmap2 = "0.9"
-tokio = { version = "1.36.0", features = ["fs", "io-util", "macros", "rt"] }
+tokio = { version = "1.36.0", features = [
+    "fs",
+    "io-util",
+    "time",
+    "macros",
+    "rt",
+] }
 tokio-util = { version = "0.7.10", features = ["codec"] }
 
 [dev-dependencies]

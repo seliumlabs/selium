@@ -5,8 +5,10 @@ use selium_log::{
     message::{Headers, Message},
     message_log::MessageLog,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tempfile::TempDir;
+
+const SEVEN_DAYS: u64 = 60 * 60 * 24 * 7;
 
 async fn write_batches(max_entries: usize, log: &mut MessageLog) -> Result<()> {
     for i in 0..max_entries {
@@ -26,7 +28,12 @@ async fn reads_log() -> Result<()> {
     let tempdir = TempDir::new().unwrap();
     let path = tempdir.path();
     let max_entries = 100u64;
-    let config = Arc::new(LogConfig::new(max_entries as u32, path));
+    let config = Arc::new(LogConfig::new(
+        max_entries as u32,
+        path,
+        Duration::from_secs(SEVEN_DAYS),
+        Duration::from_secs(10),
+    ));
     let mut log = MessageLog::open(config.clone()).await?;
 
     write_batches(max_entries as usize, &mut log).await?;

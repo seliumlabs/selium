@@ -2,13 +2,15 @@ use super::Segment;
 use crate::config::SharedLogConfig;
 use crate::message::Message;
 use anyhow::{Context, Result};
+use futures::future::try_join_all;
 use futures::StreamExt;
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SegmentList(Arc<RwLock<BTreeMap<u64, Segment>>>);
 
 impl Default for SegmentList {
@@ -78,6 +80,31 @@ impl SegmentList {
         let mut list = self.0.write().await;
         let (_, segment) = list.iter_mut().last().context("Segment list is empty")?;
         segment.write(message).await?;
+        Ok(())
+    }
+
+    pub async fn find_stale_segments(&self, stale_duration: Duration) -> Vec<u64> {
+        let segments = self.0.read().await;
+
+        segments
+            .iter()
+            .filter(|(_, segment)| segment.is_stale(stale_duration))
+            .map(|(offset, _)| *offset)
+            .collect()
+    }
+
+    pub async fn remove_segments(&self, offsets: Vec<u64>) -> Result<()> {
+        let mut list = self.0.write().await;
+        let mut tasks = Vec::with_capacity(offsets.len());
+
+        for offset in offsets {
+            if let Some(segment) = list.remove(&offset) {
+                tasks.push(segment.remove());
+            }
+        }
+
+        try_join_all(tasks).await?;
+
         Ok(())
     }
 }

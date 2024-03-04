@@ -2,10 +2,12 @@ use crate::config::SharedLogConfig;
 use crate::message::{LogCodec, Message};
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
+use std::time::{Duration, SystemTime};
 use std::{
     io::SeekFrom,
     path::{Path, PathBuf},
 };
+use tokio::fs;
 use tokio::io::{AsyncReadExt, Take};
 use tokio::{
     fs::{File, OpenOptions},
@@ -19,12 +21,16 @@ pub struct Data {
     position: u64,
     writer: FramedWrite<BufWriter<File>, LogCodec>,
     config: SharedLogConfig,
+    last_modified_time: SystemTime,
 }
 
 impl Data {
     pub async fn open(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
         let path = path.as_ref();
         let file = OpenOptions::new().read(true).write(true).open(path).await?;
+        let metadata = file.metadata().await?;
+        let last_modified_time = metadata.modified()?;
+
         let mut writer = BufWriter::new(file);
         writer.seek(SeekFrom::End(0)).await?;
         let position = writer.stream_position().await?;
@@ -35,6 +41,7 @@ impl Data {
             writer,
             position,
             config,
+            last_modified_time,
         })
     }
 
@@ -48,6 +55,9 @@ impl Data {
             .open(path)
             .await?;
 
+        let metadata = file.metadata().await?;
+        let last_modified_time = metadata.modified()?;
+
         let writer = BufWriter::new(file);
         let writer = FramedWrite::new(writer, LogCodec);
 
@@ -56,6 +66,7 @@ impl Data {
             writer,
             position: 0,
             config,
+            last_modified_time,
         })
     }
 
@@ -70,12 +81,23 @@ impl Data {
         Ok(messages)
     }
 
+    pub fn is_stale(&self, stale_duration: Duration) -> bool {
+        self.last_modified_time
+            .elapsed()
+            .map_or(false, |elapsed| elapsed > stale_duration)
+    }
+
     pub async fn write(&mut self, message: Message) -> Result<()> {
         let length = message.headers().length() as u64;
         self.writer.send(message).await?;
         self.writer.flush().await?;
         self.position += length;
 
+        Ok(())
+    }
+
+    pub async fn remove(self) -> Result<()> {
+        fs::remove_file(&self.path).await?;
         Ok(())
     }
 
@@ -93,5 +115,6 @@ async fn new_reader(
     let mut file = File::open(path).await?;
     file.seek(SeekFrom::Start(start_position)).await?;
     let slice = file.take(slice_length as u64);
+
     Ok(FramedRead::new(slice, LogCodec))
 }

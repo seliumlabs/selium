@@ -1,4 +1,4 @@
-use super::{CRC_SIZE, HEADERS_SIZE};
+use super::HEADERS_SIZE;
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::Utc;
 
@@ -12,7 +12,7 @@ pub struct Headers {
 
 impl Headers {
     pub fn new(batch_len: usize, version: u32, batch_size: u32) -> Self {
-        let length = (batch_len + HEADERS_SIZE + CRC_SIZE) as u64;
+        let length = (batch_len + HEADERS_SIZE) as u64;
         let timestamp = Utc::now().timestamp() as u64;
 
         Self {

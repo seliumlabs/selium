@@ -4,21 +4,31 @@ use anyhow::Result;
 use bytes::Buf;
 use std::{
     ops::{Deref, DerefMut},
-    path::Path,
+    path::{Path, PathBuf},
 };
-use tokio::fs::OpenOptions;
+use tokio::fs::{self, OpenOptions};
 
 #[derive(Debug)]
-pub struct Mmap(memmap2::MmapMut);
+pub struct Mmap {
+    mmap: memmap2::MmapMut,
+    path: PathBuf,
+}
 
 impl Mmap {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
         let file = OpenOptions::new().write(true).read(true).open(path).await?;
         let mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
-        Ok(Self(mmap))
+
+        Ok(Self {
+            mmap,
+            path: path.to_owned(),
+        })
     }
 
     pub async fn create(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
+        let path = path.as_ref();
+
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -30,13 +40,21 @@ impl Mmap {
         file.set_len(length).await?;
         let mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
 
-        Ok(Self(mmap))
+        Ok(Self {
+            mmap,
+            path: path.to_owned(),
+        })
+    }
+
+    pub async fn remove(self) -> Result<()> {
+        fs::remove_file(&self.path).await?;
+        Ok(())
     }
 
     pub fn push(&mut self, entry: IndexEntry) {
         let slice_start = (entry.relative_offset() - 1) as usize * SIZE_OF_INDEX_ENTRY;
         let slice_end = slice_start + SIZE_OF_INDEX_ENTRY;
-        self.0[slice_start..slice_end].copy_from_slice(&entry.into_slice());
+        self.mmap[slice_start..slice_end].copy_from_slice(&entry.into_slice());
     }
 
     pub fn find<F: Fn(&IndexEntry) -> bool>(&self, f: F) -> Option<IndexEntry> {
@@ -74,18 +92,18 @@ impl Mmap {
     }
 
     fn get_last_offset(&self) -> u32 {
-        let range_start = self.0.len() - SIZE_OF_INDEX_ENTRY;
-        let mut slice = &self.0[range_start..];
+        let range_start = self.mmap.len() - SIZE_OF_INDEX_ENTRY;
+        let mut slice = &self.mmap[range_start..];
         slice.get_u32()
     }
 
     fn get_entry_slice(&self, offset: usize) -> &[u8] {
         let length = offset + SIZE_OF_INDEX_ENTRY;
-        &self.0[offset..length]
+        &self.mmap[offset..length]
     }
 
     fn get_offset_range(&self) -> std::ops::Range<usize> {
-        0..&self.0.len() / SIZE_OF_INDEX_ENTRY
+        0..&self.mmap.len() / SIZE_OF_INDEX_ENTRY
     }
 }
 
@@ -93,12 +111,12 @@ impl Deref for Mmap {
     type Target = memmap2::MmapMut;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.mmap
     }
 }
 
 impl DerefMut for Mmap {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.mmap
     }
 }
