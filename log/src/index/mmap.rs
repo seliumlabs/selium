@@ -103,7 +103,7 @@ impl Mmap {
     }
 
     fn get_offset_range(&self) -> std::ops::Range<usize> {
-        0..&self.mmap.len() / SIZE_OF_INDEX_ENTRY
+        0..self.mmap.len() / SIZE_OF_INDEX_ENTRY
     }
 }
 

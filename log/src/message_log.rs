@@ -5,12 +5,7 @@ use crate::{
     segment::SegmentList,
 };
 use anyhow::Result;
-use std::{
-    ffi::OsStr,
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{ffi::OsStr, ops::Range, path::Path, sync::Arc};
 use tokio::fs;
 
 #[derive(Debug)]
@@ -40,7 +35,7 @@ impl MessageLog {
     }
 }
 
-fn is_index_file(path: &PathBuf) -> bool {
+fn is_index_file(path: &Path) -> bool {
     path.is_file() && path.extension() == Some("index".as_ref())
 }
 

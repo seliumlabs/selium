@@ -88,7 +88,7 @@ impl Data {
     }
 
     pub async fn write(&mut self, message: Message) -> Result<()> {
-        let length = message.headers().length() as u64;
+        let length = message.headers().length();
         self.writer.send(message).await?;
         self.writer.flush().await?;
         self.position += length;

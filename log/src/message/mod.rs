@@ -46,7 +46,7 @@ impl Message {
     pub fn encode(&self, buffer: &mut BytesMut) {
         self.headers.encode(buffer);
         buffer.extend_from_slice(&self.records);
-        let crc = crc32c(&buffer);
+        let crc = crc32c(buffer);
         buffer.put_u32(crc);
     }
 

@@ -1,6 +1,6 @@
 use super::Message;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MessageSlice {
     messages: Vec<Message>,
     end_offset: u64,
@@ -20,14 +20,5 @@ impl MessageSlice {
 
     pub fn end_offset(&self) -> u64 {
         self.end_offset
-    }
-}
-
-impl Default for MessageSlice {
-    fn default() -> Self {
-        Self {
-            messages: vec![],
-            end_offset: 0,
-        }
     }
 }
