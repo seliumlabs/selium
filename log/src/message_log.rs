@@ -1,5 +1,8 @@
 use crate::{
-    config::SharedLogConfig, log_cleaner::LogCleaner, message::Message, segment::SegmentList,
+    config::SharedLogConfig,
+    log_cleaner::LogCleaner,
+    message::{Message, MessageSlice},
+    segment::SegmentList,
 };
 use anyhow::Result;
 use std::{
@@ -13,7 +16,6 @@ use tokio::fs;
 #[derive(Debug)]
 pub struct MessageLog {
     segments: SegmentList,
-    config: SharedLogConfig,
     _cleaner: Arc<LogCleaner>,
 }
 
@@ -22,13 +24,9 @@ impl MessageLog {
         let path = config.segments_path();
         fs::create_dir_all(path).await?;
         let segments = load_segments(config.clone()).await?;
-        let _cleaner = LogCleaner::start(config.clone(), segments.clone());
+        let _cleaner = LogCleaner::start(config, segments.clone());
 
-        Ok(Self {
-            segments,
-            config,
-            _cleaner,
-        })
+        Ok(Self { segments, _cleaner })
     }
 
     pub async fn write(&mut self, message: Message) -> Result<()> {
@@ -36,9 +34,9 @@ impl MessageLog {
         Ok(())
     }
 
-    pub async fn read_messages(&self, offset_range: Range<u64>) -> Result<Vec<Message>> {
-        let messages = self.segments.read_slice(offset_range).await?;
-        Ok(messages)
+    pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<MessageSlice> {
+        let slice = self.segments.read_slice(offset_range).await?;
+        Ok(slice)
     }
 }
 

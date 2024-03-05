@@ -1,14 +1,16 @@
 mod codec;
 mod headers;
+mod slice;
 
 use bytes::{Buf, Bytes, BytesMut};
 pub use codec::LogCodec;
 pub use headers::Headers;
+pub use slice::MessageSlice;
 
 pub const LEN_MARKER_SIZE: usize = 8;
 pub const HEADERS_SIZE: usize = 24;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Message {
     headers: Headers,
     records: Bytes,

@@ -40,9 +40,10 @@ async fn reads_log() -> Result<()> {
     drop(log);
 
     let log = MessageLog::open(config).await?;
+    let slice = log.read_slice(0..max_entries).await?;
 
-    let messages = log.read_messages(0..max_entries).await?;
-    assert_eq!(messages.len(), max_entries as usize - 1);
+    assert_eq!(slice.messages().len(), max_entries as usize - 1);
+    assert_eq!(slice.end_offset(), max_entries);
 
     Ok(())
 }

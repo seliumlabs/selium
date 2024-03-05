@@ -3,7 +3,7 @@ mod list;
 use crate::config::SharedLogConfig;
 use crate::data::Data;
 use crate::index::Index;
-use crate::message::Message;
+use crate::message::{Message, MessageSlice};
 use anyhow::Result;
 pub use list::SegmentList;
 use std::cmp;
@@ -23,8 +23,8 @@ impl Segment {
     pub async fn open(base_offset: u64, config: SharedLogConfig) -> Result<Self> {
         let path = config.segments_path();
         let (index_path, data_path) = get_segment_paths(path, base_offset);
-        let index = Index::open(index_path, config.clone()).await?;
-        let data = Data::open(data_path, config).await?;
+        let index = Index::open(index_path, config).await?;
+        let data = Data::open(data_path).await?;
         let end_offset = index.current_offset() as u64;
 
         Ok(Self {
@@ -38,8 +38,8 @@ impl Segment {
     pub async fn create(base_offset: u64, config: SharedLogConfig) -> Result<Self> {
         let path = config.segments_path();
         let (index_path, data_path) = get_segment_paths(path, base_offset);
-        let index = Index::create(index_path, config.clone()).await?;
-        let data = Data::create(data_path, config).await?;
+        let index = Index::create(index_path, config).await?;
+        let data = Data::create(data_path).await?;
 
         Ok(Self {
             index,
@@ -49,7 +49,7 @@ impl Segment {
         })
     }
 
-    pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<Vec<Message>> {
+    pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<MessageSlice> {
         let relative_offset = offset_range.start - self.base_offset;
         let relative_offset = cmp::max(relative_offset, 1);
 
@@ -59,12 +59,16 @@ impl Segment {
             if let Some(end_entry) = self.index.lookup(end_offset as u32)? {
                 let start_position = start_entry.physical_position();
                 let end_position = end_entry.physical_position();
-                let slice = self.data.read_slice(start_position, end_position).await?;
+                let messages = self
+                    .data
+                    .read_messages(start_position, end_position)
+                    .await?;
+                let slice = MessageSlice::new(messages.as_slice(), end_offset);
                 return Ok(slice);
             }
         }
 
-        Ok(vec![])
+        Ok(MessageSlice::default())
     }
 
     pub fn is_stale(&self, stale_duration: Duration) -> bool {

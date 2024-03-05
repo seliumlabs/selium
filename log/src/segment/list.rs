@@ -1,6 +1,6 @@
 use super::Segment;
 use crate::config::SharedLogConfig;
-use crate::message::Message;
+use crate::message::{Message, MessageSlice};
 use anyhow::{Context, Result};
 use futures::future::try_join_all;
 use futures::StreamExt;
@@ -51,7 +51,7 @@ impl SegmentList {
         Ok(Self::new(segments))
     }
 
-    pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<Vec<Message>> {
+    pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<MessageSlice> {
         let list = self.0.read().await;
 
         let found = list
@@ -62,7 +62,7 @@ impl SegmentList {
             let slice = segment.read_slice(offset_range).await?;
             Ok(slice)
         } else {
-            Ok(vec![])
+            Ok(MessageSlice::default())
         }
     }
 

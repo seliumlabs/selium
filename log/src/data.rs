@@ -1,4 +1,3 @@
-use crate::config::SharedLogConfig;
 use crate::message::{LogCodec, Message};
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
@@ -20,12 +19,11 @@ pub struct Data {
     path: PathBuf,
     position: u64,
     writer: FramedWrite<BufWriter<File>, LogCodec>,
-    config: SharedLogConfig,
     last_modified_time: SystemTime,
 }
 
 impl Data {
-    pub async fn open(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
+    pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let file = OpenOptions::new().read(true).write(true).open(path).await?;
         let metadata = file.metadata().await?;
@@ -40,12 +38,11 @@ impl Data {
             path: path.to_owned(),
             writer,
             position,
-            config,
             last_modified_time,
         })
     }
 
-    pub async fn create(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
+    pub async fn create(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
 
         let file = OpenOptions::new()
@@ -65,12 +62,15 @@ impl Data {
             path: path.to_owned(),
             writer,
             position: 0,
-            config,
             last_modified_time,
         })
     }
 
-    pub async fn read_slice(&self, start_position: u64, end_position: u64) -> Result<Vec<Message>> {
+    pub async fn read_messages(
+        &self,
+        start_position: u64,
+        end_position: u64,
+    ) -> Result<Vec<Message>> {
         let mut reader = new_reader(&self.path, start_position, end_position).await?;
         let mut messages = vec![];
 

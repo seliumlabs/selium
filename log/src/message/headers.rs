@@ -2,7 +2,7 @@ use super::HEADERS_SIZE;
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::Utc;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Headers {
     length: u64,
     version: u32,
