@@ -1,9 +1,9 @@
-use std::time::Duration;
 use anyhow::Result;
-use tokio_retry::strategy::{FixedInterval};
 use selium::prelude::*;
-use selium::pubsub::{DeliveryGuarantee};
+use selium::pubsub::DeliveryGuarantee;
 use selium::std::codecs::StringCodec;
+use std::time::Duration;
+use tokio_retry::strategy::FixedInterval;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,8 +20,7 @@ async fn main() -> Result<()> {
         .connect()
         .await?;
 
-    let retry_strategy: Vec<Duration> = FixedInterval::from_millis(1000)
-        .take(2).collect();
+    let retry_strategy: Vec<Duration> = FixedInterval::from_millis(1000).take(2).collect();
 
     let mut publisher = connection
         .publisher("/acmeco/stocks")
@@ -42,5 +41,4 @@ async fn main() -> Result<()> {
     publisher.finish().await?;
 
     Ok(())
-
 }

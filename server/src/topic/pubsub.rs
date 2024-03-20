@@ -1,18 +1,25 @@
 use crate::{sink::FanoutMany, BoxSink};
-use futures::{channel::{
-    mpsc::{self, Receiver, Sender},
-    oneshot,
-}, ready, stream::BoxStream, Future, Sink, Stream};
+use futures::{
+    channel::{
+        mpsc::{self, Receiver, Sender},
+        oneshot,
+    },
+    ready,
+    stream::BoxStream,
+    Future, Sink, Stream,
+};
 use log::{debug, error};
 use pin_project_lite::pin_project;
 use selium_protocol::traits::{ShutdownSink, ShutdownStream};
+use selium_protocol::{Frame};
 use selium_std::errors::Result;
-use std::{fmt::Debug, pin::Pin, task::{Context, Poll}};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::{
+    fmt::Debug,
+    pin::Pin,
+    task::{Context, Poll},
+};
 use tokio_stream::StreamMap;
-use selium_protocol::{ErrorPayload, Frame};
-use selium_protocol::error_codes::UNKNOWN_ERROR;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
@@ -85,9 +92,7 @@ where
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
                 ready!(sink.as_mut().poll_ready(cx)).unwrap();
                 let item = buffered_item.take().unwrap();
-                sink.as_mut()
-                    .start_send(item)
-                    .unwrap();
+                sink.as_mut().start_send(item).unwrap();
             }
 
             match handle.as_mut().poll_next(cx) {
@@ -128,7 +133,7 @@ where
                     let sink = result_map.as_mut().get_mut().get_mut(&id).unwrap();
                     sink.as_mut().start_send(Frame::Ok).unwrap();
                     let _ = sink.as_mut().poll_flush(cx);
-                },
+                }
                 // Encountered an error whilst receiving a message from an inner stream
                 Poll::Ready(Some((_, Err(e)))) => {
                     error!("Received invalid message from stream: {e:?}")

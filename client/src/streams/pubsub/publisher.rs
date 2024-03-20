@@ -1,4 +1,3 @@
-use std::future::{Future};
 use super::states::{PublisherWantsEncoder, PublisherWantsOpen};
 use crate::batching::{BatchConfig, MessageBatch};
 use crate::connection::{ClientConnection, SharedConnection};
@@ -10,22 +9,23 @@ use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures::FutureExt;
 use futures::{ready, Sink, SinkExt, StreamExt};
 use selium_protocol::utils::encode_message_batch;
 use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload, TopicName};
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
+use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use tokio::sync::{MutexGuard, Mutex};
-use tracing::{debug};
-use tokio::time::{timeout};
+use tokio::sync::{Mutex, MutexGuard};
+use tokio::time::timeout;
 use tokio_retry::Retry;
-use futures::FutureExt;
+use tracing::debug;
 
 #[derive(Clone, Debug)]
 pub enum DeliveryGuarantee {
@@ -80,7 +80,10 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
         self
     }
 
-    pub fn with_delivery_guarantee(mut self, delivery_guarantee: DeliveryGuarantee) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
+    pub fn with_delivery_guarantee(
+        mut self,
+        delivery_guarantee: DeliveryGuarantee,
+    ) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
         self.state.delivery_guarantee = Some(delivery_guarantee);
         self
     }
@@ -171,12 +174,8 @@ pub struct MessageSender {
 }
 
 impl MessageSender {
-    pub fn new(
-        stream: Arc<Mutex<BiStream>>,
-    ) -> Self {
-        Self {
-            stream
-        }
+    pub fn new(stream: Arc<Mutex<BiStream>>) -> Self {
+        Self { stream }
     }
 }
 
@@ -191,23 +190,19 @@ impl Future for MessageSender {
         };
 
         let r = match res {
-            Poll::Ready(r) => {
-                match r.unwrap() {
-                    Ok(f) => {
-                        match f {
-                            Frame::Error(_) => {
-                                debug!("Frame::Error from server");
-                                cx.waker().wake_by_ref();
-                                Poll::Ready(Err(SeliumError::FrameError))
-                            }
-                            Frame::Ok => Poll::Ready(Ok(f)),
-                            _ => Poll::Ready(Err(SeliumError::RequestFailed))
-                        }
+            Poll::Ready(r) => match r.unwrap() {
+                Ok(f) => match f {
+                    Frame::Error(_) => {
+                        debug!("Frame::Error from server");
+                        cx.waker().wake_by_ref();
+                        Poll::Ready(Err(SeliumError::FrameError))
                     }
-                    Err(e) => Poll::Ready(Err(e)),
-                }
-            }
-            Poll::Pending => Poll::Pending
+                    Frame::Ok => Poll::Ready(Ok(f)),
+                    _ => Poll::Ready(Err(SeliumError::RequestFailed)),
+                },
+                Err(e) => Poll::Ready(Err(e)),
+            },
+            Poll::Pending => Poll::Pending,
         };
         debug!("Poll result={:?}", r);
         r
@@ -337,11 +332,17 @@ where
         Ok(())
     }
 
-    pub fn retry(&mut self, item: Item, strategy: Vec<Duration>, t: u64) -> impl Future<Output=Result<Frame, SeliumError>> + '_ {
+    pub fn retry(
+        &mut self,
+        item: Item,
+        strategy: Vec<Duration>,
+        t: u64,
+    ) -> impl Future<Output = Result<Frame, SeliumError>> + '_ {
         let bytes = self
             .encoder
             .encode(item.clone())
-            .map_err(CodecError::EncodeFailure).unwrap();
+            .map_err(CodecError::EncodeFailure)
+            .unwrap();
 
         let sender = move || {
             debug!("sending");
@@ -349,24 +350,20 @@ where
             let message_sender = MessageSender::new(self.stream.clone());
             timeout(Duration::from_millis(t), message_sender)
         };
-        Retry::spawn(strategy, sender)
-            .map(|o| {
-                match o {
-                    Ok(i) => i.and_then(|x| Ok(x)),
-                    Err(_) => Err(SeliumError::RequestTimeout)
-                }
-            })
+        Retry::spawn(strategy, sender).map(|o| match o {
+            Ok(i) => i,
+            Err(_) => Err(SeliumError::RequestTimeout),
+        })
     }
 
-    pub fn send(&mut self, item: Item) -> Pin<Box<dyn Future<Output=Result<Frame, SeliumError>> + '_>>  {
+    pub fn send(
+        &mut self,
+        item: Item,
+    ) -> Pin<Box<dyn Future<Output = Result<Frame, SeliumError>> + '_>> {
         let dg = self.delivery_guarantee.clone();
         match dg.unwrap() {
-            DeliveryGuarantee::AtMostOnce => {
-                Box::pin(self.send(item).map(|_| Ok(Frame::Ok)))
-            }
-            DeliveryGuarantee::AtLeastOnce(strategy, t) => {
-                Box::pin(self.retry(item, strategy, t))
-            }
+            DeliveryGuarantee::AtMostOnce => Box::pin(self.send(item).map(|_| Ok(Frame::Ok))),
+            DeliveryGuarantee::AtLeastOnce(strategy, t) => Box::pin(self.retry(item, strategy, t)),
         }
     }
 
@@ -456,4 +453,3 @@ where
         self.headers.clone()
     }
 }
-

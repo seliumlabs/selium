@@ -1,4 +1,3 @@
-use std::time::Duration;
 use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use selium::batching::BatchConfig;
@@ -8,6 +7,7 @@ use selium::std::codecs::StringCodec;
 use selium::std::compression::deflate::DeflateComp;
 use selium::std::compression::deflate::DeflateDecomp;
 use selium::std::traits::compression::CompressionLevel;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {

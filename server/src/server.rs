@@ -229,9 +229,12 @@ async fn handle_stream(
         match frame {
             Frame::RegisterPublisher(_) => {
                 let (write, read) = stream.split();
-                tx.send(Socket::Pubsub(pubsub::Socket::Publisher(Box::pin(read), Box::pin(write))))
-                    .await
-                    .context("Failed to add Publisher stream")?;
+                tx.send(Socket::Pubsub(pubsub::Socket::Publisher(
+                    Box::pin(read),
+                    Box::pin(write),
+                )))
+                .await
+                .context("Failed to add Publisher stream")?;
             }
             Frame::RegisterSubscriber(_) => {
                 let (write, _) = stream.split();

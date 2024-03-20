@@ -1,10 +1,10 @@
-use std::time::Duration;
 use anyhow::Result;
 use futures::SinkExt;
-use tokio_retry::strategy::{ExponentialBackoff, FixedInterval, jitter};
 use selium::prelude::*;
-use selium::pubsub::{DeliveryGuarantee};
+use selium::pubsub::DeliveryGuarantee;
 use selium::std::codecs::StringCodec;
+use std::time::Duration;
+use tokio_retry::strategy::{jitter, ExponentialBackoff, FixedInterval};
 
 #[tokio::main]
 async fn main() -> Result<()> {

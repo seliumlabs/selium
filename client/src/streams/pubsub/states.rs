@@ -1,10 +1,10 @@
+use crate::pubsub::publisher::DeliveryGuarantee;
 use crate::{
     batching::BatchConfig,
     streams::aliases::{Comp, Decomp},
     PubSubCommon,
 };
 use std::marker::PhantomData;
-use crate::pubsub::publisher::DeliveryGuarantee;
 
 #[doc(hidden)]
 pub struct SubscriberWantsDecoder {
