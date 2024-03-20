@@ -1,30 +1,25 @@
 use crate::{sink::FanoutMany, BoxSink};
-use futures::{
-    channel::{
-        mpsc::{self, Receiver, Sender},
-        oneshot,
-    },
-    ready,
-    stream::BoxStream,
-    Future, Sink, Stream,
-};
-use log::error;
+use futures::{channel::{
+    mpsc::{self, Receiver, Sender},
+    oneshot,
+}, ready, stream::BoxStream, Future, Sink, Stream};
+use log::{debug, error};
 use pin_project_lite::pin_project;
 use selium_protocol::traits::{ShutdownSink, ShutdownStream};
 use selium_std::errors::Result;
-use std::{
-    fmt::Debug,
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::{fmt::Debug, pin::Pin, task::{Context, Poll}};
+use std::collections::HashMap;
+use std::time::Duration;
 use tokio_stream::StreamMap;
+use selium_protocol::{ErrorPayload, Frame};
+use selium_protocol::error_codes::UNKNOWN_ERROR;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
 pub type TopicShutdown = oneshot::Receiver<()>;
 
 pub enum Socket<T, E> {
-    Stream(BoxStream<'static, Result<T>>),
+    Publisher(BoxStream<'static, Result<T>>, BoxSink<Frame, E>),
     Sink(BoxSink<T, E>),
 }
 
@@ -34,6 +29,8 @@ pin_project! {
     pub struct Topic<T, E> {
         #[pin]
         stream: StreamMap<usize, BoxStream<'static, Result<T>>>,
+        #[pin]
+        result_map: HashMap<usize, BoxSink<Frame, E>>,
         next_stream_id: usize,
         #[pin]
         sink: FanoutMany<usize, BoxSink<T, E>>,
@@ -51,6 +48,7 @@ impl<T, E> Topic<T, E> {
         (
             Self {
                 stream: StreamMap::new(),
+                result_map: HashMap::new(),
                 next_stream_id: 0,
                 sink: FanoutMany::new(),
                 next_sink_id: 0,
@@ -72,6 +70,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let TopicProj {
             mut stream,
+            mut result_map,
             next_stream_id,
             mut sink,
             next_sink_id,
@@ -85,15 +84,18 @@ where
             if buffered_item.is_some() {
                 // Unwrapping is safe as the underlying sink is guaranteed not to error
                 ready!(sink.as_mut().poll_ready(cx)).unwrap();
+                let item = buffered_item.take().unwrap();
                 sink.as_mut()
-                    .start_send(buffered_item.take().unwrap())
+                    .start_send(item)
                     .unwrap();
             }
 
             match handle.as_mut().poll_next(cx) {
                 Poll::Ready(Some(sock)) => match sock {
-                    Socket::Stream(st) => {
+                    Socket::Publisher(st, si) => {
                         stream.as_mut().insert(*next_stream_id, st);
+                        result_map.as_mut().insert(*next_stream_id, si);
+
                         *next_stream_id += 1;
                     }
                     Socket::Sink(si) => {
@@ -119,7 +121,14 @@ where
 
             match stream.as_mut().poll_next(cx) {
                 // Received message from an inner stream
-                Poll::Ready(Some((_, Ok(item)))) => *buffered_item = Some(item),
+                Poll::Ready(Some((id, Ok(item)))) => {
+                    *buffered_item = Some(item);
+
+                    debug!("sending Frame ok...");
+                    let sink = result_map.as_mut().get_mut().get_mut(&id).unwrap();
+                    sink.as_mut().start_send(Frame::Ok).unwrap();
+                    let _ = sink.as_mut().poll_flush(cx);
+                },
                 // Encountered an error whilst receiving a message from an inner stream
                 Poll::Ready(Some((_, Err(e)))) => {
                     error!("Received invalid message from stream: {e:?}")

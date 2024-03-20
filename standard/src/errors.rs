@@ -149,4 +149,8 @@ pub enum SeliumError {
 
     #[error("Failed to open stream with error: {1}.")]
     OpenStream(u32, String),
+
+    #[error("Frame error received from the server")]
+    FrameError
+
 }

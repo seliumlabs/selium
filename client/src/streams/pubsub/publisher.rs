@@ -1,3 +1,4 @@
+use std::future::{Future};
 use super::states::{PublisherWantsEncoder, PublisherWantsOpen};
 use crate::batching::{BatchConfig, MessageBatch};
 use crate::connection::{ClientConnection, SharedConnection};
@@ -9,7 +10,7 @@ use crate::traits::{KeepAliveStream, Open, Operations, Retain, TryIntoU64};
 use crate::{Client, StreamBuilder};
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::{Sink, SinkExt};
+use futures::{ready, Sink, SinkExt, StreamExt};
 use selium_protocol::utils::encode_message_batch;
 use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload, TopicName};
 use selium_std::errors::{CodecError, Result, SeliumError};
@@ -17,10 +18,20 @@ use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc};
 use std::task::{Context, Poll};
-use std::time::Instant;
-use tokio::sync::MutexGuard;
+use std::time::{Duration, Instant};
+use tokio::sync::{MutexGuard, Mutex};
+use tracing::{debug};
+use tokio::time::{timeout};
+use tokio_retry::Retry;
+use futures::FutureExt;
+
+#[derive(Clone, Debug)]
+pub enum DeliveryGuarantee {
+    AtMostOnce,
+    AtLeastOnce(Vec<Duration>, u64),
+}
 
 impl StreamBuilder<PublisherWantsEncoder> {
     /// Specifies the encoder a [Publisher] uses for encoding produced messages prior to being
@@ -68,6 +79,11 @@ impl<E, Item> StreamBuilder<PublisherWantsOpen<E, Item>> {
         self.state.batch_config = Some(config);
         self
     }
+
+    pub fn with_delivery_guarantee(mut self, delivery_guarantee: DeliveryGuarantee) -> StreamBuilder<PublisherWantsOpen<E, Item>> {
+        self.state.delivery_guarantee = Some(delivery_guarantee);
+        self
+    }
 }
 
 impl<E, Item> Retain for StreamBuilder<PublisherWantsOpen<E, Item>> {
@@ -93,7 +109,7 @@ impl<E, Item> Operations for StreamBuilder<PublisherWantsOpen<E, Item>> {
 impl<E, Item> Open for StreamBuilder<PublisherWantsOpen<E, Item>>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    Item: Unpin + Send + Clone,
 {
     type Output = KeepAlive<Publisher<E, Item>>;
 
@@ -112,6 +128,7 @@ where
             self.state.encoder,
             self.state.compression,
             self.state.batch_config,
+            self.state.delivery_guarantee,
         )
         .await?;
 
@@ -138,19 +155,69 @@ where
 /// [StreamBuilder](crate::StreamBuilder).
 pub struct Publisher<E, Item> {
     client: Client,
-    stream: BiStream,
+    stream: Arc<Mutex<BiStream>>,
     headers: PublisherPayload,
     encoder: E,
     compression: Option<Comp>,
     batch: Option<MessageBatch>,
     batch_config: Option<BatchConfig>,
+    delivery_guarantee: Option<DeliveryGuarantee>,
+    buffer: Bytes,
     _marker: PhantomData<Item>,
+}
+
+pub struct MessageSender {
+    stream: Arc<Mutex<BiStream>>,
+}
+
+impl MessageSender {
+    pub fn new(
+        stream: Arc<Mutex<BiStream>>,
+    ) -> Self {
+        Self {
+            stream
+        }
+    }
+}
+
+impl Future for MessageSender {
+    type Output = Result<Frame, SeliumError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let res = {
+            let mut lock = futures::executor::block_on(self.stream.lock());
+            let _ = lock.poll_flush_unpin(cx);
+            lock.poll_next_unpin(cx)
+        };
+
+        let r = match res {
+            Poll::Ready(r) => {
+                match r.unwrap() {
+                    Ok(f) => {
+                        match f {
+                            Frame::Error(_) => {
+                                debug!("Frame::Error from server");
+                                cx.waker().wake_by_ref();
+                                Poll::Ready(Err(SeliumError::FrameError))
+                            }
+                            Frame::Ok => Poll::Ready(Ok(f)),
+                            _ => Poll::Ready(Err(SeliumError::RequestFailed))
+                        }
+                    }
+                    Err(e) => Poll::Ready(Err(e)),
+                }
+            }
+            Poll::Pending => Poll::Pending
+        };
+        debug!("Poll result={:?}", r);
+        r
+    }
 }
 
 impl<E, Item> Publisher<E, Item>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    Item: Unpin + Send + Clone,
 {
     async fn spawn(
         client: Client,
@@ -158,6 +225,7 @@ where
         encoder: E,
         compression: Option<Comp>,
         batch_config: Option<BatchConfig>,
+        delivery_guarantee: Option<DeliveryGuarantee>,
     ) -> Result<KeepAlive<Self>> {
         let batch = batch_config.as_ref().map(|c| MessageBatch::from(c.clone()));
         let lock = client.connection.lock().await;
@@ -165,12 +233,14 @@ where
 
         let publisher = Self {
             client: client.clone(),
-            stream,
+            stream: Arc::new(Mutex::new(stream)),
             headers,
             encoder,
             compression,
             batch,
             batch_config,
+            delivery_guarantee,
+            buffer: Bytes::new(),
             _marker: PhantomData,
         };
 
@@ -179,7 +249,7 @@ where
 
     /// Spawns a new [Publisher] stream with the same configuration as the current stream, without
     /// having to specify the same configuration options again.
-    ///  
+    ///
     /// This method is especially convenient in cases where multiple streams will be concurrently
     /// publishing messages to the same topic, via cooperative-multitasking, e.g. within [tokio] tasks
     /// spawned by [tokio::spawn].
@@ -196,6 +266,7 @@ where
             self.encoder.clone(),
             self.compression.clone(),
             self.batch_config.clone(),
+            self.delivery_guarantee.clone(),
         )
         .await?;
 
@@ -216,7 +287,8 @@ where
     /// Returns [Err] if the stream fails to close gracefully.
     pub async fn finish(mut self) -> Result<()> {
         self.flush_batch()?;
-        self.stream.finish().await
+        let mut stream = self.stream.lock().await;
+        stream.finish().await
     }
 
     async fn open_stream(
@@ -242,7 +314,8 @@ where
             headers: None,
             message: bytes,
         });
-        self.stream.start_send_unpin(frame)
+        let mut lock = futures::executor::block_on(self.stream.lock());
+        lock.start_send_unpin(frame)
     }
 
     fn send_batch(&mut self, now: Instant) -> Result<()> {
@@ -256,10 +329,45 @@ where
         }
 
         let frame = Frame::BatchMessage(bytes);
-        self.stream.start_send_unpin(frame)?;
+
+        let mut lock = futures::executor::block_on(self.stream.lock());
+        lock.start_send_unpin(frame)?;
         batch.update_last_run(now);
 
         Ok(())
+    }
+
+    pub fn retry(&mut self, item: Item, strategy: Vec<Duration>, t: u64) -> impl Future<Output=Result<Frame, SeliumError>> + '_ {
+        let bytes = self
+            .encoder
+            .encode(item.clone())
+            .map_err(CodecError::EncodeFailure).unwrap();
+
+        let sender = move || {
+            debug!("sending");
+            self.send_single(bytes.clone()).unwrap();
+            let message_sender = MessageSender::new(self.stream.clone());
+            timeout(Duration::from_millis(t), message_sender)
+        };
+        Retry::spawn(strategy, sender)
+            .map(|o| {
+                match o {
+                    Ok(i) => i.and_then(|x| Ok(x)),
+                    Err(_) => Err(SeliumError::RequestTimeout)
+                }
+            })
+    }
+
+    pub fn send(&mut self, item: Item) -> Pin<Box<dyn Future<Output=Result<Frame, SeliumError>> + '_>>  {
+        let dg = self.delivery_guarantee.clone();
+        match dg.unwrap() {
+            DeliveryGuarantee::AtMostOnce => {
+                Box::pin(self.send(item).map(|_| Ok(Frame::Ok)))
+            }
+            DeliveryGuarantee::AtLeastOnce(strategy, t) => {
+                Box::pin(self.retry(item, strategy, t))
+            }
+        }
     }
 
     fn flush_batch(&mut self) -> Result<()> {
@@ -276,7 +384,7 @@ where
 impl<E, Item> Sink<Item> for Publisher<E, Item>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    Item: Unpin + Send + Clone,
 {
     type Error = SeliumError;
 
@@ -291,7 +399,8 @@ where
             return Poll::Ready(Ok(()));
         }
 
-        self.stream.poll_ready_unpin(cx)
+        let mut lock = futures::executor::block_on(self.stream.lock());
+        lock.poll_ready_unpin(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
@@ -304,23 +413,26 @@ where
             batch.push(bytes);
             Ok(())
         } else {
+            self.buffer = bytes.clone();
             self.send_single(bytes)
         }
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.stream.poll_flush_unpin(cx)
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        let mut lock = ready!(Box::pin(self.stream.lock()).poll_unpin(cx));
+        lock.poll_flush_unpin(cx)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.stream.poll_close_unpin(cx)
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        let mut lock = futures::executor::block_on(self.stream.lock());
+        lock.poll_close_unpin(cx)
     }
 }
 
 impl<E, Item> KeepAliveStream for Publisher<E, Item>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    Item: Unpin + Send + Clone,
 {
     type Headers = PublisherPayload;
 
@@ -333,7 +445,7 @@ where
     }
 
     fn on_reconnect(&mut self, stream: BiStream) {
-        self.stream = stream;
+        self.stream = Arc::new(Mutex::new(stream));
     }
 
     fn get_connection(&self) -> SharedConnection {
@@ -344,3 +456,4 @@ where
         self.headers.clone()
     }
 }
+

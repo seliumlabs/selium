@@ -1,7 +1,6 @@
 use std::time::Duration;
 use anyhow::Result;
-use futures::SinkExt;
-use tokio_retry::strategy::{ExponentialBackoff, FixedInterval, jitter};
+use tokio_retry::strategy::{FixedInterval};
 use selium::prelude::*;
 use selium::pubsub::{DeliveryGuarantee};
 use selium::std::codecs::StringCodec;
@@ -21,15 +20,27 @@ async fn main() -> Result<()> {
         .connect()
         .await?;
 
+    let retry_strategy: Vec<Duration> = FixedInterval::from_millis(1000)
+        .take(2).collect();
+
     let mut publisher = connection
         .publisher("/acmeco/stocks")
         .with_encoder(StringCodec)
-        .with_delivery_guarantee(DeliveryGuarantee::AtMostOnce)
+        .with_delivery_guarantee(DeliveryGuarantee::AtLeastOnce(retry_strategy, 1000))
         .open()
         .await?;
 
-    publisher.send("Hello, world!".to_owned()).await.unwrap();
+    let res1 = publisher.send("Hello, world 1".to_owned()).await;
+    println!("res1: {:?}", res1);
+
+    let res2 = publisher.send("Hello, world 2".to_owned()).await;
+    println!("res2: {:?}", res2);
+
+    let res3 = publisher.send("Hello, world 3".to_owned()).await;
+    println!("res3: {:?}", res3);
+
     publisher.finish().await?;
 
     Ok(())
+
 }
