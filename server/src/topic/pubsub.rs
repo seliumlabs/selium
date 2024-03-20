@@ -11,7 +11,7 @@ use futures::{
 use log::{debug, error};
 use pin_project_lite::pin_project;
 use selium_protocol::traits::{ShutdownSink, ShutdownStream};
-use selium_protocol::{Frame};
+use selium_protocol::Frame;
 use selium_std::errors::Result;
 use std::collections::HashMap;
 use std::{
