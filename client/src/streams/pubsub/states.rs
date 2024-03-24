@@ -1,3 +1,4 @@
+use crate::pubsub::publisher::DeliveryGuarantee;
 use crate::{
     batching::BatchConfig,
     streams::aliases::{Comp, Decomp},
@@ -57,6 +58,7 @@ pub struct PublisherWantsOpen<E, Item> {
     pub(crate) encoder: E,
     pub(crate) compression: Option<Comp>,
     pub(crate) batch_config: Option<BatchConfig>,
+    pub(crate) delivery_guarantee: Option<DeliveryGuarantee>,
     _marker: PhantomData<Item>,
 }
 
@@ -67,6 +69,7 @@ impl<E, Item> PublisherWantsOpen<E, Item> {
             encoder,
             compression: None,
             batch_config: None,
+            delivery_guarantee: None,
             _marker: PhantomData,
         }
     }

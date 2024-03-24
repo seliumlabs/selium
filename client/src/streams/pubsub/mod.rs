@@ -4,5 +4,5 @@ mod publisher;
 mod subscriber;
 
 pub(crate) mod states;
-pub use publisher::Publisher;
+pub use publisher::{DeliveryGuarantee, Publisher};
 pub use subscriber::Subscriber;

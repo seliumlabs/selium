@@ -98,7 +98,7 @@ where
 impl<E, Item> KeepAlive<Publisher<E, Item>>
 where
     E: MessageEncoder<Item> + Clone + Send + Unpin,
-    Item: Unpin + Send,
+    Item: Unpin + Send + Clone,
 {
     pub async fn finish(self) -> Result<()> {
         self.stream.finish().await
@@ -112,7 +112,7 @@ where
 impl<T, Item> Sink<Item> for KeepAlive<T>
 where
     T: KeepAliveStream + Sink<Item, Error = SeliumError> + Send + Unpin,
-    Item: Unpin + Send,
+    Item: Unpin + Send + Clone,
 {
     type Error = SeliumError;
 

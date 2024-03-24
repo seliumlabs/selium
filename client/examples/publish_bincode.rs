@@ -1,10 +1,9 @@
 use anyhow::Result;
-use futures::SinkExt;
 use selium::prelude::*;
 use selium::std::codecs::BincodeCodec;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct StockEvent {
     ticker: String,
     change: f64,
@@ -38,17 +37,17 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    tokio::spawn({
-        let mut publisher = publisher.duplicate().await.unwrap();
-        async move {
-            publisher
-                .send(StockEvent::new("MSFT", 12.75))
-                .await
-                .unwrap();
-
-            publisher.finish().await.unwrap();
-        }
-    });
+    // tokio::spawn({
+    //     let mut publisher = publisher.duplicate().await.unwrap();
+    //     async move {
+    //         publisher
+    //             .send(StockEvent::new("MSFT", 12.75))
+    //             .await
+    //             .unwrap();
+    //
+    //         publisher.finish().await.unwrap();
+    //     }
+    // });
 
     publisher.send(StockEvent::new("APPL", 3.5)).await?;
     publisher.send(StockEvent::new("INTC", -9.0)).await?;
