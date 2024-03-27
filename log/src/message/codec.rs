@@ -1,5 +1,6 @@
 use super::Message;
 use super::LEN_MARKER_SIZE;
+use crate::error::LogError;
 use bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -7,7 +8,7 @@ use tokio_util::codec::{Decoder, Encoder};
 pub struct LogCodec;
 
 impl Encoder<Message> for LogCodec {
-    type Error = anyhow::Error;
+    type Error = LogError;
 
     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let length = item.headers().length();
@@ -18,7 +19,7 @@ impl Encoder<Message> for LogCodec {
 }
 
 impl Decoder for LogCodec {
-    type Error = anyhow::Error;
+    type Error = LogError;
     type Item = Message;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {

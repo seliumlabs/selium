@@ -12,6 +12,9 @@ pub struct UserArgs {
     #[clap(flatten)]
     pub cert: CertGroup,
 
+    #[clap(flatten)]
+    pub log: LogArgs,
+
     /// Enable stateless retries
     #[clap(long = "stateless-retry")]
     pub stateless_retry: bool,
@@ -48,4 +51,19 @@ pub struct CertGroup {
         default_value = "certs/server/localhost.der"
     )]
     pub cert: PathBuf,
+}
+
+#[derive(Args, Debug)]
+pub struct LogArgs {
+    /// Path to directory to store log segments.
+    #[clap(long, default_value = "logs/")]
+    pub log_segments_directory: PathBuf,
+
+    /// Interval in seconds to poll log cleaner task - default to 5 minutes.
+    #[clap(long, default_value_t = 300_000)]
+    pub log_cleaner_interval: u64,
+
+    /// Maximum number of entries per log segment.
+    #[clap(long, default_value_t = 100_000)]
+    pub log_maximum_entries: u32,
 }

@@ -14,6 +14,13 @@ impl MessageSlice {
         }
     }
 
+    pub fn empty(end_offset: u64) -> Self {
+        Self {
+            messages: vec![],
+            end_offset,
+        }
+    }
+
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }

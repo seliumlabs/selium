@@ -4,20 +4,20 @@ use futures::{channel::mpsc, SinkExt};
 pub mod pubsub;
 pub mod reqrep;
 
-pub enum Socket<T, E> {
-    Pubsub(pubsub::Socket<T, E>),
-    Reqrep(reqrep::Socket<E>),
+pub enum Socket {
+    Pubsub(pubsub::Socket),
+    Reqrep(reqrep::Socket),
 }
 
-impl<T, E> Socket<T, E> {
-    fn unwrap_pubsub(self) -> pubsub::Socket<T, E> {
+impl Socket {
+    fn unwrap_pubsub(self) -> pubsub::Socket {
         match self {
             Self::Pubsub(s) => s,
             _ => panic!("Attempted to unwrap non-pubsub socket"),
         }
     }
 
-    fn unwrap_reqrep(self) -> reqrep::Socket<E> {
+    fn unwrap_reqrep(self) -> reqrep::Socket {
         match self {
             Self::Reqrep(s) => s,
             _ => panic!("Attempted to unwrap non-reqrep socket"),
@@ -25,13 +25,13 @@ impl<T, E> Socket<T, E> {
     }
 }
 
-pub enum Sender<T, E> {
-    Pubsub(mpsc::Sender<pubsub::Socket<T, E>>),
-    ReqRep(mpsc::Sender<reqrep::Socket<E>>),
+pub enum Sender {
+    Pubsub(mpsc::Sender<pubsub::Socket>),
+    ReqRep(mpsc::Sender<reqrep::Socket>),
 }
 
-impl<T, E> Sender<T, E> {
-    pub async fn send(&mut self, sock: Socket<T, E>) -> Result<()> {
+impl Sender {
+    pub async fn send(&mut self, sock: Socket) -> Result<()> {
         match self {
             Self::Pubsub(ref mut s) => s.send(sock.unwrap_pubsub()).await?,
             Self::ReqRep(ref mut s) => s.send(sock.unwrap_reqrep()).await?,

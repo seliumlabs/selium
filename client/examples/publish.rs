@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use futures::SinkExt;
 use selium::prelude::*;
@@ -22,7 +24,11 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    publisher.send("Hello, world!".to_owned()).await.unwrap();
+    for i in 0..35_000 {
+        let message = format!("Hello, world - {i}!");
+        publisher.send(message).await.unwrap();
+    }
+
     publisher.finish().await?;
 
     Ok(())

@@ -1,5 +1,4 @@
-use crate::{config::SharedLogConfig, segment::SegmentList};
-use anyhow::Result;
+use crate::{config::SharedLogConfig, error::Result, segment::SegmentList};
 use futures::FutureExt;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;

@@ -1380,14 +1380,15 @@ dependencies = [
 name = "selium-log"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bytes",
  "chrono",
  "crc32c",
  "futures",
  "memmap2",
  "tempfile",
+ "thiserror",
  "tokio",
+ "tokio-stream",
  "tokio-util",
 ]
 
@@ -1424,6 +1425,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-pemfile",
+ "selium-log",
  "selium-protocol",
  "selium-std",
  "serde",
@@ -1443,8 +1445,10 @@ dependencies = [
  "criterion",
  "fake",
  "flate2",
+ "futures",
  "lz4_flex",
  "quinn",
+ "selium-log",
  "serde",
  "thiserror",
  "zstd",

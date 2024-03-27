@@ -1,139 +1,224 @@
-use crate::{sink::FanoutMany, BoxSink};
+use crate::BoxSink;
+use bytes::Bytes;
 use futures::{
-    channel::{
-        mpsc::{self, Receiver, Sender},
-        oneshot,
-    },
+    channel::mpsc::{self, Receiver, Sender},
     ready,
-    stream::BoxStream,
-    Future, Sink, Stream,
+    stream::{BoxStream, FuturesUnordered},
+    Future, FutureExt, SinkExt, StreamExt,
 };
-use log::error;
-use pin_project_lite::pin_project;
-use selium_protocol::traits::{ShutdownSink, ShutdownStream};
-use selium_std::errors::Result;
+use selium_log::{
+    message::{Headers, Message, MessageSlice},
+    message_log::MessageLog,
+};
+use selium_protocol::{BatchPayload, Frame, MessagePayload, Offset};
+use selium_std::errors::{Result, SeliumError, TopicError};
 use std::{
-    fmt::Debug,
     pin::Pin,
-    task::{Context, Poll},
+    sync::Arc,
+    task::{Poll, Waker},
 };
+use tokio::sync::RwLock;
 use tokio_stream::StreamMap;
+
+pub type SharedLog = Arc<RwLock<MessageLog>>;
+pub type ReadFut = Pin<Box<dyn Future<Output = Result<MessageSlice>> + Send>>;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
-pub type TopicShutdown = oneshot::Receiver<()>;
-
-pub enum Socket<T, E> {
-    Stream(BoxStream<'static, Result<T>>),
-    Sink(BoxSink<T, E>),
+pub enum Socket {
+    Stream(BoxStream<'static, Result<Frame>>),
+    Sink(BoxSink<Frame, SeliumError>, Offset),
 }
 
-pin_project! {
-    #[project = TopicProj]
-    #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Topic<T, E> {
-        #[pin]
-        stream: StreamMap<usize, BoxStream<'static, Result<T>>>,
-        next_stream_id: usize,
-        #[pin]
-        sink: FanoutMany<usize, BoxSink<T, E>>,
-        next_sink_id: usize,
-        #[pin]
-        handle: Receiver<Socket<T, E>>,
-        buffered_item: Option<T>,
+pub struct Subscriber {
+    offset: u64,
+    log: SharedLog,
+    sink: BoxSink<Frame, SeliumError>,
+    buffered_slice: Vec<Message>,
+    read_fut: ReadFut,
+    waker: Option<Waker>,
+}
+
+impl Subscriber {
+    pub fn new(offset: Offset, log: SharedLog, sink: BoxSink<Frame, SeliumError>) -> Self {
+        Self {
+            offset: 0,
+            log: log.clone(),
+            sink,
+            buffered_slice: vec![],
+            read_fut: build_read_future(log, 0),
+            waker: None,
+        }
+    }
+
+    pub fn wake(&mut self) {
+        if let Some(waker) = self.waker.take() {
+            waker.wake_by_ref();
+        }
     }
 }
 
-impl<T, E> Topic<T, E> {
-    pub fn pair() -> (Self, Sender<Socket<T, E>>) {
+impl Future for Subscriber {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.waker = Some(cx.waker().clone());
+
+        loop {
+            if let Ok(slice) = ready!(self.read_fut.poll_unpin(cx)) {
+                self.offset = slice.end_offset();
+                self.buffered_slice = slice.messages().to_vec();
+                self.read_fut = build_read_future(self.log.clone(), self.offset);
+
+                if self.buffered_slice.is_empty() {
+                    return Poll::Pending;
+                }
+            }
+
+            while let Some(message) = self.buffered_slice.pop() {
+                let batch_size = message.headers().batch_size();
+                let records = Bytes::copy_from_slice(message.records());
+
+                let frame = if batch_size > 1 {
+                    Frame::BatchMessage(BatchPayload {
+                        message: records,
+                        size: batch_size,
+                    })
+                } else {
+                    Frame::Message(MessagePayload {
+                        headers: None,
+                        message: records,
+                    })
+                };
+
+                let _ = self.sink.start_send_unpin(frame);
+                let _ = self.sink.poll_flush_unpin(cx);
+            }
+        }
+    }
+}
+
+pub enum SubscribersEvent {
+    NewSubscriber(Pin<Box<Subscriber>>),
+    Wake,
+}
+
+pub struct Subscribers {
+    notify: Receiver<SubscribersEvent>,
+    futures: FuturesUnordered<Pin<Box<Subscriber>>>,
+}
+
+impl Subscribers {
+    pub fn new() -> (Sender<SubscribersEvent>, Self) {
+        let (tx, notify) = mpsc::channel(SOCK_CHANNEL_SIZE);
+        let futures = FuturesUnordered::new();
+        let subscribers = Self { notify, futures };
+        (tx, subscribers)
+    }
+
+    fn wake_subscribers(&mut self) {
+        self.futures.iter_mut().for_each(|f| f.wake());
+    }
+}
+
+impl Future for Subscribers {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        loop {
+            match self.notify.poll_next_unpin(cx) {
+                Poll::Ready(Some(event)) => {
+                    match event {
+                        SubscribersEvent::Wake => self.wake_subscribers(),
+                        SubscribersEvent::NewSubscriber(sub) => self.futures.push(sub),
+                    };
+                    cx.waker().wake_by_ref();
+                }
+                Poll::Ready(None) => return Poll::Ready(()),
+                Poll::Pending => (),
+            }
+
+            if self.futures.is_empty() {
+                return Poll::Pending;
+            } else {
+                ready!(self.futures.poll_next_unpin(cx));
+            }
+        }
+    }
+}
+
+pub struct Topic {
+    publishers: StreamMap<usize, BoxStream<'static, Result<Frame>>>,
+    next_stream_id: usize,
+    notify: Sender<SubscribersEvent>,
+    handle: Receiver<Socket>,
+    log: SharedLog,
+}
+
+impl Topic {
+    pub fn pair(log: SharedLog) -> (Self, Sender<Socket>) {
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
+        let publishers = StreamMap::new();
+        let (notify, subscribers) = Subscribers::new();
+        tokio::spawn(subscribers);
 
         (
             Self {
-                stream: StreamMap::new(),
+                log,
+                publishers,
+                notify,
                 next_stream_id: 0,
-                sink: FanoutMany::new(),
-                next_sink_id: 0,
                 handle: rx,
-                buffered_item: None,
             },
             tx,
         )
     }
-}
 
-impl<T, E> Future for Topic<T, E>
-where
-    E: Debug + Unpin,
-    T: Clone + Unpin,
-{
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let TopicProj {
-            mut stream,
-            next_stream_id,
-            mut sink,
-            next_sink_id,
-            mut handle,
-            buffered_item,
-        } = self.project();
-
+    pub async fn run(&mut self) -> Result<()> {
         loop {
-            // If we've got an item buffered already, we need to write it to the sink
-            // before we can do anything else.
-            if buffered_item.is_some() {
-                // Unwrapping is safe as the underlying sink is guaranteed not to error
-                ready!(sink.as_mut().poll_ready(cx)).unwrap();
-                sink.as_mut()
-                    .start_send(buffered_item.take().unwrap())
-                    .unwrap();
-            }
+            tokio::select! {
+                Some((_, Ok(frame))) = self.publishers.next() => {
+                    let batch_size = frame.unwrap_batch_size();
+                    let payload = frame.unwrap_payload();
 
-            match handle.as_mut().poll_next(cx) {
-                Poll::Ready(Some(sock)) => match sock {
-                    Socket::Stream(st) => {
-                        stream.as_mut().insert(*next_stream_id, st);
-                        *next_stream_id += 1;
-                    }
-                    Socket::Sink(si) => {
-                        sink.as_mut().insert(*next_sink_id, si);
-                        *next_sink_id += 1;
-                    }
+                    let headers = Headers::new(payload.len(), batch_size, 1);
+                    let message = Message::new(headers, &payload);
+                    let mut log = self.log.write().await;
+
+                    log.write(message).await?;
+                    self.notify.send(SubscribersEvent::Wake).await
+                        .map_err(TopicError::NotifySubscribers)?;
                 },
-                // If handle is terminated, the stream is dead
-                Poll::Ready(None) => {
-                    ready!(sink.as_mut().poll_flush(cx)).unwrap();
-                    stream.iter_mut().for_each(|(_, s)| s.shutdown_stream());
-                    sink.iter_mut().for_each(|(_, s)| s.shutdown_sink());
+                Some(socket) = self.handle.next() => match socket {
+                    Socket::Stream(st) => {
+                        self.publishers.insert(self.next_stream_id, st);
+                        self.next_stream_id += 1;
+                    }
+                    Socket::Sink(si, offset) => {
+                        let subscriber = Box::pin(Subscriber::new(offset, self.log.clone(), si));
 
-                    return Poll::Ready(());
-                }
-                // If no messages are available and there's no work to do, block this future
-                Poll::Pending if stream.is_empty() && buffered_item.is_none() => {
-                    return Poll::Pending
-                }
-                // Otherwise, move on with running the stream
-                Poll::Pending => (),
-            }
-
-            match stream.as_mut().poll_next(cx) {
-                // Received message from an inner stream
-                Poll::Ready(Some((_, Ok(item)))) => *buffered_item = Some(item),
-                // Encountered an error whilst receiving a message from an inner stream
-                Poll::Ready(Some((_, Err(e)))) => {
-                    error!("Received invalid message from stream: {e:?}")
-                }
-                // All streams have finished
-                // Unwrapping is safe as the underlying sink is guaranteed not to error
-                Poll::Ready(None) => ready!(sink.as_mut().poll_flush(cx)).unwrap(),
-                // No messages are available at this time
-                Poll::Pending => {
-                    // Unwrapping is safe as the underlying sink is guaranteed not to error
-                    ready!(sink.poll_flush(cx)).unwrap();
-                    return Poll::Pending;
+                        self.notify
+                            .send(SubscribersEvent::NewSubscriber(subscriber))
+                            .await.map_err(TopicError::NotifySubscribers)?;
+                    }
                 }
             }
         }
     }
+}
+
+fn build_read_future(log: SharedLog, offset: u64) -> ReadFut {
+    Box::pin({
+        let log = log.clone();
+        let range = offset..offset + 1000;
+
+        async move {
+            let log = log.read().await;
+            let slice = log.read_slice(range).await.map_err(SeliumError::Log);
+            return slice;
+        }
+    })
 }

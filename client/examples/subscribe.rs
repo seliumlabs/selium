@@ -30,5 +30,7 @@ async fn main() -> Result<()> {
         println!("NEW MESSAGE: \"{message}\"");
     }
 
+    println!("Done!");
+
     Ok(())
 }

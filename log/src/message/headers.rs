@@ -11,7 +11,7 @@ pub struct Headers {
 }
 
 impl Headers {
-    pub fn new(batch_len: usize, version: u32, batch_size: u32) -> Self {
+    pub fn new(batch_len: usize, batch_size: u32, version: u32) -> Self {
         let length = (batch_len + HEADERS_SIZE + CRC_SIZE) as u64;
         let timestamp = Utc::now().timestamp() as u64;
 
@@ -51,11 +51,11 @@ impl Headers {
         self.version
     }
 
-    pub fn timestamp(&self) -> u64 {
-        self.timestamp
-    }
-
     pub fn batch_size(&self) -> u32 {
         self.batch_size
+    }
+
+    pub fn timestamp(&self) -> u64 {
+        self.timestamp
     }
 }

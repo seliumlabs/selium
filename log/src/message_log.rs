@@ -1,10 +1,10 @@
 use crate::{
     config::SharedLogConfig,
+    error::{LogError, Result},
     log_cleaner::LogCleaner,
     message::{Message, MessageSlice},
     segment::SegmentList,
 };
-use anyhow::Result;
 use std::{ffi::OsStr, ops::Range, path::Path, sync::Arc};
 use tokio::fs;
 
@@ -16,14 +16,15 @@ pub struct MessageLog {
 
 impl MessageLog {
     pub async fn open(config: SharedLogConfig) -> Result<Self> {
-        let path = config.segments_path();
-        fs::create_dir_all(path).await?;
+        fs::create_dir_all(config.segments_path())
+            .await
+            .map_err(LogError::CreateLogsDirectory)?;
+
         let segments = load_segments(config.clone()).await?;
         let _cleaner = LogCleaner::start(config, segments.clone());
 
         Ok(Self { segments, _cleaner })
     }
-
     pub async fn write(&mut self, message: Message) -> Result<()> {
         self.segments.write(message).await?;
         Ok(())
@@ -41,7 +42,7 @@ fn is_index_file(path: &Path) -> bool {
 
 async fn get_offsets(path: impl AsRef<Path>) -> Result<Vec<u64>> {
     let mut offsets = vec![];
-    let mut entries = fs::read_dir(&path).await?;
+    let mut entries = fs::read_dir(&path).await.map_err(LogError::LoadSegments)?;
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();

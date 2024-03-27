@@ -203,14 +203,14 @@ where
             }
             // If the frame is a batched message, then set the current batch and call `poll_next`
             // again to begin popping off messages.
-            Frame::BatchMessage(mut bytes) => {
+            Frame::BatchMessage(mut payload) => {
                 if let Some(decomp) = &self.decompression {
-                    bytes = decomp
-                        .decompress(bytes)
+                    payload.message = decomp
+                        .decompress(payload.message)
                         .map_err(CodecError::DecompressFailure)?;
                 }
 
-                let batch = decode_message_batch(bytes);
+                let batch = decode_message_batch(payload.message);
                 self.message_batch = Some(batch);
                 self.poll_next(cx)
             }

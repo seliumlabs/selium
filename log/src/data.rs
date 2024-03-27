@@ -1,5 +1,5 @@
+use crate::error::Result;
 use crate::message::{LogCodec, Message};
-use anyhow::Result;
 use futures::{SinkExt, StreamExt};
 use std::time::{Duration, SystemTime};
 use std::{
@@ -69,7 +69,7 @@ impl Data {
     pub async fn read_messages(
         &self,
         start_position: u64,
-        end_position: u64,
+        end_position: Option<u64>,
     ) -> Result<Vec<Message>> {
         let mut reader = new_reader(&self.path, start_position, end_position).await?;
         let mut messages = vec![];
@@ -92,7 +92,6 @@ impl Data {
         self.writer.send(message).await?;
         self.writer.flush().await?;
         self.position += length;
-
         Ok(())
     }
 
@@ -109,12 +108,16 @@ impl Data {
 async fn new_reader(
     path: impl AsRef<Path>,
     start_position: u64,
-    end_position: u64,
+    end_position: Option<u64>,
 ) -> Result<FramedRead<Take<File>, LogCodec>> {
-    let slice_length = (end_position - start_position) as usize;
     let mut file = File::open(path).await?;
     file.seek(SeekFrom::Start(start_position)).await?;
-    let slice = file.take(slice_length as u64);
 
+    let slice_length = match end_position {
+        Some(end_position) => end_position - start_position,
+        None => u64::MAX,
+    };
+
+    let slice = file.take(slice_length);
     Ok(FramedRead::new(slice, LogCodec))
 }

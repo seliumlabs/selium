@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Sink, SinkExt};
 use selium_protocol::utils::encode_message_batch;
-use selium_protocol::{BiStream, Frame, MessagePayload, PublisherPayload, TopicName};
+use selium_protocol::{BatchPayload, BiStream, Frame, MessagePayload, PublisherPayload, TopicName};
 use selium_std::errors::{CodecError, Result, SeliumError};
 use selium_std::traits::codec::MessageEncoder;
 use selium_std::traits::compression::Compress;
@@ -241,13 +241,18 @@ where
         let batch = self.batch.as_mut().unwrap();
 
         let messages = batch.drain();
+        let batch_size = messages.len();
         let mut bytes = encode_message_batch(messages);
 
         if let Some(comp) = &self.compression {
             bytes = comp.compress(bytes).map_err(CodecError::CompressFailure)?;
         }
 
-        let frame = Frame::BatchMessage(bytes);
+        let frame = Frame::BatchMessage(BatchPayload {
+            size: batch_size as u32,
+            message: bytes,
+        });
+
         self.stream.start_send_unpin(frame)?;
         batch.update_last_run(now);
 

@@ -1,6 +1,9 @@
 use super::entry::SIZE_OF_INDEX_ENTRY;
-use crate::{config::SharedLogConfig, index::IndexEntry};
-use anyhow::Result;
+use crate::{
+    config::SharedLogConfig,
+    error::{LogError, Result},
+    index::IndexEntry,
+};
 use bytes::Buf;
 use std::{
     ops::{Deref, DerefMut},
@@ -18,7 +21,7 @@ impl Mmap {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let file = OpenOptions::new().write(true).read(true).open(path).await?;
-        let mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
+        let mmap = unsafe { memmap2::MmapMut::map_mut(&file).map_err(LogError::MemoryMapIndex)? };
 
         Ok(Self {
             mmap,
@@ -38,7 +41,7 @@ impl Mmap {
 
         let length = config.max_index_entries() as u64 * SIZE_OF_INDEX_ENTRY as u64;
         file.set_len(length).await?;
-        let mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
+        let mmap = unsafe { memmap2::MmapMut::map_mut(&file).map_err(LogError::MemoryMapIndex)? };
 
         Ok(Self {
             mmap,

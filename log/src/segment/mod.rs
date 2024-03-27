@@ -2,9 +2,9 @@ mod list;
 
 use crate::config::SharedLogConfig;
 use crate::data::Data;
+use crate::error::Result;
 use crate::index::Index;
 use crate::message::{Message, MessageSlice};
-use anyhow::Result;
 pub use list::SegmentList;
 use std::cmp;
 use std::ops::Range;
@@ -25,7 +25,7 @@ impl Segment {
         let (index_path, data_path) = get_segment_paths(path, base_offset);
         let index = Index::open(index_path, config).await?;
         let data = Data::open(data_path).await?;
-        let end_offset = index.current_offset() as u64;
+        let end_offset = base_offset + index.current_offset() as u64;
 
         Ok(Self {
             index,
@@ -45,34 +45,32 @@ impl Segment {
             index,
             data,
             base_offset,
-            end_offset: 0,
+            end_offset: base_offset,
         })
     }
 
     pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<MessageSlice> {
-        let relative_offset = offset_range.start - self.base_offset;
-        let relative_offset = cmp::max(relative_offset, 1);
+        let end_offset = cmp::min(offset_range.end, self.end_offset);
+        let relative_start_offset = cmp::max(offset_range.start - self.base_offset, 1);
+        let relative_end_offset = end_offset - self.base_offset;
 
-        if let Some(start_entry) = self.index.lookup(relative_offset as u32)? {
-            let end_offset = cmp::min(offset_range.end, self.end_offset);
+        // TODO: Consider starting from relative offset 0 to avoid confusion and ambiguity.
+        if let Some(start_entry) = self.index.lookup(relative_start_offset as u32)? {
+            let start_pos = start_entry.physical_position();
 
-            if let Some(end_entry) = self.index.lookup(end_offset as u32)? {
-                let start_position = start_entry.physical_position();
-                let end_position = end_entry.physical_position();
-                let messages = self
-                    .data
-                    .read_messages(start_position, end_position)
-                    .await?;
-                let slice = MessageSlice::new(messages.as_slice(), end_offset);
-                return Ok(slice);
+            if end_offset == self.end_offset {
+                let messages = self.data.read_messages(start_pos, None).await?;
+                return Ok(MessageSlice::new(messages.as_slice(), end_offset + 1));
+            }
+
+            if let Some(end_entry) = self.index.lookup(relative_end_offset as u32)? {
+                let end_pos = end_entry.physical_position();
+                let messages = self.data.read_messages(start_pos, Some(end_pos)).await?;
+                return Ok(MessageSlice::new(messages.as_slice(), end_offset));
             }
         }
 
-        Ok(MessageSlice::default())
-    }
-
-    pub fn is_stale(&self, stale_duration: Duration) -> bool {
-        self.data.is_stale(stale_duration)
+        Ok(MessageSlice::empty(offset_range.start))
     }
 
     pub async fn write(&mut self, message: Message) -> Result<()> {
@@ -90,6 +88,14 @@ impl Segment {
         self.data.remove().await?;
         self.index.remove().await?;
         Ok(())
+    }
+
+    pub fn is_stale(&self, stale_duration: Duration) -> bool {
+        self.data.is_stale(stale_duration)
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.index.is_full()
     }
 
     pub fn base_offset(&self) -> u64 {

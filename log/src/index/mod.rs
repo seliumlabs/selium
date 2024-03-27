@@ -1,8 +1,7 @@
 mod entry;
 mod mmap;
 
-use crate::config::SharedLogConfig;
-use anyhow::Result;
+use crate::{config::SharedLogConfig, error::Result};
 pub use entry::IndexEntry;
 use mmap::Mmap;
 use std::path::Path;
@@ -65,5 +64,9 @@ impl Index {
 
     pub fn current_offset(&self) -> u32 {
         self.current_offset
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.current_offset == self.config.max_index_entries()
     }
 }
