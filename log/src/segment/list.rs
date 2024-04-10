@@ -4,7 +4,6 @@ use crate::error::{LogError, Result};
 use crate::message::{Message, MessageSlice};
 use futures::future::try_join_all;
 use std::collections::BTreeMap;
-use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -40,30 +39,20 @@ impl SegmentList {
         Ok(Self::new(segments, config))
     }
 
-    pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<MessageSlice> {
+    pub async fn read_slice(&self, offset: u64, limit: Option<u64>) -> Result<MessageSlice> {
         let list = self.segments.read().await;
 
         let found = list
             .iter()
             .rev()
-            .find(|(&base_offset, _)| offset_range.start >= base_offset);
+            .find(|(&base_offset, _)| offset >= base_offset);
 
         if let Some((_, segment)) = found {
-            let slice = segment.read_slice(offset_range).await?;
+            let slice = segment.read_slice(offset, limit).await?;
             Ok(slice)
         } else {
             Ok(MessageSlice::default())
         }
-    }
-
-    pub async fn push(&self, segment: Segment) {
-        let mut list = self.segments.write().await;
-        list.insert(segment.base_offset(), segment);
-    }
-
-    pub async fn remove(&self, offset: u64) {
-        let mut list = self.segments.write().await;
-        list.remove(&offset);
     }
 
     pub async fn write(&mut self, message: Message) -> Result<()> {
@@ -72,6 +61,7 @@ impl SegmentList {
         segment.write(message).await?;
 
         if segment.is_full() {
+            segment.flush().await?;
             let new_offset = segment.end_offset() + 1;
             let new_segment = Segment::create(new_offset, self.config.clone()).await?;
             list.insert(new_offset, new_segment);
@@ -80,14 +70,25 @@ impl SegmentList {
         Ok(())
     }
 
-    pub async fn find_stale_segments(&self, stale_duration: Duration) -> Vec<u64> {
-        let segments = self.segments.read().await;
+    pub async fn flush(&self) -> Result<()> {
+        let mut list = self.segments.write().await;
+        let (_, segment) = list.iter_mut().last().ok_or(LogError::SegmentListEmpty)?;
+        segment.flush().await?;
 
-        segments
-            .iter()
-            .filter(|(_, segment)| segment.is_stale(stale_duration))
-            .map(|(offset, _)| *offset)
-            .collect()
+        Ok(())
+    }
+
+    pub async fn find_stale_segments(&self, stale_duration: Duration) -> Result<Vec<u64>> {
+        let segments = self.segments.read().await;
+        let mut stale_segments = vec![];
+
+        for (offset, segment) in segments.iter() {
+            if segment.is_stale(stale_duration).await? {
+                stale_segments.push(*offset);
+            }
+        }
+
+        Ok(stale_segments)
     }
 
     pub async fn remove_segments(&self, offsets: Vec<u64>) -> Result<()> {

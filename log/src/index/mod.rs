@@ -33,15 +33,18 @@ impl Index {
         Ok(Self::new(mmap, 0, config))
     }
 
-    pub async fn append(&mut self, timestamp: u64, file_position: u64) -> Result<()> {
+    pub fn append(&mut self, timestamp: u64, file_position: u64) -> Result<()> {
         if self.current_offset <= self.config.max_index_entries() {
-            let next_offset = self.current_offset + 1;
-            let entry = IndexEntry::new(next_offset, timestamp, file_position);
+            let entry = IndexEntry::new(self.current_offset, timestamp, file_position);
             self.mmap.push(entry);
-            self.mmap.flush()?;
-            self.current_offset = next_offset;
+            self.current_offset += 1;
         }
 
+        Ok(())
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.mmap.flush()?;
         Ok(())
     }
 

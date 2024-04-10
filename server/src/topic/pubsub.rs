@@ -7,6 +7,7 @@ use futures::{
     Future, FutureExt, SinkExt, StreamExt,
 };
 use selium_log::{
+    data::LogIterator,
     message::{Headers, Message, MessageSlice},
     message_log::MessageLog,
 };
@@ -34,7 +35,7 @@ pub struct Subscriber {
     offset: u64,
     log: SharedLog,
     sink: BoxSink<Frame, SeliumError>,
-    buffered_slice: Vec<Message>,
+    buffered_slice: Option<LogIterator>,
     read_fut: ReadFut,
     waker: Option<Waker>,
 }
@@ -45,7 +46,7 @@ impl Subscriber {
             offset: 0,
             log: log.clone(),
             sink,
-            buffered_slice: vec![],
+            buffered_slice: None,
             read_fut: build_read_future(log, 0),
             waker: None,
         }
@@ -56,29 +57,10 @@ impl Subscriber {
             waker.wake_by_ref();
         }
     }
-}
 
-impl Future for Subscriber {
-    type Output = ();
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        self.waker = Some(cx.waker().clone());
-
-        loop {
-            if let Ok(slice) = ready!(self.read_fut.poll_unpin(cx)) {
-                self.offset = slice.end_offset();
-                self.buffered_slice = slice.messages().to_vec();
-                self.read_fut = build_read_future(self.log.clone(), self.offset);
-
-                if self.buffered_slice.is_empty() {
-                    return Poll::Pending;
-                }
-            }
-
-            while let Some(message) = self.buffered_slice.pop() {
+    async fn read_messages(&mut self) {
+    if let Some(slice) = self.buffered_slice {
+        let next = slice.next().await.unwrap();
                 let batch_size = message.headers().batch_size();
                 let records = Bytes::copy_from_slice(message.records());
 
@@ -94,8 +76,30 @@ impl Future for Subscriber {
                     })
                 };
 
-                let _ = self.sink.start_send_unpin(frame);
-                let _ = self.sink.poll_flush_unpin(cx);
+                self.sink.send(frame).await;
+    }
+
+    }
+}
+
+impl Future for Subscriber {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.waker = Some(cx.waker().clone());
+
+        ready!(self.read_messages().poll_unpin(cx));
+
+        if let Ok(slice) = ready!(self.read_fut.poll_unpin(cx)) {
+            self.offset = slice.end_offset();
+            self.buffered_slice = slice.messages();
+            self.read_fut = build_read_future(self.log.clone(), self.offset);
+
+            if self.buffered_slice.is_none() {
+                return Poll::Pending;
             }
         }
     }
@@ -221,4 +225,4 @@ fn build_read_future(log: SharedLog, offset: u64) -> ReadFut {
             return slice;
         }
     })
-}
+})

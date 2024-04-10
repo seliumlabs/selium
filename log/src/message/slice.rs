@@ -1,28 +1,28 @@
-use super::Message;
+use crate::data::LogIterator;
 
 #[derive(Debug, Default)]
 pub struct MessageSlice {
-    messages: Vec<Message>,
+    messages: Option<LogIterator>,
     end_offset: u64,
 }
 
 impl MessageSlice {
-    pub fn new(messages: &[Message], end_offset: u64) -> Self {
+    pub fn new(messages: LogIterator, end_offset: u64) -> Self {
         Self {
-            messages: messages.to_vec(),
+            messages: Some(messages),
             end_offset,
         }
     }
 
     pub fn empty(end_offset: u64) -> Self {
         Self {
-            messages: vec![],
+            messages: None,
             end_offset,
         }
     }
 
-    pub fn messages(&self) -> &[Message] {
-        &self.messages
+    pub fn messages(self) -> Option<LogIterator> {
+        self.messages
     }
 
     pub fn end_offset(&self) -> u64 {

@@ -7,7 +7,6 @@ use crate::index::Index;
 use crate::message::{Message, MessageSlice};
 pub use list::SegmentList;
 use std::cmp;
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -49,28 +48,27 @@ impl Segment {
         })
     }
 
-    pub async fn read_slice(&self, offset_range: Range<u64>) -> Result<MessageSlice> {
-        let end_offset = cmp::min(offset_range.end, self.end_offset);
-        let relative_start_offset = cmp::max(offset_range.start - self.base_offset, 1);
+    pub async fn read_slice(&self, offset: u64, limit: Option<u64>) -> Result<MessageSlice> {
+        let end_offset = limit.map_or(self.end_offset, |e| cmp::max(offset + e, self.end_offset));
+        let relative_start_offset = offset - self.base_offset;
         let relative_end_offset = end_offset - self.base_offset;
 
-        // TODO: Consider starting from relative offset 0 to avoid confusion and ambiguity.
         if let Some(start_entry) = self.index.lookup(relative_start_offset as u32)? {
             let start_pos = start_entry.physical_position();
 
             if end_offset == self.end_offset {
                 let messages = self.data.read_messages(start_pos, None).await?;
-                return Ok(MessageSlice::new(messages.as_slice(), end_offset + 1));
+                return Ok(MessageSlice::new(messages, end_offset + 1));
             }
 
             if let Some(end_entry) = self.index.lookup(relative_end_offset as u32)? {
                 let end_pos = end_entry.physical_position();
                 let messages = self.data.read_messages(start_pos, Some(end_pos)).await?;
-                return Ok(MessageSlice::new(messages.as_slice(), end_offset));
+                return Ok(MessageSlice::new(messages, end_offset));
             }
         }
 
-        Ok(MessageSlice::empty(offset_range.start))
+        Ok(MessageSlice::empty(offset))
     }
 
     pub async fn write(&mut self, message: Message) -> Result<()> {
@@ -78,9 +76,15 @@ impl Segment {
         let timestamp = message.headers().timestamp();
 
         self.data.write(message).await?;
-        self.index.append(timestamp, position).await?;
+        self.index.append(timestamp, position)?;
         self.end_offset += 1;
 
+        Ok(())
+    }
+
+    pub async fn flush(&mut self) -> Result<()> {
+        self.index.flush()?;
+        self.data.flush().await?;
         Ok(())
     }
 
@@ -90,16 +94,12 @@ impl Segment {
         Ok(())
     }
 
-    pub fn is_stale(&self, stale_duration: Duration) -> bool {
-        self.data.is_stale(stale_duration)
+    pub async fn is_stale(&self, stale_duration: Duration) -> Result<bool> {
+        self.data.is_stale(stale_duration).await
     }
 
     pub fn is_full(&self) -> bool {
         self.index.is_full()
-    }
-
-    pub fn base_offset(&self) -> u64 {
-        self.base_offset
     }
 
     pub fn end_offset(&self) -> u64 {

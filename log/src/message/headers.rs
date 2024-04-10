@@ -1,5 +1,5 @@
 use super::{CRC_SIZE, HEADERS_SIZE};
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut};
 use chrono::Utc;
 
 #[derive(Debug, Clone)]
@@ -23,7 +23,8 @@ impl Headers {
         }
     }
 
-    pub fn decode(src: &mut BytesMut, length: u64) -> Self {
+    pub fn decode(mut src: &[u8]) -> Self {
+        let length = src.get_u64();
         let version = src.get_u32();
         let batch_size = src.get_u32();
         let timestamp = src.get_u64();
@@ -36,7 +37,7 @@ impl Headers {
         }
     }
 
-    pub fn encode(&self, buffer: &mut BytesMut) {
+    pub fn encode<T: BufMut>(&self, buffer: &mut T) {
         buffer.put_u64(self.length);
         buffer.put_u32(self.version);
         buffer.put_u32(self.batch_size);

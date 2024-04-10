@@ -1,16 +1,17 @@
-mod codec;
 mod headers;
 mod slice;
 
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-pub use codec::LogCodec;
+use std::mem::size_of;
+
+use bytes::{BufMut, Bytes};
 use crc32c::crc32c;
 pub use headers::Headers;
 pub use slice::MessageSlice;
 
-pub const LEN_MARKER_SIZE: usize = 8;
-pub const CRC_SIZE: usize = 4;
-pub const HEADERS_SIZE: usize = 24;
+pub const LEN_MARKER_SIZE: usize = size_of::<u64>();
+pub const CRC_SIZE: usize = size_of::<u32>();
+pub const HEADERS_SIZE: usize =
+    size_of::<u64>() + size_of::<u32>() + size_of::<u32>() + size_of::<u64>();
 
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -30,22 +31,19 @@ impl Message {
         }
     }
 
-    pub fn decode(src: &mut BytesMut, length: u64) -> Self {
-        let headers = Headers::decode(src, length);
-        let records_byte_len = length as usize - HEADERS_SIZE - CRC_SIZE;
-        let records = src.copy_to_bytes(records_byte_len);
-        let _crc = src.get_u32();
+    pub fn decode(headers: Headers, records: &[u8], crc: u32) -> Self {
+        let records = Bytes::copy_from_slice(records);
 
         Self {
             headers,
             records,
-            _crc,
+            _crc: crc,
         }
     }
 
-    pub fn encode(&self, buffer: &mut BytesMut) {
+    pub fn encode(&self, buffer: &mut Vec<u8>) {
         self.headers.encode(buffer);
-        buffer.extend_from_slice(&self.records);
+        buffer.put_slice(&self.records);
         let crc = crc32c(buffer);
         buffer.put_u32(crc);
     }

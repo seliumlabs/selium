@@ -1,3 +1,6 @@
+mod flush_policy;
+
+pub use flush_policy::FlushPolicy;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -6,12 +9,13 @@ use std::{
 
 pub type SharedLogConfig = Arc<LogConfig>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LogConfig {
     max_index_entries: u32,
     segments_path: PathBuf,
     retention_period: Duration,
     cleaner_interval: Duration,
+    flush_policy: FlushPolicy,
 }
 
 impl LogConfig {
@@ -20,12 +24,14 @@ impl LogConfig {
         segments_path: impl AsRef<Path>,
         retention_period: Duration,
         cleaner_interval: Duration,
+        flush_policy: FlushPolicy,
     ) -> Self {
         Self {
             max_index_entries,
             segments_path: segments_path.as_ref().to_owned(),
             retention_period,
             cleaner_interval,
+            flush_policy,
         }
     }
 
@@ -43,5 +49,9 @@ impl LogConfig {
 
     pub fn cleaner_interval(&self) -> Duration {
         self.cleaner_interval
+    }
+
+    pub fn flush_policy(&self) -> &FlushPolicy {
+        &self.flush_policy
     }
 }
