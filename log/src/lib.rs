@@ -29,7 +29,7 @@ pub struct MessageLog {
 
 impl MessageLog {
     pub async fn open(config: SharedLogConfig) -> Result<Self> {
-        fs::create_dir_all(config.segments_path())
+        fs::create_dir_all(&config.segments_path)
             .await
             .map_err(LogError::CreateLogsDirectory)?;
 
@@ -58,8 +58,16 @@ impl MessageLog {
         self.segments.read_slice(offset, limit).await
     }
 
+    pub async fn flush(&mut self) -> Result<()> {
+        self.segments.flush().await?;
+        self.flush_interrupt.send(()).await.unwrap();
+        self.writes_since_last_flush = 0;
+
+        Ok(())
+    }
+
     async fn try_flush(&mut self) -> Result<()> {
-        let should_flush = match self.config.flush_policy().number_of_writes {
+        let should_flush = match self.config.flush_policy.number_of_writes {
             Some(number_of_writes) => self.writes_since_last_flush >= number_of_writes,
             None => false,
         };
@@ -67,14 +75,6 @@ impl MessageLog {
         if should_flush {
             self.flush().await?;
         }
-
-        Ok(())
-    }
-
-    pub async fn flush(&mut self) -> Result<()> {
-        self.segments.flush().await?;
-        self.flush_interrupt.send(()).await.unwrap();
-        self.writes_since_last_flush = 0;
 
         Ok(())
     }
@@ -107,7 +107,7 @@ async fn get_offsets(path: impl AsRef<Path>) -> Result<Vec<u64>> {
 }
 
 async fn load_segments(config: SharedLogConfig) -> Result<SegmentList> {
-    let path = config.segments_path();
+    let path = &config.segments_path;
     let offsets = get_offsets(path).await?;
 
     let segments = if !offsets.is_empty() {

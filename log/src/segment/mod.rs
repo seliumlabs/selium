@@ -20,7 +20,7 @@ pub struct Segment {
 
 impl Segment {
     pub async fn open(base_offset: u64, config: SharedLogConfig) -> Result<Self> {
-        let path = config.segments_path();
+        let path = &config.segments_path;
         let (index_path, data_path) = get_segment_paths(path, base_offset);
         let index = Index::open(index_path, config).await?;
         let data = Data::open(data_path).await?;
@@ -35,7 +35,7 @@ impl Segment {
     }
 
     pub async fn create(base_offset: u64, config: SharedLogConfig) -> Result<Self> {
-        let path = config.segments_path();
+        let path = &config.segments_path;
         let (index_path, data_path) = get_segment_paths(path, base_offset);
         let index = Index::create(index_path, config).await?;
         let data = Data::create(data_path).await?;

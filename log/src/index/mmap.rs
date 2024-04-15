@@ -39,7 +39,7 @@ impl Mmap {
             .open(path)
             .await?;
 
-        let length = config.max_index_entries() as u64 * SIZE_OF_INDEX_ENTRY as u64;
+        let length = config.max_index_entries as u64 * SIZE_OF_INDEX_ENTRY as u64;
         file.set_len(length).await?;
         let mmap = unsafe { memmap2::MmapMut::map_mut(&file).map_err(LogError::MemoryMapIndex)? };
 

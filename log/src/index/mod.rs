@@ -34,7 +34,7 @@ impl Index {
     }
 
     pub fn append(&mut self, timestamp: u64, file_position: u64) -> Result<()> {
-        if self.current_offset <= self.config.max_index_entries() {
+        if self.current_offset <= self.config.max_index_entries {
             let next_offset = self.current_offset + 1;
             let entry = IndexEntry::new(next_offset, timestamp, file_position);
             self.mmap.push(entry);
@@ -71,6 +71,6 @@ impl Index {
     }
 
     pub fn is_full(&self) -> bool {
-        self.current_offset == self.config.max_index_entries()
+        self.current_offset == self.config.max_index_entries
     }
 }

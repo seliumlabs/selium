@@ -2,18 +2,20 @@ mod iterator;
 
 use crate::error::Result;
 use crate::message::Message;
+use bytes::BytesMut;
 pub use iterator::LogIterator;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::fs;
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug)]
 pub struct Data {
     path: PathBuf,
-    writer: BufWriter<File>,
+    file: File,
+    buffer: BytesMut,
     position: u64,
 }
 
@@ -23,11 +25,11 @@ impl Data {
         let file = OpenOptions::new().read(true).write(true).open(path).await?;
         let metadata = file.metadata().await?;
         let position = metadata.len();
-        let writer = BufWriter::new(file);
 
         Ok(Self {
             path: path.to_owned(),
-            writer,
+            file,
+            buffer: BytesMut::new(),
             position,
         })
     }
@@ -42,11 +44,10 @@ impl Data {
             .open(path)
             .await?;
 
-        let writer = BufWriter::new(file);
-
         Ok(Self {
             path: path.to_owned(),
-            writer,
+            file,
+            buffer: BytesMut::new(),
             position: 0,
         })
     }
@@ -66,7 +67,7 @@ impl Data {
     }
 
     pub async fn is_stale(&self, stale_duration: Duration) -> Result<bool> {
-        let last_modified_time = self.writer.get_ref().metadata().await?.modified()?;
+        let last_modified_time = self.file.metadata().await?.modified()?;
 
         let stale = last_modified_time
             .elapsed()
@@ -80,14 +81,15 @@ impl Data {
         let mut buffer = Vec::with_capacity(message.headers().length() as usize);
         message.encode(&mut buffer);
 
-        self.writer.write_all(&mut buffer).await?;
+        self.buffer.extend_from_slice(&mut buffer);
         self.position += length;
 
         Ok(())
     }
 
     pub async fn flush(&mut self) -> Result<()> {
-        self.writer.flush().await?;
+        let buffer = std::mem::replace(&mut self.buffer, BytesMut::new());
+        self.file.write_all(&buffer).await?;
         Ok(())
     }
 

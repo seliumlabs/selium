@@ -32,7 +32,7 @@ impl CleanerTask {
     async fn run(&self) -> Result<()> {
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(self.config.cleaner_interval()) => {
+                _ = tokio::time::sleep(self.config.cleaner_interval) => {
                     self.remove_stale_segments().await?;
                 },
                 _ = self.cancellation_token.cancelled() => {
@@ -45,7 +45,7 @@ impl CleanerTask {
     async fn remove_stale_segments(&self) -> Result<()> {
         let stale_segments = self
             .segments
-            .find_stale_segments(self.config.retention_period())
+            .find_stale_segments(self.config.retention_period)
             .await?;
 
         self.segments.remove_segments(stale_segments).await?;

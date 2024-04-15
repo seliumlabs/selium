@@ -34,11 +34,11 @@ impl FlusherTask {
     async fn run(&self, mut rx: Receiver<()>) -> Result<()> {
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(self.config.flush_policy().interval) => {
+                _ = tokio::time::sleep(self.config.flush_policy.interval) => {
                     self.segments.flush().await?;
                 },
                 _ = rx.recv() => {
-                   continue;
+                    continue;
                 }
                 _ = self.cancellation_token.cancelled() => {
                     break Ok(());
