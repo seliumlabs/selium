@@ -5,8 +5,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
 use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
-use selium_log::config::LogConfig;
-use selium_log::message_log::MessageLog;
+use selium_log::config::{FlushPolicy, LogConfig};
+use selium_log::MessageLog;
 use selium_protocol::error_codes::INVALID_TOPIC_NAME;
 use selium_protocol::{error_codes, BiStream, ErrorPayload, Frame, TopicName};
 use std::net::SocketAddr;
@@ -233,6 +233,7 @@ async fn handle_stream(
                         segments_path,
                         Duration::from_millis(retention_period),
                         Duration::from_secs(log_args.log_cleaner_interval),
+                        FlushPolicy::default().number_of_writes(100),
                     ));
 
                     let log = MessageLog::open(config).await?;

@@ -1,9 +1,9 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use futures::SinkExt;
 use selium::prelude::*;
 use selium::std::codecs::StringCodec;
+
+const NUM_OF_MESSAGES: usize = 50_000;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    for i in 0..35_000 {
+    for i in 0..NUM_OF_MESSAGES {
         let message = format!("Hello, world - {i}!");
         publisher.send(message).await.unwrap();
     }

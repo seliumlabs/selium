@@ -55,7 +55,7 @@ impl Mmap {
     }
 
     pub fn push(&mut self, entry: IndexEntry) {
-        let slice_start = entry.relative_offset() as usize * SIZE_OF_INDEX_ENTRY;
+        let slice_start = (entry.relative_offset() - 1) as usize * SIZE_OF_INDEX_ENTRY;
         let slice_end = slice_start + SIZE_OF_INDEX_ENTRY;
         self.mmap[slice_start..slice_end].copy_from_slice(&entry.into_slice());
     }
@@ -91,7 +91,7 @@ impl Mmap {
         }
 
         // If the memory mapped file is empty, there are no relative offsets in the index yet.
-        0
+        1
     }
 
     fn get_last_offset(&self) -> u32 {

@@ -2,27 +2,24 @@ use crate::BoxSink;
 use bytes::Bytes;
 use futures::{
     channel::mpsc::{self, Receiver, Sender},
-    ready,
-    stream::{BoxStream, FuturesUnordered},
-    Future, FutureExt, SinkExt, StreamExt,
+    stream::BoxStream,
+    Future, SinkExt, StreamExt,
 };
 use selium_log::{
     data::LogIterator,
     message::{Headers, Message, MessageSlice},
-    message_log::MessageLog,
+    MessageLog,
 };
 use selium_protocol::{BatchPayload, Frame, MessagePayload, Offset};
 use selium_std::errors::{Result, SeliumError, TopicError};
-use std::{
-    pin::Pin,
-    sync::Arc,
-    task::{Poll, Waker},
-};
-use tokio::sync::RwLock;
+use std::{pin::Pin, sync::Arc, time::Duration};
+use tokio::{select, sync::RwLock, time::sleep};
 use tokio_stream::StreamMap;
+use tokio_util::sync::CancellationToken;
 
 pub type SharedLog = Arc<RwLock<MessageLog>>;
 pub type ReadFut = Pin<Box<dyn Future<Output = Result<MessageSlice>> + Send>>;
+pub type SleepFut = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
@@ -36,8 +33,6 @@ pub struct Subscriber {
     log: SharedLog,
     sink: BoxSink<Frame, SeliumError>,
     buffered_slice: Option<LogIterator>,
-    read_fut: ReadFut,
-    waker: Option<Waker>,
 }
 
 impl Subscriber {
@@ -47,20 +42,12 @@ impl Subscriber {
             log: log.clone(),
             sink,
             buffered_slice: None,
-            read_fut: build_read_future(log, 0),
-            waker: None,
-        }
-    }
-
-    pub fn wake(&mut self) {
-        if let Some(waker) = self.waker.take() {
-            waker.wake_by_ref();
         }
     }
 
     async fn read_messages(&mut self) {
-    if let Some(slice) = self.buffered_slice {
-        let next = slice.next().await.unwrap();
+        if let Some(slice) = self.buffered_slice.as_mut() {
+            while let Some(Ok(message)) = slice.next().await {
                 let batch_size = message.headers().batch_size();
                 let records = Bytes::copy_from_slice(message.records());
 
@@ -76,80 +63,61 @@ impl Subscriber {
                     })
                 };
 
-                self.sink.send(frame).await;
-    }
-
-    }
-}
-
-impl Future for Subscriber {
-    type Output = ();
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        self.waker = Some(cx.waker().clone());
-
-        ready!(self.read_messages().poll_unpin(cx));
-
-        if let Ok(slice) = ready!(self.read_fut.poll_unpin(cx)) {
-            self.offset = slice.end_offset();
-            self.buffered_slice = slice.messages();
-            self.read_fut = build_read_future(self.log.clone(), self.offset);
-
-            if self.buffered_slice.is_none() {
-                return Poll::Pending;
+                let _ = self.sink.send(frame).await;
             }
+        }
+    }
+
+    async fn poll_for_messages(&mut self) {
+        let slice = self
+            .log
+            .read()
+            .await
+            .read_slice(self.offset, None)
+            .await
+            .map_err(SeliumError::Log)
+            .unwrap();
+
+        self.offset = slice.end_offset();
+        self.buffered_slice = slice.messages();
+
+        if self.buffered_slice.is_some() {
+            self.read_messages().await;
+        } else {
+            sleep(Duration::from_millis(50)).await;
         }
     }
 }
 
-pub enum SubscribersEvent {
-    NewSubscriber(Pin<Box<Subscriber>>),
-    Wake,
-}
-
 pub struct Subscribers {
-    notify: Receiver<SubscribersEvent>,
-    futures: FuturesUnordered<Pin<Box<Subscriber>>>,
+    notify: Receiver<Pin<Box<Subscriber>>>,
+    token: CancellationToken,
 }
 
 impl Subscribers {
-    pub fn new() -> (Sender<SubscribersEvent>, Self) {
+    pub fn new() -> (Sender<Pin<Box<Subscriber>>>, Self) {
         let (tx, notify) = mpsc::channel(SOCK_CHANNEL_SIZE);
-        let futures = FuturesUnordered::new();
-        let subscribers = Self { notify, futures };
+        let token = CancellationToken::new();
+        let subscribers = Self { notify, token };
         (tx, subscribers)
     }
 
-    fn wake_subscribers(&mut self) {
-        self.futures.iter_mut().for_each(|f| f.wake());
-    }
-}
+    pub async fn run(&mut self) {
+        while let Some(mut subscriber) = self.notify.next().await {
+            let token = self.token.clone();
 
-impl Future for Subscribers {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        loop {
-            match self.notify.poll_next_unpin(cx) {
-                Poll::Ready(Some(event)) => {
-                    match event {
-                        SubscribersEvent::Wake => self.wake_subscribers(),
-                        SubscribersEvent::NewSubscriber(sub) => self.futures.push(sub),
-                    };
-                    cx.waker().wake_by_ref();
+            tokio::spawn(async move {
+                loop {
+                    select! {
+                        _ = token.cancelled() => {
+                            break;
+                        },
+                        _ = subscriber.poll_for_messages() => {
+                            continue;
+                        }
+                    }
                 }
-                Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Pending => (),
-            }
-
-            if self.futures.is_empty() {
-                return Poll::Pending;
-            } else {
-                ready!(self.futures.poll_next_unpin(cx));
-            }
+            });
         }
     }
 }
@@ -157,7 +125,7 @@ impl Future for Subscribers {
 pub struct Topic {
     publishers: StreamMap<usize, BoxStream<'static, Result<Frame>>>,
     next_stream_id: usize,
-    notify: Sender<SubscribersEvent>,
+    notify: Sender<Pin<Box<Subscriber>>>,
     handle: Receiver<Socket>,
     log: SharedLog,
 }
@@ -166,8 +134,8 @@ impl Topic {
     pub fn pair(log: SharedLog) -> (Self, Sender<Socket>) {
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
         let publishers = StreamMap::new();
-        let (notify, subscribers) = Subscribers::new();
-        tokio::spawn(subscribers);
+        let (notify, mut subscribers) = Subscribers::new();
+        tokio::spawn(async move { subscribers.run().await });
 
         (
             Self {
@@ -193,8 +161,6 @@ impl Topic {
                     let mut log = self.log.write().await;
 
                     log.write(message).await?;
-                    self.notify.send(SubscribersEvent::Wake).await
-                        .map_err(TopicError::NotifySubscribers)?;
                 },
                 Some(socket) = self.handle.next() => match socket {
                     Socket::Stream(st) => {
@@ -205,24 +171,12 @@ impl Topic {
                         let subscriber = Box::pin(Subscriber::new(offset, self.log.clone(), si));
 
                         self.notify
-                            .send(SubscribersEvent::NewSubscriber(subscriber))
-                            .await.map_err(TopicError::NotifySubscribers)?;
+                            .send(subscriber)
+                            .await
+                            .map_err(TopicError::NotifySubscribers)?;
                     }
                 }
             }
         }
     }
 }
-
-fn build_read_future(log: SharedLog, offset: u64) -> ReadFut {
-    Box::pin({
-        let log = log.clone();
-        let range = offset..offset + 1000;
-
-        async move {
-            let log = log.read().await;
-            let slice = log.read_slice(range).await.map_err(SeliumError::Log);
-            return slice;
-        }
-    })
-})

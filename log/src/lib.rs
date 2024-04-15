@@ -1,9 +1,9 @@
-mod data;
 mod index;
 mod segment;
 mod tasks;
 
 pub mod config;
+pub mod data;
 pub mod error;
 pub mod message;
 
@@ -46,6 +46,7 @@ impl MessageLog {
             _cleaner,
         })
     }
+
     pub async fn write(&mut self, message: Message) -> Result<()> {
         self.segments.write(message).await?;
         self.writes_since_last_flush += 1;
@@ -54,8 +55,7 @@ impl MessageLog {
     }
 
     pub async fn read_slice(&self, offset: u64, limit: Option<u64>) -> Result<MessageSlice> {
-        let slice = self.segments.read_slice(offset, limit).await?;
-        Ok(slice)
+        self.segments.read_slice(offset, limit).await
     }
 
     async fn try_flush(&mut self) -> Result<()> {

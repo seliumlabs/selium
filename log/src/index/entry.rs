@@ -7,7 +7,7 @@ pub const SIZE_OF_INDEX_ENTRY: usize = 20;
 pub struct IndexEntry {
     /// The relative offset of the entry.
     /// The offset is relative to the base offset of the segment, increasing
-    /// sequentially from 0.
+    /// sequentially from 1.
     relative_offset: u32,
 
     /// A UNIX timestamp corresponding to the time the entry was appended to the log.
