@@ -13,13 +13,11 @@ const NUM_OF_MESSAGES: u64 = 1_000_000;
 const MAX_ENTRIES_PER_SEGMENT: u32 = 50_000;
 
 fn get_log_config(path: impl AsRef<Path>) -> LogConfig {
-    LogConfig::new(
-        MAX_ENTRIES_PER_SEGMENT,
-        path,
-        Duration::from_secs(ONE_DAY),
-        Duration::from_secs(ONE_DAY),
-        FlushPolicy::default().number_of_writes(100),
-    )
+    LogConfig::from_path(path)
+        .max_index_entries(MAX_ENTRIES_PER_SEGMENT)
+        .retention_period(Duration::from_secs(ONE_DAY))
+        .cleaner_interval(Duration::from_secs(ONE_DAY))
+        .flush_policy(FlushPolicy::default().number_of_writes(100))
 }
 
 async fn write_records(path: impl AsRef<Path>) {

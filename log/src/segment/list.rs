@@ -91,6 +91,13 @@ impl SegmentList {
         Ok(stale_segments)
     }
 
+    pub async fn number_of_entries(&self) -> u64 {
+        let list = self.segments.read().await;
+
+        list.iter()
+            .fold(0, |acc, (_, segment)| acc + segment.end_offset())
+    }
+
     pub async fn remove_segments(&self, offsets: Vec<u64>) -> Result<()> {
         let mut list = self.segments.write().await;
         let mut tasks = Vec::with_capacity(offsets.len());

@@ -36,9 +36,9 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
-    pub fn new(offset: Offset, log: SharedLog, sink: BoxSink<Frame, SeliumError>) -> Self {
+    pub fn new(offset: u64, log: SharedLog, sink: BoxSink<Frame, SeliumError>) -> Self {
         Self {
-            offset: 0,
+            offset,
             log: log.clone(),
             sink,
             buffered_slice: None,
@@ -168,7 +168,14 @@ impl Topic {
                         self.next_stream_id += 1;
                     }
                     Socket::Sink(si, offset) => {
-                        let subscriber = Box::pin(Subscriber::new(offset, self.log.clone(), si));
+                        let entries = self.log.read().await.number_of_entries();
+
+                        let log_offset = match offset {
+                            Offset::FromBeginning(offset) => offset,
+                            Offset::FromEnd(offset) => entries - offset
+                        };
+
+                        let subscriber = Box::pin(Subscriber::new(log_offset, self.log.clone(), si));
 
                         self.notify
                             .send(subscriber)

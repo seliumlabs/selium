@@ -15,13 +15,11 @@ const MAX_ENTRIES_PER_SEGMENT: u32 = 50_000;
 fn get_log_config() -> LogConfig {
     let tempdir = tempdir().unwrap();
 
-    LogConfig::new(
-        MAX_ENTRIES_PER_SEGMENT,
-        tempdir,
-        Duration::from_secs(ONE_DAY),
-        Duration::from_secs(ONE_DAY),
-        FlushPolicy::default().number_of_writes(100),
-    )
+    LogConfig::from_path(tempdir.path())
+        .max_index_entries(MAX_ENTRIES_PER_SEGMENT)
+        .retention_period(Duration::from_secs(ONE_DAY))
+        .cleaner_interval(Duration::from_secs(ONE_DAY))
+        .flush_policy(FlushPolicy::default().number_of_writes(100))
 }
 
 async fn log_task() {

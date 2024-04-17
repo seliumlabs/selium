@@ -21,6 +21,7 @@ use tokio::{fs, sync::mpsc::Sender};
 pub struct MessageLog {
     segments: SegmentList,
     config: SharedLogConfig,
+    number_of_entries: u64,
     writes_since_last_flush: u64,
     flush_interrupt: Sender<()>,
     _flusher: Arc<FlusherTask>,
@@ -34,12 +35,14 @@ impl MessageLog {
             .map_err(LogError::CreateLogsDirectory)?;
 
         let segments = load_segments(config.clone()).await?;
+        let number_of_entries = segments.number_of_entries().await;
         let (_flusher, flush_interrupt) = FlusherTask::start(config.clone(), segments.clone());
         let _cleaner = CleanerTask::start(config.clone(), segments.clone());
 
         Ok(Self {
             segments,
             config,
+            number_of_entries,
             writes_since_last_flush: 0,
             flush_interrupt,
             _flusher,
@@ -61,9 +64,14 @@ impl MessageLog {
     pub async fn flush(&mut self) -> Result<()> {
         self.segments.flush().await?;
         self.flush_interrupt.send(()).await.unwrap();
+        self.number_of_entries += self.writes_since_last_flush;
         self.writes_since_last_flush = 0;
 
         Ok(())
+    }
+
+    pub fn number_of_entries(&self) -> u64 {
+        self.number_of_entries
     }
 
     async fn try_flush(&mut self) -> Result<()> {

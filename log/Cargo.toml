@@ -33,7 +33,7 @@ thiserror = "1.0"
 [dev-dependencies]
 tempfile = "3.10"
 criterion = { version = "0.3", features = ["async_tokio"] }
-fake = { version = "2.9.2", features = ["derive"] }
+fake = "2.9"
 
 [[bench]]
 name = "read_benchmark"

@@ -228,13 +228,13 @@ async fn handle_stream(
                         .log_segments_directory
                         .join(&topic_path.trim_matches('/'));
 
-                    let config = Arc::new(LogConfig::new(
-                        log_args.log_maximum_entries,
-                        segments_path,
-                        Duration::from_millis(retention_period),
-                        Duration::from_secs(log_args.log_cleaner_interval),
-                        FlushPolicy::default().number_of_writes(100),
-                    ));
+                    let config = Arc::new(
+                        LogConfig::from_path(segments_path)
+                            .max_index_entries(log_args.log_maximum_entries)
+                            .retention_period(Duration::from_millis(retention_period))
+                            .cleaner_interval(Duration::from_secs(log_args.log_cleaner_interval))
+                            .flush_policy(FlushPolicy::default().number_of_writes(100)),
+                    );
 
                     let log = MessageLog::open(config).await?;
                     let log = Arc::new(RwLock::new(log));
