@@ -57,11 +57,12 @@ impl Data {
         start_position: u64,
         end_position: Option<u64>,
     ) -> Result<LogIterator> {
-        let end_position = end_position.unwrap_or(self.position);
         let file = File::open(&self.path).await?;
         let mut reader = BufReader::new(file);
         reader.seek(SeekFrom::Start(start_position)).await?;
-        let log_slice = LogIterator::new(reader, end_position);
+
+        let end_position = end_position.unwrap_or(self.position);
+        let log_slice = LogIterator::new(reader, start_position, end_position);
 
         Ok(log_slice)
     }

@@ -1,12 +1,22 @@
 use bytes::Bytes;
+use fake::Fake;
 use selium_log::{
     config::{LogConfig, SharedLogConfig},
-    data::LogIterator,
     message::{Headers, Message},
     MessageLog,
 };
 use std::sync::Arc;
 use tokio::fs;
+
+fn generate_dummy_message() -> String {
+    (16..32).fake::<String>()
+}
+
+pub fn generate_dummy_messages(count: usize) -> Vec<String> {
+    (0..count)
+        .map(|_| generate_dummy_message())
+        .collect::<Vec<_>>()
+}
 
 pub struct TestWrapper {
     log: MessageLog,
@@ -36,19 +46,47 @@ impl TestWrapper {
         segments_count
     }
 
-    pub async fn write_batch(&mut self, message: &str) {
-        let batch = Bytes::from(message.to_owned());
-        let headers = Headers::new(batch.len(), 1, 1);
-        let message = Message::new(headers, &batch);
-        self.log.write(message).await.unwrap();
+    pub async fn write_records(&mut self, records: &[String]) {
+        for record in records {
+            self.write(&record).await;
+        }
     }
 
-    pub async fn read_records(&mut self, offset: u64, limit: Option<u64>) -> Option<LogIterator> {
-        let slice = self.log.read_slice(offset, limit).await.unwrap();
-        slice.messages()
+    pub async fn write_dummy_records(&mut self, count: usize) {
+        for _ in 0..count {
+            let message = generate_dummy_message();
+            self.write(&message).await;
+        }
+    }
+
+    pub async fn read_records(&mut self, offset: u64, limit: Option<u64>) -> Vec<String> {
+        let mut messages = vec![];
+
+        let mut slice = self
+            .log
+            .read_slice(offset, limit)
+            .await
+            .unwrap()
+            .messages()
+            .unwrap();
+
+        while let Some(Ok(message)) = slice.next().await {
+            let message = String::from_utf8(message.records().to_vec()).unwrap();
+            messages.push(message);
+        }
+
+        messages
     }
 
     pub async fn flush(&mut self) {
         self.log.flush().await.unwrap();
+    }
+
+    async fn write(&mut self, message: &str) {
+        let batch = Bytes::from(message.to_owned());
+        let headers = Headers::new(batch.len(), 1, 1);
+        let message = Message::new(headers, &batch);
+
+        self.log.write(message).await.unwrap();
     }
 }

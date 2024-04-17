@@ -49,8 +49,10 @@ impl Segment {
     }
 
     pub async fn read_slice(&self, offset: u64, limit: Option<u64>) -> Result<MessageSlice> {
-        let end_offset = limit.map_or(self.end_offset, |e| cmp::max(offset + e, self.end_offset));
-        let relative_start_offset = cmp::max(offset - self.base_offset, 1);
+        let end_offset = limit.map_or(self.end_offset, |e| {
+            cmp::min(offset + e + 1, self.end_offset)
+        });
+        let relative_start_offset = offset - self.base_offset + 1;
         let relative_end_offset = end_offset - self.base_offset;
 
         if let Some(start_entry) = self.index.lookup(relative_start_offset as u32)? {

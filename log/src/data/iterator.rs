@@ -15,10 +15,10 @@ pub struct LogIterator {
 }
 
 impl LogIterator {
-    pub fn new(reader: BufReader<File>, end_position: u64) -> Self {
+    pub fn new(reader: BufReader<File>, cursor: u64, end_position: u64) -> Self {
         Self {
             reader,
-            cursor: 0,
+            cursor,
             end_position,
         }
     }
