@@ -1,16 +1,16 @@
-use crate::{config::SharedLogConfig, error::Result, segment::SegmentList};
+use crate::{config::SharedLogConfig, error::Result, segment::SharedSegmentList};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
 pub struct CleanerTask {
-    segments: SegmentList,
+    segments: SharedSegmentList,
     config: SharedLogConfig,
     cancellation_token: CancellationToken,
 }
 
 impl CleanerTask {
-    pub fn start(config: SharedLogConfig, segments: SegmentList) -> Arc<Self> {
+    pub fn start(config: SharedLogConfig, segments: SharedSegmentList) -> Arc<Self> {
         let cancellation_token = CancellationToken::new();
 
         let cleaner = Arc::new(Self {
@@ -43,12 +43,13 @@ impl CleanerTask {
     }
 
     async fn remove_stale_segments(&self) -> Result<()> {
-        let stale_segments = self
-            .segments
+        let mut segments = self.segments.write().await;
+
+        let stale_segments = segments
             .find_stale_segments(self.config.retention_period)
             .await?;
 
-        self.segments.remove_segments(stale_segments).await?;
+        segments.remove_segments(stale_segments).await?;
 
         Ok(())
     }

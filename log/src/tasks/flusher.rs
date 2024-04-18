@@ -1,17 +1,17 @@
-use crate::{config::SharedLogConfig, error::Result, segment::SegmentList};
+use crate::{config::SharedLogConfig, error::Result, segment::SharedSegmentList};
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug)]
 pub struct FlusherTask {
-    segments: SegmentList,
+    segments: SharedSegmentList,
     config: SharedLogConfig,
     cancellation_token: CancellationToken,
 }
 
 impl FlusherTask {
-    pub fn start(config: SharedLogConfig, segments: SegmentList) -> (Arc<Self>, Sender<()>) {
+    pub fn start(config: SharedLogConfig, segments: SharedSegmentList) -> (Arc<Self>, Sender<()>) {
         let cancellation_token = CancellationToken::new();
         let (tx, rx) = mpsc::channel(1);
 
@@ -35,7 +35,7 @@ impl FlusherTask {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(self.config.flush_policy.interval) => {
-                    self.segments.flush().await?;
+                    self.segments.write().await.flush().await?;
                 },
                 _ = rx.recv() => {
                     continue;

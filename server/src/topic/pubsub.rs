@@ -68,16 +68,14 @@ impl Subscriber {
         }
     }
 
-    async fn poll_for_messages(&mut self) {
-        println!("Polling with offset: {}", self.offset);
+    async fn poll_for_messages(&mut self) -> Result<()> {
         let slice = self
             .log
             .read()
             .await
             .read_slice(self.offset, None)
             .await
-            .map_err(SeliumError::Log)
-            .unwrap();
+            .map_err(SeliumError::Log)?;
 
         self.offset = slice.end_offset();
         self.buffered_slice = slice.messages();
@@ -87,6 +85,8 @@ impl Subscriber {
         } else {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
+
+        Ok(())
     }
 }
 
@@ -170,11 +170,11 @@ impl Topic {
                         self.next_stream_id += 1;
                     }
                     Socket::Sink(si, offset) => {
-                        let entries = self.log.read().await.number_of_entries();
+                        let entries = self.log.read().await.number_of_entries().await;
 
                         let log_offset = match offset {
                             Offset::FromBeginning(offset) => offset,
-                            Offset::FromEnd(offset) => entries - offset
+                            Offset::FromEnd(offset) => entries.checked_sub(offset).unwrap_or(entries)
                         };
 
                         let subscriber = Box::pin(Subscriber::new(log_offset, self.log.clone(), si));

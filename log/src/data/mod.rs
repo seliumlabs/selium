@@ -83,6 +83,7 @@ impl Data {
         message.encode(&mut buffer);
 
         self.buffer.extend_from_slice(&mut buffer);
+        self.position += length;
 
         Ok(())
     }
@@ -90,11 +91,6 @@ impl Data {
     pub async fn flush(&mut self) -> Result<()> {
         let buffer = std::mem::replace(&mut self.buffer, BytesMut::new());
         self.file.write_all(&buffer).await?;
-
-        let metadata = self.file.metadata().await?;
-        let position = metadata.len();
-        self.position = position;
-
         Ok(())
     }
 

@@ -14,20 +14,18 @@ use crate::{
     segment::SegmentList,
     tasks::{CleanerTask, FlusherTask},
 };
+use segment::SharedSegmentList;
 use std::{ffi::OsStr, path::Path, sync::Arc};
 use tokio::{
     fs,
-    sync::{broadcast, mpsc},
+    sync::{mpsc, RwLock},
 };
 
 #[derive(Debug)]
 pub struct MessageLog {
-    segments: SegmentList,
+    segments: SharedSegmentList,
     config: SharedLogConfig,
-    number_of_entries: u64,
-    writes_since_last_flush: u64,
     flush_interrupt: mpsc::Sender<()>,
-    notifier: broadcast::Sender<()>,
     _flusher: Arc<FlusherTask>,
     _cleaner: Arc<CleanerTask>,
 }
@@ -39,58 +37,47 @@ impl MessageLog {
             .map_err(LogError::CreateLogsDirectory)?;
 
         let segments = load_segments(config.clone()).await?;
-        let number_of_entries = segments.number_of_entries().await;
-        let (tx, _) = broadcast::channel(1);
         let (_flusher, flush_interrupt) = FlusherTask::start(config.clone(), segments.clone());
         let _cleaner = CleanerTask::start(config.clone(), segments.clone());
 
         Ok(Self {
             segments,
             config,
-            number_of_entries,
-            writes_since_last_flush: 0,
             flush_interrupt,
-            notifier: tx,
             _flusher,
             _cleaner,
         })
     }
 
     pub async fn write(&mut self, message: Message) -> Result<()> {
-        self.segments.write(message).await?;
-        self.writes_since_last_flush += 1;
+        self.segments.write().await.write(message).await?;
         self.try_flush().await?;
         Ok(())
     }
 
     pub async fn read_slice(&self, offset: u64, limit: Option<u64>) -> Result<MessageSlice> {
-        if offset > self.number_of_entries {
-            Ok(MessageSlice::empty(offset))
-        } else {
-            self.segments.read_slice(offset, limit).await
-        }
+        self.segments.read().await.read_slice(offset, limit).await
     }
 
     pub async fn flush(&mut self) -> Result<()> {
-        self.segments.flush().await?;
-        self.number_of_entries += self.writes_since_last_flush;
+        self.segments.write().await.flush().await?;
         let _ = self.flush_interrupt.send(()).await;
         Ok(())
     }
 
-    pub fn number_of_entries(&self) -> u64 {
-        self.number_of_entries
-    }
-
-    pub fn add_listener(&mut self) -> broadcast::Receiver<()> {
-        self.notifier.subscribe()
+    pub async fn number_of_entries(&self) -> u64 {
+        self.segments.read().await.number_of_entries()
     }
 
     async fn try_flush(&mut self) -> Result<()> {
+        let segments = self.segments.read().await;
+
         let should_flush = match self.config.flush_policy.number_of_writes {
-            Some(number_of_writes) => self.writes_since_last_flush >= number_of_writes,
+            Some(number_of_writes) => segments.writes_since_last_flush() >= number_of_writes,
             None => false,
         };
+
+        drop(segments);
 
         if should_flush {
             self.flush().await?;
@@ -126,7 +113,7 @@ async fn get_offsets(path: impl AsRef<Path>) -> Result<Vec<u64>> {
     Ok(offsets)
 }
 
-async fn load_segments(config: SharedLogConfig) -> Result<SegmentList> {
+async fn load_segments(config: SharedLogConfig) -> Result<SharedSegmentList> {
     let path = &config.segments_path;
     let offsets = get_offsets(path).await?;
 
@@ -136,5 +123,6 @@ async fn load_segments(config: SharedLogConfig) -> Result<SegmentList> {
         SegmentList::create(config.clone()).await?
     };
 
-    Ok(segments)
+    let shared_segments = Arc::new(RwLock::new(segments));
+    Ok(shared_segments)
 }

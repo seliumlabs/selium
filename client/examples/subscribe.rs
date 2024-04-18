@@ -22,15 +22,13 @@ async fn main() -> Result<()> {
     let mut subscriber = connection
         .subscriber("/acmeco/stocks")
         .with_decoder(StringCodec)
-        .seek(Offset::FromEnd(100))
+        .seek(Offset::FromEnd(5))
         .open()
         .await?;
 
     while let Some(Ok(message)) = subscriber.next().await {
         println!("NEW MESSAGE: \"{message}\"");
     }
-
-    println!("Done!");
 
     Ok(())
 }

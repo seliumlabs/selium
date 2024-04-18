@@ -12,7 +12,6 @@ use selium_protocol::{error_codes, BiStream, ErrorPayload, Frame, TopicName};
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
 use tokio::{sync::Mutex, task::JoinHandle};
 
 pub(crate) type SharedTopics = Arc<Mutex<HashMap<TopicName, Sender>>>;

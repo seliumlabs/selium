@@ -5,7 +5,7 @@ use crate::data::Data;
 use crate::error::Result;
 use crate::index::Index;
 use crate::message::{Message, MessageSlice};
-pub use list::SegmentList;
+pub use list::{SegmentList, SharedSegmentList};
 use std::cmp;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
