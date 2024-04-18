@@ -82,7 +82,7 @@ impl Data {
         let mut buffer = Vec::with_capacity(length as usize);
         message.encode(&mut buffer);
 
-        self.buffer.extend_from_slice(&mut buffer);
+        self.buffer.extend_from_slice(&buffer);
         self.position += length;
 
         Ok(())

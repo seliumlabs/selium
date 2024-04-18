@@ -225,7 +225,7 @@ async fn handle_stream(
                     let topic_path = topic.to_string();
                     let segments_path = log_args
                         .log_segments_directory
-                        .join(&topic_path.trim_matches('/'));
+                        .join(topic_path.trim_matches('/'));
 
                     let mut flush_policy = FlushPolicy::default()
                         .interval(Duration::from_millis(log_args.flush_policy_interval));

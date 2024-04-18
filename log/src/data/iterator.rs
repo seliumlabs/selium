@@ -31,7 +31,7 @@ impl LogIterator {
         let mut headers = vec![0; HEADERS_SIZE];
         self.reader.read_exact(&mut headers).await.ok()?;
 
-        let headers = Headers::decode(&mut headers);
+        let headers = Headers::decode(&headers);
         let remainder_len = headers.length() as usize - HEADERS_SIZE;
         let combined_len = HEADERS_SIZE + remainder_len;
         let records_len = remainder_len - CRC_SIZE;
