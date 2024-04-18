@@ -66,4 +66,12 @@ pub struct LogArgs {
     /// Maximum number of entries per log segment.
     #[clap(long, default_value_t = 100_000)]
     pub log_maximum_entries: u32,
+
+    /// Number of writes before flushing log to filesystem.
+    #[clap(long)]
+    pub flush_policy_num_writes: Option<u64>,
+
+    /// Interval in millis to asynchronously flush log to filesystem.
+    #[clap(long, default_value_t = 3000)]
+    pub flush_policy_interval: u64,
 }

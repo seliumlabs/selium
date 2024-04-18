@@ -13,7 +13,7 @@ use selium_log::{
 use selium_protocol::{BatchPayload, Frame, MessagePayload, Offset};
 use selium_std::errors::{Result, SeliumError, TopicError};
 use std::{pin::Pin, sync::Arc, time::Duration};
-use tokio::{select, sync::RwLock, time::sleep};
+use tokio::{select, sync::RwLock};
 use tokio_stream::StreamMap;
 use tokio_util::sync::CancellationToken;
 
@@ -69,6 +69,7 @@ impl Subscriber {
     }
 
     async fn poll_for_messages(&mut self) {
+        println!("Polling with offset: {}", self.offset);
         let slice = self
             .log
             .read()
@@ -84,7 +85,7 @@ impl Subscriber {
         if self.buffered_slice.is_some() {
             self.read_messages().await;
         } else {
-            sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(Duration::from_millis(25)).await;
         }
     }
 }
@@ -131,7 +132,8 @@ pub struct Topic {
 }
 
 impl Topic {
-    pub fn pair(log: SharedLog) -> (Self, Sender<Socket>) {
+    pub fn pair(log: MessageLog) -> (Self, Sender<Socket>) {
+        let log = Arc::new(RwLock::new(log));
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
         let publishers = StreamMap::new();
         let (notify, mut subscribers) = Subscribers::new();

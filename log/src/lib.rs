@@ -15,7 +15,10 @@ use crate::{
     tasks::{CleanerTask, FlusherTask},
 };
 use std::{ffi::OsStr, path::Path, sync::Arc};
-use tokio::{fs, sync::mpsc::Sender};
+use tokio::{
+    fs,
+    sync::{broadcast, mpsc},
+};
 
 #[derive(Debug)]
 pub struct MessageLog {
@@ -23,7 +26,8 @@ pub struct MessageLog {
     config: SharedLogConfig,
     number_of_entries: u64,
     writes_since_last_flush: u64,
-    flush_interrupt: Sender<()>,
+    flush_interrupt: mpsc::Sender<()>,
+    notifier: broadcast::Sender<()>,
     _flusher: Arc<FlusherTask>,
     _cleaner: Arc<CleanerTask>,
 }
@@ -36,6 +40,7 @@ impl MessageLog {
 
         let segments = load_segments(config.clone()).await?;
         let number_of_entries = segments.number_of_entries().await;
+        let (tx, _) = broadcast::channel(1);
         let (_flusher, flush_interrupt) = FlusherTask::start(config.clone(), segments.clone());
         let _cleaner = CleanerTask::start(config.clone(), segments.clone());
 
@@ -45,6 +50,7 @@ impl MessageLog {
             number_of_entries,
             writes_since_last_flush: 0,
             flush_interrupt,
+            notifier: tx,
             _flusher,
             _cleaner,
         })
@@ -58,20 +64,26 @@ impl MessageLog {
     }
 
     pub async fn read_slice(&self, offset: u64, limit: Option<u64>) -> Result<MessageSlice> {
-        self.segments.read_slice(offset, limit).await
+        if offset > self.number_of_entries {
+            Ok(MessageSlice::empty(offset))
+        } else {
+            self.segments.read_slice(offset, limit).await
+        }
     }
 
     pub async fn flush(&mut self) -> Result<()> {
         self.segments.flush().await?;
-        self.flush_interrupt.send(()).await.unwrap();
         self.number_of_entries += self.writes_since_last_flush;
-        self.writes_since_last_flush = 0;
-
+        let _ = self.flush_interrupt.send(()).await;
         Ok(())
     }
 
     pub fn number_of_entries(&self) -> u64 {
         self.number_of_entries
+    }
+
+    pub fn add_listener(&mut self) -> broadcast::Receiver<()> {
+        self.notifier.subscribe()
     }
 
     async fn try_flush(&mut self) -> Result<()> {

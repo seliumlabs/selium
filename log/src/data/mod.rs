@@ -79,11 +79,10 @@ impl Data {
 
     pub async fn write(&mut self, message: Message) -> Result<()> {
         let length = message.headers().length();
-        let mut buffer = Vec::with_capacity(message.headers().length() as usize);
+        let mut buffer = Vec::with_capacity(length as usize);
         message.encode(&mut buffer);
 
         self.buffer.extend_from_slice(&mut buffer);
-        self.position += length;
 
         Ok(())
     }
@@ -91,6 +90,11 @@ impl Data {
     pub async fn flush(&mut self) -> Result<()> {
         let buffer = std::mem::replace(&mut self.buffer, BytesMut::new());
         self.file.write_all(&buffer).await?;
+
+        let metadata = self.file.metadata().await?;
+        let position = metadata.len();
+        self.position = position;
+
         Ok(())
     }
 

@@ -2,7 +2,7 @@ use crate::{Offset, Operation, TopicName};
 use bytes::{BufMut, Bytes, BytesMut};
 use selium_std::errors::{ProtocolError, Result, SeliumError};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
 type Headers = Option<HashMap<String, String>>;
 

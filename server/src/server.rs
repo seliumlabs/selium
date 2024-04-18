@@ -228,16 +228,22 @@ async fn handle_stream(
                         .log_segments_directory
                         .join(&topic_path.trim_matches('/'));
 
+                    let mut flush_policy = FlushPolicy::default()
+                        .interval(Duration::from_millis(log_args.flush_policy_interval));
+
+                    if let Some(num_writes) = log_args.flush_policy_num_writes {
+                        flush_policy = flush_policy.number_of_writes(num_writes);
+                    }
+
                     let config = Arc::new(
                         LogConfig::from_path(segments_path)
                             .max_index_entries(log_args.log_maximum_entries)
                             .retention_period(Duration::from_millis(retention_period))
-                            .cleaner_interval(Duration::from_secs(log_args.log_cleaner_interval))
-                            .flush_policy(FlushPolicy::default().number_of_writes(100)),
+                            .cleaner_interval(Duration::from_millis(log_args.log_cleaner_interval))
+                            .flush_policy(flush_policy),
                     );
 
                     let log = MessageLog::open(config).await?;
-                    let log = Arc::new(RwLock::new(log));
                     let (mut fut, tx) = pubsub::Topic::pair(log);
 
                     let handle = tokio::spawn(async move {

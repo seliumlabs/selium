@@ -93,9 +93,9 @@ impl SegmentList {
 
     pub async fn number_of_entries(&self) -> u64 {
         let list = self.segments.read().await;
-
         list.iter()
-            .fold(0, |acc, (_, segment)| acc + segment.end_offset())
+            .last()
+            .map_or(0, |(_, segment)| segment.end_offset)
     }
 
     pub async fn remove_segments(&self, offsets: Vec<u64>) -> Result<()> {

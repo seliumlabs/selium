@@ -79,8 +79,8 @@ mod tests {
     use crate::error_codes::UNKNOWN_ERROR;
     use crate::utils::encode_message_batch;
     use crate::{
-        ErrorPayload, MessagePayload, Offset, Operation, PublisherPayload, SubscriberPayload,
-        TopicName,
+        BatchPayload, ErrorPayload, MessagePayload, Offset, Operation, PublisherPayload,
+        SubscriberPayload, TopicName,
     };
     use bytes::Bytes;
 
@@ -174,11 +174,15 @@ mod tests {
             Bytes::from("Third message"),
         ]);
 
-        let frame = Frame::BatchMessage(batch);
+        let payload = BatchPayload {
+            message: batch,
+            size: 3,
+        };
 
+        let frame = Frame::BatchMessage(payload);
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from("\0\0\0\0\0\0\0H\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
+        let expected = Bytes::from_static(b"\0\0\0\0\0\0\0T\x05H\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message\x03\0\0\0");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -306,7 +310,7 @@ mod tests {
     #[test]
     fn decodes_batch_message_frame() {
         let mut codec = MessageCodec;
-        let mut src = BytesMut::from("\0\0\0\0\0\0\0H\x05\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message");
+        let mut src = BytesMut::from("\0\0\0\0\0\0\0T\x05H\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x03\0\0\0\0\0\0\0\rFirst message\0\0\0\0\0\0\0\x0eSecond message\0\0\0\0\0\0\0\rThird message\x03\0\0\0");
 
         let batch = encode_message_batch(vec![
             Bytes::from("First message"),
@@ -314,7 +318,10 @@ mod tests {
             Bytes::from("Third message"),
         ]);
 
-        let expected = Frame::BatchMessage(batch);
+        let expected = Frame::BatchMessage(BatchPayload {
+            message: batch,
+            size: 3,
+        });
         let result = codec.decode(&mut src).unwrap().unwrap();
 
         assert_eq!(result, expected);
