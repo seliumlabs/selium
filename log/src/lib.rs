@@ -49,7 +49,7 @@ impl MessageLog {
         })
     }
 
-    pub async fn write(&mut self, message: Message) -> Result<()> {
+    pub async fn write(&self, message: Message) -> Result<()> {
         self.segments.write().await.write(message).await?;
         self.try_flush().await?;
         Ok(())
@@ -59,7 +59,7 @@ impl MessageLog {
         self.segments.read().await.read_slice(offset, limit).await
     }
 
-    pub async fn flush(&mut self) -> Result<()> {
+    pub async fn flush(&self) -> Result<()> {
         self.segments.write().await.flush().await?;
         let _ = self.flush_interrupt.send(()).await;
         Ok(())
@@ -69,7 +69,7 @@ impl MessageLog {
         self.segments.read().await.number_of_entries()
     }
 
-    async fn try_flush(&mut self) -> Result<()> {
+    async fn try_flush(&self) -> Result<()> {
         let segments = self.segments.read().await;
 
         let should_flush = match self.config.flush_policy.number_of_writes {

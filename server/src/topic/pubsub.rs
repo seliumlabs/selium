@@ -13,11 +13,11 @@ use selium_log::{
 use selium_protocol::{BatchPayload, Frame, MessagePayload, Offset};
 use selium_std::errors::{Result, SeliumError, TopicError};
 use std::{pin::Pin, sync::Arc, time::Duration};
-use tokio::{select, sync::RwLock};
+use tokio::select;
 use tokio_stream::StreamMap;
 use tokio_util::sync::CancellationToken;
 
-pub type SharedLog = Arc<RwLock<MessageLog>>;
+pub type SharedLog = Arc<MessageLog>;
 pub type ReadFut = Pin<Box<dyn Future<Output = Result<MessageSlice>> + Send>>;
 pub type SleepFut = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -71,8 +71,6 @@ impl Subscriber {
     async fn poll_for_messages(&mut self) -> Result<()> {
         let slice = self
             .log
-            .read()
-            .await
             .read_slice(self.offset, None)
             .await
             .map_err(SeliumError::Log)?;
@@ -133,7 +131,7 @@ pub struct Topic {
 
 impl Topic {
     pub fn pair(log: MessageLog) -> (Self, Sender<Socket>) {
-        let log = Arc::new(RwLock::new(log));
+        let log = Arc::new(log);
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
         let publishers = StreamMap::new();
         let (notify, mut subscribers) = Subscribers::new();
@@ -160,9 +158,7 @@ impl Topic {
 
                     let headers = Headers::new(payload.len(), batch_size, 1);
                     let message = Message::new(headers, &payload);
-                    let mut log = self.log.write().await;
-
-                    log.write(message).await?;
+                    self.log.write(message).await?;
                 },
                 Some(socket) = self.handle.next() => match socket {
                     Socket::Stream(st) => {
@@ -170,7 +166,7 @@ impl Topic {
                         self.next_stream_id += 1;
                     }
                     Socket::Sink(si, offset) => {
-                        let entries = self.log.read().await.number_of_entries().await;
+                        let entries = self.log.number_of_entries().await;
 
                         let log_offset = match offset {
                             Offset::FromBeginning(offset) => offset,
