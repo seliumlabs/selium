@@ -34,7 +34,7 @@ impl Mmap {
         file.set_len(length).await?;
 
         // Safety: https://docs.rs/memmap2/latest/memmap2/struct.Mmap.html#safety
-        // Our usage is safe, as writes/flushes are performed atomically, and the appropriate filesystem
+        // Our usage is safe, as reads/writes/flushes are performed atomically, and the appropriate filesystem
         // permissions are applied to the backed file on creation to prevent it from being modified by
         // outside processes.
         let mmap = unsafe { memmap2::MmapMut::map_mut(&file).map_err(LogError::MemoryMapIndex)? };
