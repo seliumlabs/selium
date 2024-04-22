@@ -41,6 +41,7 @@ impl Data {
             .create(true)
             .append(true)
             .read(true)
+            .mode(0o600)
             .open(path)
             .await?;
 
