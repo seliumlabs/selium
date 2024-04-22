@@ -1,3 +1,4 @@
+use super::config::SharedTopicConfig;
 use crate::BoxSink;
 use bytes::Bytes;
 use futures::{
@@ -68,7 +69,7 @@ impl Subscriber {
         }
     }
 
-    async fn poll_for_messages(&mut self) -> Result<()> {
+    async fn poll_for_messages(&mut self, interval: Duration) -> Result<()> {
         let slice = self
             .log
             .read_slice(self.offset, None)
@@ -81,7 +82,7 @@ impl Subscriber {
         if self.buffered_slice.is_some() {
             self.read_messages().await;
         } else {
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            tokio::time::sleep(interval).await;
         }
 
         Ok(())
@@ -91,19 +92,25 @@ impl Subscriber {
 pub struct Subscribers {
     notify: Receiver<Pin<Box<Subscriber>>>,
     token: CancellationToken,
+    config: SharedTopicConfig,
 }
 
 impl Subscribers {
-    pub fn new() -> (Sender<Pin<Box<Subscriber>>>, Self) {
+    pub fn new(config: SharedTopicConfig) -> (Sender<Pin<Box<Subscriber>>>, Self) {
         let (tx, notify) = mpsc::channel(SOCK_CHANNEL_SIZE);
         let token = CancellationToken::new();
-        let subscribers = Self { notify, token };
+        let subscribers = Self {
+            notify,
+            token,
+            config,
+        };
         (tx, subscribers)
     }
 
     pub async fn run(&mut self) {
         while let Some(mut subscriber) = self.notify.next().await {
             let token = self.token.clone();
+            let polling_interval = self.config.polling_interval;
 
             tokio::spawn(async move {
                 loop {
@@ -111,7 +118,7 @@ impl Subscribers {
                         _ = token.cancelled() => {
                             break;
                         },
-                        _ = subscriber.poll_for_messages() => {
+                        _ = subscriber.poll_for_messages(polling_interval) => {
                             continue;
                         }
                     }
@@ -130,11 +137,11 @@ pub struct Topic {
 }
 
 impl Topic {
-    pub fn pair(log: MessageLog) -> (Self, Sender<Socket>) {
+    pub fn pair(log: MessageLog, config: SharedTopicConfig) -> (Self, Sender<Socket>) {
         let log = Arc::new(log);
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
         let publishers = StreamMap::new();
-        let (notify, mut subscribers) = Subscribers::new();
+        let (notify, mut subscribers) = Subscribers::new(config);
         tokio::spawn(async move { subscribers.run().await });
 
         (
@@ -153,12 +160,14 @@ impl Topic {
         loop {
             tokio::select! {
                 Some((_, Ok(frame))) = self.publishers.next() => {
-                    let batch_size = frame.unwrap_batch_size();
-                    let payload = frame.unwrap_payload();
+                    if let Frame::Message(_) | Frame::BatchMessage(_) = frame {
+                        let batch_size = frame.batch_size().unwrap();
+                        let message = frame.message().unwrap();
 
-                    let headers = Headers::new(payload.len(), batch_size, 1);
-                    let message = Message::new(headers, &payload);
-                    self.log.write(message).await?;
+                        let headers = Headers::new(message.len(), batch_size, 1);
+                        let message = Message::new(headers, message);
+                        self.log.write(message).await?;
+                    }
                 },
                 Some(socket) = self.handle.next() => match socket {
                     Socket::Stream(st) => {

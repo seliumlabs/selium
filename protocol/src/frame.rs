@@ -103,27 +103,27 @@ impl Frame {
         Ok(())
     }
 
-    pub fn unwrap_retention_policy(&self) -> u64 {
+    pub fn retention_policy(&self) -> Option<u64> {
         match self {
-            Self::RegisterPublisher(payload) => payload.retention_policy,
-            Self::RegisterSubscriber(payload) => payload.retention_policy,
-            _ => panic!("Attempted to unwrap non-register Frame variant"),
+            Self::RegisterPublisher(payload) => Some(payload.retention_policy),
+            Self::RegisterSubscriber(payload) => Some(payload.retention_policy),
+            _ => None,
         }
     }
 
-    pub fn unwrap_batch_size(&self) -> u32 {
+    pub fn batch_size(&self) -> Option<u32> {
         match self {
-            Self::Message(_) => 1,
-            Self::BatchMessage(payload) => payload.size,
-            _ => panic!("Attempted to unwrap non-Message Frame variant"),
+            Self::Message(_) => Some(1),
+            Self::BatchMessage(payload) => Some(payload.size),
+            _ => None,
         }
     }
 
-    pub fn unwrap_payload(self) -> Bytes {
+    pub fn message(&self) -> Option<&[u8]> {
         match self {
-            Self::Message(payload) => payload.message,
-            Self::BatchMessage(payload) => payload.message,
-            _ => panic!("Attempted to unwrap non-Message Frame variant"),
+            Self::Message(payload) => Some(&payload.message),
+            Self::BatchMessage(payload) => Some(&payload.message),
+            _ => None,
         }
     }
 

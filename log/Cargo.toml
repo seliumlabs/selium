@@ -10,8 +10,6 @@ readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 bytes = "1.5"
 chrono = "0.4"
@@ -26,8 +24,7 @@ tokio = { version = "1.36", features = [
     "rt-multi-thread",
     "rt",
 ] }
-tokio-stream = "0.1"
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = "0.7"
 thiserror = "1.0"
 
 [dev-dependencies]

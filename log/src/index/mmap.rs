@@ -21,6 +21,8 @@ impl Mmap {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let file = OpenOptions::new().write(true).read(true).open(path).await?;
+        // Safety: marked unsafe due to the potential for UB if the underlying file is modified in or out of process.
+        // https://docs.rs/memmap2/latest/memmap2/struct.Mmap.html#safety
         let mmap = unsafe { memmap2::MmapMut::map_mut(&file).map_err(LogError::MemoryMapIndex)? };
 
         Ok(Self {
@@ -41,6 +43,9 @@ impl Mmap {
 
         let length = config.max_index_entries as u64 * SIZE_OF_INDEX_ENTRY as u64;
         file.set_len(length).await?;
+
+        // Safety: marked unsafe due to the potential for UB if the underlying file is modified in or out of process.
+        // https://docs.rs/memmap2/latest/memmap2/struct.Mmap.html#safety
         let mmap = unsafe { memmap2::MmapMut::map_mut(&file).map_err(LogError::MemoryMapIndex)? };
 
         Ok(Self {
@@ -68,7 +73,7 @@ impl Mmap {
 
             if f(&entry) {
                 return Some(entry);
-            };
+            }
         }
 
         None

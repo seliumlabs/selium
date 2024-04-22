@@ -1,5 +1,6 @@
 use crate::args::{LogArgs, UserArgs};
 use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
+use crate::topic::config::TopicConfig;
 use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
@@ -221,7 +222,7 @@ async fn handle_stream(
         if !ts.contains_key(topic) {
             match frame {
                 Frame::RegisterPublisher(_) | Frame::RegisterSubscriber(_) => {
-                    let retention_period = frame.unwrap_retention_policy();
+                    let retention_period = frame.retention_policy().unwrap();
                     let topic_path = topic.to_string();
                     let segments_path = log_args
                         .log_segments_directory
@@ -234,7 +235,11 @@ async fn handle_stream(
                         flush_policy = flush_policy.number_of_writes(num_writes);
                     }
 
-                    let config = Arc::new(
+                    let topic_config = Arc::new(TopicConfig::new(Duration::from_millis(
+                        log_args.subscriber_polling_interval,
+                    )));
+
+                    let log_config = Arc::new(
                         LogConfig::from_path(segments_path)
                             .max_index_entries(log_args.log_maximum_entries)
                             .retention_period(Duration::from_millis(retention_period))
@@ -242,8 +247,8 @@ async fn handle_stream(
                             .flush_policy(flush_policy),
                     );
 
-                    let log = MessageLog::open(config).await?;
-                    let (mut fut, tx) = pubsub::Topic::pair(log);
+                    let log = MessageLog::open(log_config).await?;
+                    let (mut fut, tx) = pubsub::Topic::pair(log, topic_config);
 
                     let handle = tokio::spawn(async move {
                         fut.run().await.unwrap();

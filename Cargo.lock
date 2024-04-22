@@ -1480,7 +1480,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
- "tokio-stream",
  "tokio-util",
 ]
 
@@ -1556,6 +1555,7 @@ dependencies = [
  "selium",
  "selium-server",
  "serde",
+ "tempfile",
  "tokio",
  "uuid",
 ]

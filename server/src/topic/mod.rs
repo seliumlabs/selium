@@ -1,6 +1,7 @@
 use anyhow::Result;
 use futures::{channel::mpsc, SinkExt};
 
+pub mod config;
 pub mod pubsub;
 pub mod reqrep;
 

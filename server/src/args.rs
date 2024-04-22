@@ -74,4 +74,8 @@ pub struct LogArgs {
     /// Interval in millis to asynchronously flush log to filesystem.
     #[clap(long, default_value_t = 3000)]
     pub flush_policy_interval: u64,
+
+    /// Subscriber polling interval in milliseconds.
+    #[clap(long, default_value_t = 25)]
+    pub subscriber_polling_interval: u64,
 }

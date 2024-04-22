@@ -17,6 +17,7 @@ pub const HEADERS_SIZE: usize =
 pub struct Message {
     headers: Headers,
     records: Bytes,
+    // TODO: implement CRC check after replication is implemented.
     _crc: u32,
 }
 
