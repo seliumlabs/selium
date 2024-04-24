@@ -81,14 +81,18 @@
 //!
 //! type Color = (u8, u8, u8);
 //!
-//! impl MessageEncoder<Color> for ColorCodec {
+//! impl MessageEncoder for ColorCodec {
+//!     type Item = Color;
+//!
 //!     fn encode(&self, item: Color) -> Result<Bytes> {
 //!         unimplemented!()
 //!     }
 //! }
 //!
-//! impl MessageDecoder<Color> for ColorCodec {
-//!     fn decode(&self, buffer: &mut BytesMut) -> Result<Color> {
+//! impl MessageDecoder for ColorCodec {
+//!     type Item = Color;
+//!
+//!     fn decode(&self, buffer: &mut BytesMut) -> Result<Self::Item> {
 //!         unimplemented!()
 //!     }
 //! }
@@ -107,7 +111,9 @@
 //! # #[derive(Default, Clone)]
 //! # pub struct ColorCodec;
 //! # type Color = (u8, u8, u8);
-//! impl MessageEncoder<Color> for ColorCodec {
+//! impl MessageEncoder for ColorCodec {
+//!     type Item = Color;
+//!
 //!     fn encode(&self, (r, g, b): Color) -> Result<Bytes> {
 //!         let mut buffer = BytesMut::with_capacity(3);
 //!
@@ -130,8 +136,10 @@
 //! # #[derive(Default, Clone)]
 //! # pub struct ColorCodec;
 //! # type Color = (u8, u8, u8);
-//! impl MessageDecoder<Color> for ColorCodec {
-//!     fn decode(&self, buffer: &mut BytesMut) -> Result<Color> {
+//! impl MessageDecoder for ColorCodec {
+//!     type Item = Color;
+//!
+//!     fn decode(&self, buffer: &mut BytesMut) -> Result<Self::Item> {
 //!         let r = buffer.get_u8();
 //!         let g = buffer.get_u8();
 //!         let b = buffer.get_u8();
@@ -154,7 +162,9 @@
 //!
 //! type Color = (u8, u8, u8);
 //!
-//! impl MessageEncoder<Color> for ColorCodec {
+//! impl MessageEncoder for ColorCodec {
+//!     type Item = Color;
+//!
 //!     fn encode(&self, (r, g, b): Color) -> Result<Bytes> {
 //!         let mut buffer = BytesMut::with_capacity(3);
 //!
@@ -166,8 +176,10 @@
 //!     }
 //! }
 //!
-//! impl MessageDecoder<Color> for ColorCodec {
-//!     fn decode(&self, buffer: &mut BytesMut) -> Result<Color> {
+//! impl MessageDecoder for ColorCodec {
+//!     type Item = Color;
+//!
+//!     fn decode(&self, buffer: &mut BytesMut) -> Result<Self::Item> {
 //!         let r = buffer.get_u8();
 //!         let g = buffer.get_u8();
 //!         let b = buffer.get_u8();

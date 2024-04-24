@@ -3,6 +3,8 @@ use futures::SinkExt;
 use selium::prelude::*;
 use selium::std::codecs::StringCodec;
 
+const NUM_OF_MESSAGES: usize = 50_000;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let connection = selium::custom()
@@ -22,7 +24,11 @@ async fn main() -> Result<()> {
         .open()
         .await?;
 
-    publisher.send("Hello, world!".to_owned()).await.unwrap();
+    for i in 0..NUM_OF_MESSAGES {
+        let message = format!("Hello, world - {i}!");
+        publisher.send(message).await.unwrap();
+    }
+
     publisher.finish().await?;
 
     Ok(())

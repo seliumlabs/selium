@@ -1,24 +1,27 @@
-use crate::args::UserArgs;
+use crate::args::{LogArgs, UserArgs};
 use crate::quic::{load_root_store, read_certs, server_config, ConfigOptions};
+use crate::topic::config::TopicConfig;
 use crate::topic::{pubsub, reqrep, Sender, Socket};
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{future::join_all, stream::FuturesUnordered, SinkExt, StreamExt};
 use log::{error, info};
 use quinn::{Connecting, Connection, Endpoint, IdleTimeout, VarInt};
+use selium_log::config::{FlushPolicy, LogConfig};
+use selium_log::MessageLog;
 use selium_protocol::error_codes::INVALID_TOPIC_NAME;
 use selium_protocol::{error_codes, BiStream, ErrorPayload, Frame, TopicName};
-use selium_std::errors::SeliumError;
 use std::net::SocketAddr;
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
-type TopicChannel = Sender<Frame, SeliumError>;
-pub(crate) type SharedTopics = Arc<Mutex<HashMap<TopicName, TopicChannel>>>;
+pub(crate) type SharedTopics = Arc<Mutex<HashMap<TopicName, Sender>>>;
 type SharedTopicHandles = Arc<Mutex<FuturesUnordered<JoinHandle<()>>>>;
 
 pub struct Server {
     topics: SharedTopics,
     topic_handles: SharedTopicHandles,
+    log_args: Arc<LogArgs>,
     endpoint: Endpoint,
 }
 
@@ -48,9 +51,10 @@ impl Server {
         info!("connection incoming");
         let topics_clone = self.topics.clone();
         let topic_handles = self.topic_handles.clone();
+        let log_args = self.log_args.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(topics_clone, topic_handles, conn).await {
+            if let Err(e) = handle_connection(topics_clone, topic_handles, conn, log_args).await {
                 error!("connection failed: {:?}", e);
             }
         });
@@ -84,6 +88,7 @@ impl TryFrom<UserArgs> for Server {
     fn try_from(args: UserArgs) -> Result<Self, Self::Error> {
         let root_store = load_root_store(args.cert.ca)?;
         let (certs, key) = read_certs(args.cert.cert, args.cert.key)?;
+        let log_args = Arc::new(args.log);
 
         let opts = ConfigOptions {
             keylog: args.keylog,
@@ -101,6 +106,7 @@ impl TryFrom<UserArgs> for Server {
         Ok(Self {
             topics,
             topic_handles,
+            log_args,
             endpoint,
         })
     }
@@ -110,6 +116,7 @@ async fn handle_connection(
     topics: SharedTopics,
     topic_handles: SharedTopicHandles,
     conn: quinn::Connecting,
+    log_args: Arc<LogArgs>,
 ) -> Result<()> {
     let connection = conn.await?;
     info!(
@@ -143,10 +150,17 @@ async fn handle_connection(
 
         let topics_clone = topics.clone();
         let topic_handles_clone = topic_handles.clone();
+        let log_args = log_args.clone();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                handle_stream(topics_clone, topic_handles_clone, stream, connection).await
+            if let Err(e) = handle_stream(
+                topics_clone,
+                topic_handles_clone,
+                stream,
+                connection,
+                log_args,
+            )
+            .await
             {
                 error!("Request failed: {:?}", e);
             }
@@ -159,6 +173,7 @@ async fn handle_stream(
     topic_handles: SharedTopicHandles,
     mut stream: BiStream,
     _connection: Connection,
+    log_args: Arc<LogArgs>,
 ) -> Result<()> {
     // Receive header
     if let Some(result) = stream.next().await {
@@ -207,8 +222,37 @@ async fn handle_stream(
         if !ts.contains_key(topic) {
             match frame {
                 Frame::RegisterPublisher(_) | Frame::RegisterSubscriber(_) => {
-                    let (fut, tx) = pubsub::Topic::pair();
-                    let handle = tokio::spawn(fut);
+                    let retention_period = frame.retention_policy().unwrap();
+                    let topic_path = topic.to_string();
+                    let segments_path = log_args
+                        .log_segments_directory
+                        .join(topic_path.trim_matches('/'));
+
+                    let mut flush_policy = FlushPolicy::default()
+                        .interval(Duration::from_millis(log_args.flush_policy_interval));
+
+                    if let Some(num_writes) = log_args.flush_policy_num_writes {
+                        flush_policy = flush_policy.number_of_writes(num_writes);
+                    }
+
+                    let topic_config = Arc::new(TopicConfig::new(Duration::from_millis(
+                        log_args.subscriber_polling_interval,
+                    )));
+
+                    let log_config = Arc::new(
+                        LogConfig::from_path(segments_path)
+                            .max_index_entries(log_args.log_maximum_entries)
+                            .retention_period(Duration::from_millis(retention_period))
+                            .cleaner_interval(Duration::from_millis(log_args.log_cleaner_interval))
+                            .flush_policy(flush_policy),
+                    );
+
+                    let log = MessageLog::open(log_config).await?;
+                    let (mut fut, tx) = pubsub::Topic::pair(log, topic_config);
+
+                    let handle = tokio::spawn(async move {
+                        fut.run().await.unwrap();
+                    });
 
                     topic_handles.lock().await.push(handle);
                     ts.insert(topic.clone(), Sender::Pubsub(tx));
@@ -233,11 +277,14 @@ async fn handle_stream(
                     .await
                     .context("Failed to add Publisher stream")?;
             }
-            Frame::RegisterSubscriber(_) => {
+            Frame::RegisterSubscriber(payload) => {
                 let (write, _) = stream.split();
-                tx.send(Socket::Pubsub(pubsub::Socket::Sink(Box::pin(write))))
-                    .await
-                    .context("Failed to add Subscriber sink")?;
+                tx.send(Socket::Pubsub(pubsub::Socket::Sink(
+                    Box::pin(write),
+                    payload.offset,
+                )))
+                .await
+                .context("Failed to add Subscriber sink")?;
             }
             Frame::RegisterReplier(_) => {
                 let (si, st) = stream.split();

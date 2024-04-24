@@ -10,11 +10,10 @@ use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, Stream, StreamExt};
 use selium_protocol::utils::decode_message_batch;
-use selium_protocol::{BiStream, Frame, SubscriberPayload, TopicName};
+use selium_protocol::{BiStream, Frame, Offset, SubscriberPayload, TopicName};
 use selium_std::errors::{CodecError, Result};
 use selium_std::traits::codec::MessageDecoder;
 use selium_std::traits::compression::Decompress;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -25,7 +24,7 @@ impl StreamBuilder<SubscriberWantsDecoder> {
     ///
     /// A decoder can be any type implementing
     /// [MessageDecoder](crate::std::traits::codec::MessageDecoder).
-    pub fn with_decoder<D, Item>(self, decoder: D) -> StreamBuilder<SubscriberWantsOpen<D, Item>> {
+    pub fn with_decoder<D>(self, decoder: D) -> StreamBuilder<SubscriberWantsOpen<D>> {
         let next_state = SubscriberWantsOpen::new(self.state, decoder);
 
         StreamBuilder {
@@ -35,29 +34,34 @@ impl StreamBuilder<SubscriberWantsDecoder> {
     }
 }
 
-impl<D, Item> StreamBuilder<SubscriberWantsOpen<D, Item>> {
+impl<D> StreamBuilder<SubscriberWantsOpen<D>> {
     /// Specifies the decompression implementation a [Subscriber] uses for
     /// decompressing messages received over the wire prior to decoding.
     ///
     /// A decompressor can be any type implementing
     /// [Decompress](crate::std::traits::compression::Decompress).
-    pub fn with_decompression<T>(mut self, decomp: T) -> StreamBuilder<SubscriberWantsOpen<D, Item>>
+    pub fn with_decompression<T>(mut self, decomp: T) -> StreamBuilder<SubscriberWantsOpen<D>>
     where
         T: Decompress + Send + Sync + 'static,
     {
         self.state.decompression = Some(Arc::new(decomp));
         self
     }
+
+    pub fn seek(mut self, offset: Offset) -> Self {
+        self.state.offset = offset;
+        self
+    }
 }
 
-impl<D, Item> Retain for StreamBuilder<SubscriberWantsOpen<D, Item>> {
+impl<D> Retain for StreamBuilder<SubscriberWantsOpen<D>> {
     fn retain<T: TryIntoU64>(mut self, policy: T) -> Result<Self> {
         self.state.common.retain(policy)?;
         Ok(self)
     }
 }
 
-impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>> {
+impl<D> Operations for StreamBuilder<SubscriberWantsOpen<D>> {
     fn map(mut self, module_path: &str) -> Self {
         self.state.common.map(module_path);
         self
@@ -70,12 +74,11 @@ impl<D, Item> Operations for StreamBuilder<SubscriberWantsOpen<D, Item>> {
 }
 
 #[async_trait]
-impl<D, Item> Open for StreamBuilder<SubscriberWantsOpen<D, Item>>
+impl<D> Open for StreamBuilder<SubscriberWantsOpen<D>>
 where
-    D: MessageDecoder<Item> + Send + Unpin,
-    Item: Send + Unpin,
+    D: MessageDecoder + Send + Unpin,
 {
-    type Output = KeepAlive<Subscriber<D, Item>>;
+    type Output = KeepAlive<Subscriber<D>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.common.topic.as_str())?;
@@ -84,6 +87,7 @@ where
             topic,
             retention_policy: self.state.common.retention_policy,
             operations: self.state.common.operations,
+            offset: self.state.offset,
         };
 
         let subscriber = Subscriber::spawn(
@@ -106,20 +110,18 @@ where
 ///
 /// **Note:** The Subscriber struct is never constructed directly, but rather, via a
 /// [StreamBuilder](crate::StreamBuilder).
-pub struct Subscriber<D, Item> {
+pub struct Subscriber<D> {
     client: Client,
     stream: BiStream,
     headers: SubscriberPayload,
     decoder: D,
     decompression: Option<Decomp>,
     message_batch: Option<Vec<Bytes>>,
-    _marker: PhantomData<Item>,
 }
 
-impl<D, Item> Subscriber<D, Item>
+impl<D> Subscriber<D>
 where
-    D: MessageDecoder<Item> + Send + Unpin,
-    Item: Unpin + Send,
+    D: MessageDecoder + Send + Unpin,
 {
     async fn spawn(
         client: Client,
@@ -137,7 +139,6 @@ where
             decoder,
             message_batch: None,
             decompression,
-            _marker: PhantomData,
         };
 
         Ok(KeepAlive::new(subscriber, client.backoff_strategy))
@@ -157,7 +158,7 @@ where
         Ok(stream)
     }
 
-    fn decode_message(&mut self, bytes: Bytes) -> Poll<Option<Result<Item>>> {
+    fn decode_message(&mut self, bytes: Bytes) -> Poll<Option<Result<D::Item>>> {
         let mut mut_bytes = BytesMut::with_capacity(bytes.len());
         mut_bytes.extend_from_slice(&bytes);
 
@@ -169,12 +170,11 @@ where
     }
 }
 
-impl<D, Item> Stream for Subscriber<D, Item>
+impl<D> Stream for Subscriber<D>
 where
-    D: MessageDecoder<Item> + Send + Unpin,
-    Item: Send + Unpin,
+    D: MessageDecoder + Send + Unpin,
 {
-    type Item = Result<Item>;
+    type Item = Result<D::Item>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Attempt to pop a message off of the current batch, if available.
@@ -203,14 +203,14 @@ where
             }
             // If the frame is a batched message, then set the current batch and call `poll_next`
             // again to begin popping off messages.
-            Frame::BatchMessage(mut bytes) => {
+            Frame::BatchMessage(mut payload) => {
                 if let Some(decomp) = &self.decompression {
-                    bytes = decomp
-                        .decompress(bytes)
+                    payload.message = decomp
+                        .decompress(payload.message)
                         .map_err(CodecError::DecompressFailure)?;
                 }
 
-                let batch = decode_message_batch(bytes);
+                let batch = decode_message_batch(payload.message);
                 self.message_batch = Some(batch);
                 self.poll_next(cx)
             }
@@ -224,10 +224,9 @@ where
     }
 }
 
-impl<D, Item> KeepAliveStream for Subscriber<D, Item>
+impl<D> KeepAliveStream for Subscriber<D>
 where
-    D: MessageDecoder<Item> + Send + Unpin,
-    Item: Unpin + Send,
+    D: MessageDecoder + Send + Unpin,
 {
     type Headers = SubscriberPayload;
 

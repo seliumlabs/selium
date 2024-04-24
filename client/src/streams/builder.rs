@@ -1,5 +1,5 @@
 use crate::{constants::RETENTION_POLICY_DEFAULT, traits::TryIntoU64, Client};
-use selium_protocol::Operation;
+use selium_protocol::{Offset, Operation};
 use selium_std::errors::Result;
 
 /// A convenient builder struct used to build a `Selium` stream, such as a
@@ -32,6 +32,7 @@ impl<T> StreamBuilder<T> {
 pub struct PubSubCommon {
     pub(crate) topic: String,
     pub(crate) retention_policy: u64,
+    pub(crate) offset: Offset,
     pub(crate) operations: Vec<Operation>,
 }
 
@@ -40,6 +41,7 @@ impl PubSubCommon {
         Self {
             topic: topic.to_owned(),
             retention_policy: RETENTION_POLICY_DEFAULT,
+            offset: Offset::default(),
             operations: Vec::new(),
         }
     }
@@ -58,5 +60,10 @@ impl PubSubCommon {
     pub fn retain<T: TryIntoU64>(&mut self, policy: T) -> Result<()> {
         self.retention_policy = policy.try_into_u64()?;
         Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn seek(&mut self, offset: Offset) {
+        self.offset = offset;
     }
 }

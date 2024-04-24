@@ -17,8 +17,8 @@ use selium_std::errors::{CodecError, SeliumError};
 use selium_std::traits::codec::{MessageDecoder, MessageEncoder};
 use selium_std::traits::compression::{Compress, Decompress};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
-use std::{marker::PhantomData, sync::Arc};
 use tokio::sync::oneshot::{self, Receiver, Sender};
 use tokio::sync::{Mutex, MutexGuard};
 
@@ -31,10 +31,10 @@ impl StreamBuilder<RequestorWantsRequestEncoder> {
     ///
     /// An encoder can be any type implementing
     /// [MessageEncoder](crate::std::traits::codec::MessageEncoder).
-    pub fn with_request_encoder<E, ReqItem>(
+    pub fn with_request_encoder<E>(
         self,
         encoder: E,
-    ) -> StreamBuilder<RequestorWantsReplyDecoder<E, ReqItem>> {
+    ) -> StreamBuilder<RequestorWantsReplyDecoder<E>> {
         let next_state = RequestorWantsReplyDecoder::new(self.state, encoder);
 
         StreamBuilder {
@@ -44,7 +44,7 @@ impl StreamBuilder<RequestorWantsRequestEncoder> {
     }
 }
 
-impl<E, ReqItem> StreamBuilder<RequestorWantsReplyDecoder<E, ReqItem>> {
+impl<E> StreamBuilder<RequestorWantsReplyDecoder<E>> {
     /// Specifies the compression implementation a [Requestor] uses for
     /// compressing outgoing requests.
     ///
@@ -61,10 +61,7 @@ impl<E, ReqItem> StreamBuilder<RequestorWantsReplyDecoder<E, ReqItem>> {
     ///
     /// A decoder can be any type implementing
     /// [MessageDecoder](crate::std::traits::codec::MessageDecoder).
-    pub fn with_reply_decoder<D, ResItem>(
-        self,
-        decoder: D,
-    ) -> StreamBuilder<RequestorWantsOpen<E, D, ReqItem, ResItem>> {
+    pub fn with_reply_decoder<D>(self, decoder: D) -> StreamBuilder<RequestorWantsOpen<E, D>> {
         let next_state = RequestorWantsOpen::new(self.state, decoder);
 
         StreamBuilder {
@@ -74,7 +71,7 @@ impl<E, ReqItem> StreamBuilder<RequestorWantsReplyDecoder<E, ReqItem>> {
     }
 }
 
-impl<E, D, ReqItem, ResItem> StreamBuilder<RequestorWantsOpen<E, D, ReqItem, ResItem>> {
+impl<E, D> StreamBuilder<RequestorWantsOpen<E, D>> {
     /// Specifies the decompression implementation a [Requestor] uses for decompressing incoming
     /// reply payloads.
     ///
@@ -110,14 +107,12 @@ impl<E, D, ReqItem, ResItem> StreamBuilder<RequestorWantsOpen<E, D, ReqItem, Res
 }
 
 #[async_trait()]
-impl<E, D, ReqItem, ResItem> Open for StreamBuilder<RequestorWantsOpen<E, D, ReqItem, ResItem>>
+impl<E, D> Open for StreamBuilder<RequestorWantsOpen<E, D>>
 where
-    E: MessageEncoder<ReqItem> + Send + Unpin,
-    D: MessageDecoder<ResItem> + Send + Unpin,
-    ReqItem: Unpin + Send,
-    ResItem: Unpin + Send,
+    E: MessageEncoder + Send + Unpin,
+    D: MessageDecoder + Send + Unpin,
 {
-    type Output = KeepAlive<Requestor<E, D, ReqItem, ResItem>>;
+    type Output = KeepAlive<Requestor<E, D>>;
 
     async fn open(self) -> Result<Self::Output> {
         let topic = TopicName::try_from(self.state.endpoint.as_str())?;
@@ -155,7 +150,7 @@ where
 /// The `Requestor` type derives the [Clone] trait, so requests can safely be made concurrently, as the `Requestor`
 /// will implicitly handle routing replies to the correct task.
 #[derive(Clone)]
-pub struct Requestor<E, D, ReqItem, ResItem> {
+pub struct Requestor<E, D> {
     client: Client,
     request_id: Arc<RequestId>,
     read_half: SharedReadHalf,
@@ -167,16 +162,12 @@ pub struct Requestor<E, D, ReqItem, ResItem> {
     decompression: Option<Decomp>,
     request_timeout: Duration,
     pending_requests: SharedPendingRequests,
-    _req_marker: PhantomData<ReqItem>,
-    _res_marker: PhantomData<ResItem>,
 }
 
-impl<E, D, ReqItem, ResItem> Requestor<E, D, ReqItem, ResItem>
+impl<E, D> Requestor<E, D>
 where
-    E: MessageEncoder<ReqItem> + Send + Unpin,
-    D: MessageDecoder<ResItem> + Send + Unpin,
-    ReqItem: Unpin + Send,
-    ResItem: Unpin + Send,
+    E: MessageEncoder + Send + Unpin,
+    D: MessageDecoder + Send + Unpin,
 {
     async fn spawn(
         client: Client,
@@ -209,8 +200,6 @@ where
             decompression,
             request_timeout,
             pending_requests,
-            _req_marker: PhantomData,
-            _res_marker: PhantomData,
         };
 
         Ok(KeepAlive::new(requestor, client.backoff_strategy))
@@ -239,7 +228,7 @@ where
         (write_half, read_half)
     }
 
-    fn encode_request(&mut self, item: ReqItem) -> Result<Bytes> {
+    fn encode_request(&mut self, item: E::Item) -> Result<Bytes> {
         let mut encoded = self
             .encoder
             .encode(item)
@@ -254,7 +243,7 @@ where
         Ok(encoded)
     }
 
-    fn decode_response(&mut self, mut bytes: Bytes) -> Result<ResItem> {
+    fn decode_response(&mut self, mut bytes: Bytes) -> Result<D::Item> {
         if let Some(decomp) = self.decompression.as_ref() {
             bytes = decomp
                 .decompress(bytes)
@@ -291,7 +280,7 @@ where
     /// - The encoded request fails to dispatched.
     /// - The request times out.
     /// - The reply fails to be decoded.
-    pub async fn request(&mut self, req: ReqItem) -> Result<ResItem> {
+    pub async fn request(&mut self, req: E::Item) -> Result<D::Item> {
         let encoded = self.encode_request(req)?;
         let (req_id, rx) = self.queue_request().await;
 
@@ -337,12 +326,10 @@ fn poll_replies(read_half: SharedReadHalf, pending_requests: SharedPendingReques
     });
 }
 
-impl<E, D, ReqItem, ResItem> KeepAliveStream for Requestor<E, D, ReqItem, ResItem>
+impl<E, D> KeepAliveStream for Requestor<E, D>
 where
-    E: MessageEncoder<ReqItem> + Send + Unpin,
-    D: MessageDecoder<ResItem> + Send + Unpin,
-    ReqItem: Unpin + Send,
-    ResItem: Unpin + Send,
+    E: MessageEncoder + Send + Unpin,
+    D: MessageDecoder + Send + Unpin,
 {
     type Headers = RequestorPayload;
 
