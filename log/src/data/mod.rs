@@ -92,6 +92,7 @@ impl Data {
     pub async fn flush(&mut self) -> Result<()> {
         let buffer = std::mem::replace(&mut self.buffer, BytesMut::new());
         self.file.write_all(&buffer).await?;
+        self.file.flush().await?;
         Ok(())
     }
 
