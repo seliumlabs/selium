@@ -2,7 +2,7 @@ use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use selium_log::{
     config::{FlushPolicy, LogConfig},
-    message::{Headers, Message},
+    message::Message,
     MessageLog,
 };
 use std::{sync::Arc, time::Duration};
@@ -24,13 +24,11 @@ fn get_log_config() -> LogConfig {
 
 async fn log_task() {
     let config = get_log_config();
-    let mut log = MessageLog::open(Arc::new(config)).await.unwrap();
+    let log = MessageLog::open(Arc::new(config)).await.unwrap();
 
     for _ in 0..NUM_OF_MESSAGES {
         let batch = Bytes::copy_from_slice(&vec![1; 32]);
-        let headers = Headers::new(batch.len(), 1, 1);
-        let message = Message::new(headers, &batch);
-
+        let message = Message::single(&batch, 1);
         log.write(message).await.unwrap();
     }
 

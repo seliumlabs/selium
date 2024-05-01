@@ -8,7 +8,7 @@ use futures::{
 };
 use selium_log::{
     data::LogIterator,
-    message::{Headers, Message, MessageSlice},
+    message::{Message, MessageSlice},
     MessageLog,
 };
 use selium_protocol::{BatchPayload, Frame, MessagePayload, Offset};
@@ -48,7 +48,7 @@ impl Subscriber {
 
     async fn read_messages(&mut self) {
         if let Some(slice) = self.buffered_slice.as_mut() {
-            while let Some(Ok(message)) = slice.next().await {
+            while let Ok(Some(message)) = slice.next().await {
                 let batch_size = message.headers().batch_size();
                 let records = Bytes::copy_from_slice(message.records());
 
@@ -163,9 +163,7 @@ impl Topic {
                     if let Frame::Message(_) | Frame::BatchMessage(_) = frame {
                         let batch_size = frame.batch_size().unwrap();
                         let message = frame.message().unwrap();
-
-                        let headers = Headers::new(message.len(), batch_size, 1);
-                        let message = Message::new(headers, message);
+                        let message = Message::batch(message, batch_size, 1);
                         self.log.write(message).await?;
                     }
                 },

@@ -2,6 +2,10 @@ use crate::{config::SharedLogConfig, error::Result, segment::SharedSegmentList};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+/// Task container for the asynchronous cleaner task.
+///
+/// The CleanerTask container spawns an asynchronous task that polls for stale/expired segments
+/// in order to trigger their cleaning.
 #[derive(Debug)]
 pub struct CleanerTask {
     segments: SharedSegmentList,
@@ -10,6 +14,7 @@ pub struct CleanerTask {
 }
 
 impl CleanerTask {
+    /// Starts the background task and returns a reference to the task container.
     pub fn start(config: SharedLogConfig, segments: SharedSegmentList) -> Arc<Self> {
         let cancellation_token = CancellationToken::new();
 
@@ -49,13 +54,15 @@ impl CleanerTask {
             .find_stale_segments(self.config.retention_period)
             .await?;
 
-        segments.remove_segments(stale_segments).await?;
+        segments.remove_segments(stale_segments.as_slice()).await?;
 
         Ok(())
     }
 }
 
 impl Drop for CleanerTask {
+    /// When the task container is dropped, a cancel signal will be dispatched in order to gracefully
+    /// terminate the background task.
     fn drop(&mut self) {
         self.cancellation_token.cancel();
     }
