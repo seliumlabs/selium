@@ -177,7 +177,7 @@ impl SegmentList {
         let mut tasks = Vec::with_capacity(offsets.len());
 
         for offset in offsets {
-            if let Some(segment) = self.segments.remove(&offset) {
+            if let Some(segment) = self.segments.remove(offset) {
                 tasks.push(segment.remove());
             }
         }
