@@ -3,6 +3,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
+/// Task container for the asynchronous flusher task.
+///
+/// The FlusherTask container spawns an asynchronous background task that polls the flushing interval
+/// of the log's FlushPolicy and triggers a flush once elapsed.
 #[derive(Debug)]
 pub struct FlusherTask {
     segments: SharedSegmentList,
@@ -11,6 +15,7 @@ pub struct FlusherTask {
 }
 
 impl FlusherTask {
+    /// Starts the background task and returns a reference to the task container.
     pub fn start(config: SharedLogConfig, segments: SharedSegmentList) -> (Arc<Self>, Sender<()>) {
         let cancellation_token = CancellationToken::new();
         let (tx, rx) = mpsc::channel(1);
@@ -49,6 +54,8 @@ impl FlusherTask {
 }
 
 impl Drop for FlusherTask {
+    /// When the task container is dropped, a cancel signal will be dispatched in order to gracefully
+    /// terminate the background task.
     fn drop(&mut self) {
         self.cancellation_token.cancel();
     }

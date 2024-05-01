@@ -11,6 +11,7 @@ use std::{
 };
 use tokio::fs::{self, OpenOptions};
 
+/// Wrapper type for a file-backed memory-map.
 #[derive(Debug)]
 pub struct Mmap {
     mmap: memmap2::MmapMut,
@@ -18,6 +19,15 @@ pub struct Mmap {
 }
 
 impl Mmap {
+    /// Creates an index file and maps it to a mutable memory mapped buffer.
+    ///
+    /// The underlying file is set to a length equal to the provided `max_index_entries` configuration,
+    /// multiplied by the byte size of an index entry, and then zeroed.
+    ///
+    /// # Errors
+    /// - Returns Err if the underlying file cannot be created.
+    /// - Returns Err if the file length cannot be expanded.
+    /// - Returns Err if the memory map system call fails.
     pub async fn create(path: impl AsRef<Path>, config: SharedLogConfig) -> Result<Self> {
         let path = path.as_ref();
 
@@ -45,6 +55,11 @@ impl Mmap {
         })
     }
 
+    /// Loads an index file and maps it to a mutable memory mapped buffer.
+    ///
+    /// # Errors
+    /// - Returns Err if the underlying file cannot be loaded.
+    /// - Returns Err if the memory map system call fails.
     pub async fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let file = OpenOptions::new().write(true).read(true).open(path).await?;
@@ -58,17 +73,33 @@ impl Mmap {
         })
     }
 
+    /// Removes the underlying file from the filesystem.
+    ///
+    /// # Errors
+    /// - Returns Err if the file cannot be removed.
     pub async fn remove(self) -> Result<()> {
         fs::remove_file(&self.path).await?;
         Ok(())
     }
 
+    /// Pushes the provided [IndexEntry] to the memory map buffer.
+    ///
+    /// # Panics
+    /// This method will panic if superflous pushes are attempted when the buffer is
+    /// at full capacity.
     pub fn push(&mut self, entry: IndexEntry) {
         let slice_start = (entry.relative_offset() - 1) as usize * SIZE_OF_INDEX_ENTRY;
         let slice_end = slice_start + SIZE_OF_INDEX_ENTRY;
         self.mmap[slice_start..slice_end].copy_from_slice(&entry.into_slice());
     }
 
+    /// Performs a binary search to locate an [IndexEntry] in the memory map buffer.
+    ///
+    /// Returns [Option::None] if the provided callback does not resolve to an [IndexEntry].
+    ///
+    /// # Params
+    /// * `f` - A callback function that will take the current [IndexEntry] as an argument and
+    ///         return a boolean based on a search predicate.
     pub fn find<F: Fn(&IndexEntry) -> bool>(&self, f: F) -> Option<IndexEntry> {
         for relative_offset in self.get_offset_range() {
             let index_pos = relative_offset * SIZE_OF_INDEX_ENTRY;
@@ -83,6 +114,10 @@ impl Mmap {
         None
     }
 
+    /// Retrieves the current offset in the memory-mapped file.
+    ///
+    /// Due to the [IndexEntry] relative offsets beginning from 1, this is as simple as scanning
+    /// the memory-map for the first zeroed slice.
     pub fn get_current_offset(&self) -> u32 {
         let last_offset = self.get_last_offset();
 

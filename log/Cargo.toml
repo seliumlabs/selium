@@ -1,6 +1,9 @@
 [package]
 name = "selium-log"
 version = "0.1.0"
+description = """
+selium-log is an open-source implementation of a log-based message queue.
+"""
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -31,6 +34,7 @@ thiserror = "1.0"
 tempfile = "3.10"
 criterion = { version = "0.3", features = ["async_tokio"] }
 fake = "2.9"
+anyhow = "1.0"
 
 [[bench]]
 name = "read_benchmark"

@@ -2,7 +2,7 @@ use bytes::Bytes;
 use fake::Fake;
 use selium_log::{
     config::{LogConfig, SharedLogConfig},
-    message::{Headers, Message},
+    message::Message,
     MessageLog,
 };
 use std::sync::Arc;
@@ -60,8 +60,6 @@ impl TestWrapper {
     }
 
     pub async fn read_records(&mut self, offset: u64, limit: Option<u64>) -> Vec<String> {
-        let mut messages = vec![];
-
         let mut slice = self
             .log
             .read_slice(offset, limit)
@@ -70,7 +68,9 @@ impl TestWrapper {
             .messages()
             .unwrap();
 
-        while let Some(Ok(message)) = slice.next().await {
+        let mut messages = vec![];
+
+        while let Ok(Some(message)) = slice.next().await {
             let message = String::from_utf8(message.records().to_vec()).unwrap();
             messages.push(message);
         }
@@ -84,9 +84,7 @@ impl TestWrapper {
 
     async fn write(&mut self, message: &str) {
         let batch = Bytes::from(message.to_owned());
-        let headers = Headers::new(batch.len(), 1, 1);
-        let message = Message::new(headers, &batch);
-
+        let message = Message::single(&batch, 1);
         self.log.write(message).await.unwrap();
     }
 }
