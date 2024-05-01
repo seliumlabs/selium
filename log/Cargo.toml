@@ -1,6 +1,9 @@
 [package]
 name = "selium-log"
 version = "0.1.0"
+description = """
+selium-log is an open-source implementation of a log-based message queue.
+"""
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
