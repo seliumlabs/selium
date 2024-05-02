@@ -18,3 +18,7 @@
 ## v0.2.2
 
 - New error types
+
+## v0.2.3
+
+- Improved generic arguments for Codec traits
