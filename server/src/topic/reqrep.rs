@@ -12,10 +12,9 @@ use selium_protocol::{
     traits::{ShutdownSink, ShutdownStream},
     ErrorPayload, Frame,
 };
-use selium_std::errors::Result;
+use selium_std::errors::{Result, SeliumError};
 use std::{
     collections::HashMap,
-    fmt::Debug,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -23,34 +22,47 @@ use tokio_stream::StreamMap;
 
 const SOCK_CHANNEL_SIZE: usize = 100;
 
-type BoxedBiStream<E> = (BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>);
+type BoxedBiStream = (
+    BoxSink<Frame, SeliumError>,
+    BoxStream<'static, Result<Frame>>,
+);
 
-pub enum Socket<E> {
-    Client((BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>)),
-    Server((BoxSink<Frame, E>, BoxStream<'static, Result<Frame>>)),
+pub enum Socket {
+    Client(
+        (
+            BoxSink<Frame, SeliumError>,
+            BoxStream<'static, Result<Frame>>,
+        ),
+    ),
+    Server(
+        (
+            BoxSink<Frame, SeliumError>,
+            BoxStream<'static, Result<Frame>>,
+        ),
+    ),
 }
 
 pin_project! {
     #[project = TopicProj]
     #[must_use = "futures do nothing unless you `.await` or poll them"]
-    pub struct Topic<E> {
+    pub struct Topic {
         #[pin]
-        server: Option<BoxedBiStream<E>>,
+        server: Option<BoxedBiStream>,
         #[pin]
         stream: StreamMap<usize, BoxStream<'static, Result<Frame>>>,
         #[pin]
-        sink: Router<usize, BoxSink<Frame, E>>,
+        sink: Router<usize, BoxSink<Frame, SeliumError>>,
         next_id: usize,
         #[pin]
-        handle: Receiver<Socket<E>>,
+        handle: Receiver<Socket>,
         buffered_req: Option<Frame>,
         buffered_rep: Option<Frame>,
-        buffered_err: Option<(Option<ErrorPayload>, BoxSink<Frame, E>)>,
+        buffered_err: Option<(Option<ErrorPayload>, BoxSink<Frame, SeliumError>)>,
     }
 }
 
-impl<E> Topic<E> {
-    pub fn pair() -> (Self, Sender<Socket<E>>) {
+impl Topic {
+    pub fn pair() -> (Self, Sender<Socket>) {
         let (tx, rx) = mpsc::channel(SOCK_CHANNEL_SIZE);
 
         (
@@ -69,10 +81,7 @@ impl<E> Topic<E> {
     }
 }
 
-impl<E> Future for Topic<E>
-where
-    E: Debug + Unpin,
-{
+impl Future for Topic {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

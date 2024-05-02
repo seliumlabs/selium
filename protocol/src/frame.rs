@@ -1,4 +1,4 @@
-use crate::{Operation, TopicName};
+use crate::{Offset, Operation, TopicName};
 use bytes::{BufMut, Bytes, BytesMut};
 use selium_std::errors::{ProtocolError, Result, SeliumError};
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ pub enum Frame {
     RegisterReplier(ReplierPayload),
     RegisterRequestor(RequestorPayload),
     Message(MessagePayload),
-    BatchMessage(Bytes),
+    BatchMessage(BatchPayload),
     Error(ErrorPayload),
     Ok,
 }
@@ -45,7 +45,9 @@ impl Frame {
             Self::Message(payload) => {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
-            Self::BatchMessage(bytes) => bytes.len() as u64,
+            Self::BatchMessage(payload) => {
+                bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
+            }
             Self::Error(payload) => {
                 bincode::serialized_size(payload).map_err(ProtocolError::SerdeError)?
             }
@@ -93,11 +95,36 @@ impl Frame {
                 .map_err(ProtocolError::SerdeError)?,
             Frame::Error(payload) => bincode::serialize_into(dst.writer(), &payload)
                 .map_err(ProtocolError::SerdeError)?,
-            Frame::BatchMessage(bytes) => dst.extend_from_slice(&bytes),
+            Frame::BatchMessage(payload) => bincode::serialize_into(dst.writer(), &payload)
+                .map_err(ProtocolError::SerdeError)?,
             Frame::Ok => (),
         }
 
         Ok(())
+    }
+
+    pub fn retention_policy(&self) -> Option<u64> {
+        match self {
+            Self::RegisterPublisher(payload) => Some(payload.retention_policy),
+            Self::RegisterSubscriber(payload) => Some(payload.retention_policy),
+            _ => None,
+        }
+    }
+
+    pub fn batch_size(&self) -> Option<u32> {
+        match self {
+            Self::Message(_) => Some(1),
+            Self::BatchMessage(payload) => Some(payload.size),
+            _ => None,
+        }
+    }
+
+    pub fn message(&self) -> Option<&[u8]> {
+        match self {
+            Self::Message(payload) => Some(&payload.message),
+            Self::BatchMessage(payload) => Some(&payload.message),
+            _ => None,
+        }
     }
 
     pub fn unwrap_message(self) -> MessagePayload {
@@ -130,7 +157,9 @@ impl TryFrom<(u8, BytesMut)> for Frame {
             MESSAGE => {
                 Frame::Message(bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?)
             }
-            BATCH_MESSAGE => Frame::BatchMessage(bytes.into()),
+            BATCH_MESSAGE => Frame::BatchMessage(
+                bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?,
+            ),
             ERROR => Frame::Error(bincode::deserialize(&bytes).map_err(ProtocolError::SerdeError)?),
             OK => Frame::Ok,
             _type => return Err(ProtocolError::UnknownMessageType(_type))?,
@@ -152,6 +181,7 @@ pub struct SubscriberPayload {
     pub topic: TopicName,
     pub retention_policy: u64,
     pub operations: Vec<Operation>,
+    pub offset: Offset,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -168,6 +198,12 @@ pub struct RequestorPayload {
 pub struct MessagePayload {
     pub headers: Headers,
     pub message: Bytes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BatchPayload {
+    pub message: Bytes,
+    pub size: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

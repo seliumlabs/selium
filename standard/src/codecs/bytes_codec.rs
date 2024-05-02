@@ -11,7 +11,9 @@ pub struct BytesCodec;
 /// # Errors
 ///
 /// Guaranteed not to error.
-impl MessageEncoder<Vec<u8>> for BytesCodec {
+impl MessageEncoder for BytesCodec {
+    type Item = Vec<u8>;
+
     fn encode(&self, item: Vec<u8>) -> Result<Bytes> {
         Ok(item.into())
     }
@@ -22,8 +24,10 @@ impl MessageEncoder<Vec<u8>> for BytesCodec {
 /// # Errors
 ///
 /// Guaranteed not to error.
-impl MessageDecoder<Vec<u8>> for BytesCodec {
-    fn decode(&self, buffer: &mut BytesMut) -> Result<Vec<u8>> {
+impl MessageDecoder for BytesCodec {
+    type Item = Vec<u8>;
+
+    fn decode(&self, buffer: &mut BytesMut) -> Result<Self::Item> {
         Ok(buffer.to_vec())
     }
 }

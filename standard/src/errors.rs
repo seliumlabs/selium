@@ -1,4 +1,5 @@
 use quinn::{ConnectError, ConnectionError, WriteError};
+use selium_log::error::LogError;
 use std::net::AddrParseError;
 use thiserror::Error;
 
@@ -95,12 +96,24 @@ pub enum ParseEndpointAddressError {
 }
 
 #[derive(Error, Debug)]
+pub enum TopicError {
+    #[error("Failed to notify subscribers of new event.")]
+    NotifySubscribers(#[source] futures::channel::mpsc::SendError),
+}
+
+#[derive(Error, Debug)]
 pub enum SeliumError {
     #[error(transparent)]
     Quic(#[from] QuicError),
 
     #[error(transparent)]
     Crypto(#[from] CryptoError),
+
+    #[error(transparent)]
+    Log(#[from] LogError),
+
+    #[error(transparent)]
+    Topic(#[from] TopicError),
 
     #[error(transparent)]
     ParseEndpointAddress(#[from] ParseEndpointAddressError),

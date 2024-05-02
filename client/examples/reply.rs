@@ -3,12 +3,12 @@ use selium::std::codecs::BincodeCodec;
 use selium::{keep_alive::BackoffStrategy, prelude::*};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 enum Request {
     HelloWorld(Option<String>),
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 enum Response {
     HelloWorld(String),
 }

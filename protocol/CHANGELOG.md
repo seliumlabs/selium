@@ -19,3 +19,8 @@
 ## v0.3.0
 
 - Improve error handling and reporting between clients and servers
+
+## v0.4.0
+
+- Updated Frame::BatchMessage payload to include batch length.
+- Added Offset type to enable interoperability with Selium Log

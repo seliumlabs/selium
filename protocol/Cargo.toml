@@ -1,6 +1,6 @@
 [package]
 name = "selium-protocol"
-version = "0.3.0"
+version = "0.4.0"
 description = """
 selium-protocol is a dependent crate of Selium. Do not use directly.
 """

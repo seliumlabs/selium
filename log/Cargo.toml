@@ -1,0 +1,45 @@
+[package]
+name = "selium-log"
+version = "0.1.0"
+description = """
+selium-log is an open-source implementation of a log-based message queue.
+"""
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+bytes = "1.5"
+chrono = "0.4"
+crc32c = "0.6"
+futures = "0.3"
+memmap2 = "0.9"
+tokio = { version = "1.36", features = [
+    "fs",
+    "io-util",
+    "time",
+    "macros",
+    "rt-multi-thread",
+    "rt",
+] }
+tokio-util = "0.7"
+thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3.10"
+criterion = { version = "0.3", features = ["async_tokio"] }
+fake = "2.9"
+anyhow = "1.0"
+
+[[bench]]
+name = "read_benchmark"
+harness = false
+
+[[bench]]
+name = "write_benchmark"
+harness = false
