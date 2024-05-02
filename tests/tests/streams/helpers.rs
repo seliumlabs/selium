@@ -10,7 +10,9 @@ use selium_server::args::UserArgs;
 use selium_server::server::Server;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::time::Duration;
+use tempfile::TempDir;
 
 // Allow the operating system to assign a free port
 const SERVER_ADDR: &str = "127.0.0.1:0";
@@ -27,16 +29,17 @@ pub enum Response {
     Echo(String),
 }
 
-// TODO: Improve generic types for streams, as this is too unwieldy for library developers.
-type Req = KeepAlive<Requestor<BincodeCodec<Request>, BincodeCodec<Response>, Request, Response>>;
+type Req = KeepAlive<Requestor<BincodeCodec<Request>, BincodeCodec<Response>>>;
 
 pub struct TestClient {
     client: Client,
+    _tempdir: TempDir,
 }
 
 impl TestClient {
     pub async fn start() -> Result<Self> {
-        let server_addr = start_server()?;
+        let tempdir = TempDir::new().unwrap();
+        let server_addr = start_server(tempdir.path())?;
 
         let client = selium::custom()
             .keep_alive(5_000)?
@@ -50,7 +53,10 @@ impl TestClient {
             .connect()
             .await?;
 
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            _tempdir: tempdir,
+        })
     }
 
     pub fn start_replier(
@@ -107,7 +113,7 @@ async fn handler(req: Request) -> Result<Response> {
     Ok(res)
 }
 
-pub fn start_server() -> Result<SocketAddr> {
+pub fn start_server(logs_dir: impl AsRef<Path>) -> Result<SocketAddr> {
     let args = UserArgs::parse_from([
         "",
         "--bind-addr",
@@ -118,6 +124,10 @@ pub fn start_server() -> Result<SocketAddr> {
         "../certs/server/localhost.key.der",
         "--ca",
         "../certs/server/ca.der",
+        "--flush-policy-num-writes",
+        "1",
+        "--log-segments-directory",
+        logs_dir.as_ref().to_str().unwrap(),
     ]);
 
     let server = Server::try_from(args)?;

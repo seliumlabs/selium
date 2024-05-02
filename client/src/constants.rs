@@ -3,7 +3,7 @@
 /// The default `keep_alive` interval for a client connection.
 pub const KEEP_ALIVE_DEFAULT: u64 = 5_000;
 /// The default `retention_policy` setting for messages.
-pub const RETENTION_POLICY_DEFAULT: u64 = 0;
+pub const RETENTION_POLICY_DEFAULT: u64 = 1000 * 60 * 60 * 24;
 
 #[cfg(debug_assertions)]
 pub(crate) const CLOUD_CA: &[u8; 390] = include_bytes!("../ca.debug.der");

@@ -28,3 +28,7 @@
 
 - Add `tracing` lib to improve visibility
 - Improve and customise keepalive semantics for each stream type
+
+## v0.5.0
+
+- Implemented Message Retention and Replay functionality to pubsub clients

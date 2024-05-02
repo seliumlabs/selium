@@ -4,9 +4,11 @@ use futures::{stream::iter, FutureExt, SinkExt, StreamExt, TryStreamExt};
 use selium::keep_alive::pubsub::KeepAlive;
 use selium::std::codecs::StringCodec;
 use selium::{prelude::*, pubsub::Subscriber};
+use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_pub_sub() -> Result<()> {
+    // TODO: These tests need to be reworked for message retention.
     let messages = run().await?;
 
     assert_eq!(messages[0], Some("foo".to_owned()));
@@ -30,7 +32,8 @@ async fn test_pub_sub() -> Result<()> {
 }
 
 async fn run() -> Result<[Option<String>; 16]> {
-    let addr = start_server()?;
+    let tempdir = TempDir::new().unwrap();
+    let addr = start_server(tempdir.path())?;
     let addr = addr.to_string();
 
     let mut subscriber1 = start_subscriber(&addr, "/acmeco/stocks").await?;
@@ -99,10 +102,7 @@ async fn run() -> Result<[Option<String>; 16]> {
     ])
 }
 
-async fn start_subscriber(
-    addr: &str,
-    topic: &str,
-) -> Result<KeepAlive<Subscriber<StringCodec, String>>> {
+async fn start_subscriber(addr: &str, topic: &str) -> Result<KeepAlive<Subscriber<StringCodec>>> {
     let connection = selium::custom()
         .keep_alive(5_000)?
         .endpoint(addr)

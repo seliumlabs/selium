@@ -3,7 +3,7 @@ use crate::{
     streams::aliases::{Comp, Decomp},
     PubSubCommon,
 };
-use std::marker::PhantomData;
+use selium_protocol::Offset;
 
 #[doc(hidden)]
 pub struct SubscriberWantsDecoder {
@@ -19,20 +19,20 @@ impl SubscriberWantsDecoder {
 }
 
 #[doc(hidden)]
-pub struct SubscriberWantsOpen<D, Item> {
+pub struct SubscriberWantsOpen<D> {
     pub(crate) common: PubSubCommon,
     pub(crate) decoder: D,
     pub(crate) decompression: Option<Decomp>,
-    _marker: PhantomData<Item>,
+    pub(crate) offset: Offset,
 }
 
-impl<D, Item> SubscriberWantsOpen<D, Item> {
+impl<D> SubscriberWantsOpen<D> {
     pub fn new(prev: SubscriberWantsDecoder, decoder: D) -> Self {
         Self {
             common: prev.common,
             decoder,
             decompression: None,
-            _marker: PhantomData,
+            offset: Offset::default(),
         }
     }
 }
@@ -52,22 +52,20 @@ impl PublisherWantsEncoder {
 }
 
 #[doc(hidden)]
-pub struct PublisherWantsOpen<E, Item> {
+pub struct PublisherWantsOpen<E> {
     pub(crate) common: PubSubCommon,
     pub(crate) encoder: E,
     pub(crate) compression: Option<Comp>,
     pub(crate) batch_config: Option<BatchConfig>,
-    _marker: PhantomData<Item>,
 }
 
-impl<E, Item> PublisherWantsOpen<E, Item> {
+impl<E> PublisherWantsOpen<E> {
     pub fn new(prev: PublisherWantsEncoder, encoder: E) -> Self {
         Self {
             common: prev.common,
             encoder,
             compression: None,
             batch_config: None,
-            _marker: PhantomData,
         }
     }
 }

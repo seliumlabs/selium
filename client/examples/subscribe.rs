@@ -2,6 +2,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use selium::prelude::*;
 use selium::std::codecs::StringCodec;
+use selium_protocol::Offset;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,6 +22,7 @@ async fn main() -> Result<()> {
     let mut subscriber = connection
         .subscriber("/acmeco/stocks")
         .with_decoder(StringCodec)
+        .seek(Offset::FromEnd(5))
         .open()
         .await?;
 
