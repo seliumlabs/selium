@@ -28,3 +28,7 @@
 
 - Improve error reporting to client
 - Fix race condition when replier stream rejoins topic, which could result in the replier being erroneously rejected
+
+## v0.5.0
+
+- Integrated Selium Log into pubsub broker
