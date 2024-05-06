@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - main
+      - release
 
 jobs:
   check:
@@ -46,7 +47,7 @@ jobs:
       - name: Generate self-signed certs
         uses: actions-rs/cargo@v1
         with:
-          command: run 
+          command: run
           args: --bin selium-tools gen-certs
 
       - name: Run cargo test
