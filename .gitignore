@@ -1,4 +1,6 @@
+.cargo
 target/
 **/certs/
 .DS_Store
 **/logs/
+log/path

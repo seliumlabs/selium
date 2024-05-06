@@ -45,8 +45,8 @@ async fn read_records(path: impl AsRef<Path>) {
 
         match slice.messages().as_mut() {
             Some(ref mut iterator) => {
-                while let Some(next) = iterator.next().await {
-                    black_box(next).unwrap();
+                while let Some(next) = iterator.next().await.unwrap() {
+                    black_box(next);
                 }
             }
             None => break,

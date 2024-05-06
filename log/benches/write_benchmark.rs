@@ -27,7 +27,7 @@ async fn log_task() {
     let log = MessageLog::open(Arc::new(config)).await.unwrap();
 
     for _ in 0..NUM_OF_MESSAGES {
-        let batch = Bytes::copy_from_slice(&vec![1; 32]);
+        let batch = Bytes::copy_from_slice(&[1; 32]);
         let message = Message::single(&batch, 1);
         log.write(message).await.unwrap();
     }
@@ -38,7 +38,7 @@ async fn log_task() {
 pub fn benchmark(c: &mut Criterion) {
     c.bench_function("write 1_000_000 records", |b| {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to construct executor");
-        b.to_async(runtime).iter(|| log_task());
+        b.to_async(runtime).iter(log_task);
     });
 }
 

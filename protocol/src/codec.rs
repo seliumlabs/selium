@@ -143,7 +143,7 @@ mod tests {
 
         let mut codec = MessageCodec;
         let mut buffer = BytesMut::new();
-        let expected = Bytes::from_static(b"\0\0\0\0\0\0\06\x04\x01\x01\0\0\0\0\0\0\0\x04\0\0\0\0\0\0\0test\x06\0\0\0\0\0\0\0header\x0b\0\0\0\0\0\0\0Hello world");
+        let expected = Bytes::from_static(b"\0\0\0\0\0\0\x006\x04\x01\x01\0\0\0\0\0\0\0\x04\0\0\0\0\0\0\0test\x06\0\0\0\0\0\0\0header\x0b\0\0\0\0\0\0\0Hello world");
 
         codec.encode(frame, &mut buffer).unwrap();
 
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn decodes_message_frame_with_header() {
         let mut codec = MessageCodec;
-        let mut src = BytesMut::from("\0\0\0\0\0\0\06\x04\x01\x01\0\0\0\0\0\0\0\x04\0\0\0\0\0\0\0test\x06\0\0\0\0\0\0\0header\x0b\0\0\0\0\0\0\0Hello world");
+        let mut src = BytesMut::from("\0\0\0\0\0\0\x006\x04\x01\x01\0\0\0\0\0\0\0\x04\0\0\0\0\0\0\0test\x06\0\0\0\0\0\0\0header\x0b\0\0\0\0\0\0\0Hello world");
 
         let mut h = HashMap::new();
         h.insert("test".to_owned(), "header".to_owned());

@@ -8,7 +8,7 @@ use uuid::Uuid;
 #[tokio::test]
 async fn request_reply_successful() -> Result<()> {
     let client = TestClient::start().await?;
-    let _ = client.start_replier(None);
+    client.start_replier(None);
 
     let mut requestor = client.requestor(None).await?;
     let reply = requestor.request(Request::Ping).await?;
@@ -21,7 +21,7 @@ async fn request_reply_successful() -> Result<()> {
 #[tokio::test]
 async fn request_fails_if_exceeds_timeout() -> Result<()> {
     let client = TestClient::start().await?;
-    let _ = client.start_replier(Some(Duration::from_secs(3)));
+    client.start_replier(Some(Duration::from_secs(3)));
 
     let mut requestor = client.requestor(Some(Duration::from_secs(2))).await?;
     let reply = requestor.request(Request::Ping).await;
@@ -34,7 +34,7 @@ async fn request_fails_if_exceeds_timeout() -> Result<()> {
 #[tokio::test]
 async fn concurrent_requests_are_routed_successfully() -> Result<()> {
     let client = TestClient::start().await?;
-    let _ = client.start_replier(None);
+    client.start_replier(None);
 
     let requestor = client.requestor(None).await?;
     let mut tasks = vec![];
