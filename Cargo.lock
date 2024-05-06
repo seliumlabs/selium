@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "selium"
-version = "0.3.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1486,7 +1486,7 @@ dependencies = [
 
 [[package]]
 name = "selium-protocol"
-version = "0.2.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "selium-server"
-version = "0.3.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "selium-std"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1548,7 +1548,7 @@ dependencies = [
 
 [[package]]
 name = "selium-tests"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap 4.4.11",

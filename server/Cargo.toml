@@ -1,6 +1,6 @@
 [package]
 name = "selium-server"
-version = "0.3.1"
+version = "0.5.0"
 description = """
 The server-side binary for Selium, an extremely developer friendly, composable
 messaging platform with zero build time configuration.
@@ -32,7 +32,7 @@ quinn = "0.10"
 rcgen = "0.11"
 rustls = "0.21"
 rustls-pemfile = "1.0"
-selium-protocol = { version = "0.2", path = "../protocol" }
+selium-protocol = { version = "0.4", path = "../protocol" }
 selium-log = { version = "0.1", path = "../log" }
 selium-std = { version = "0.2", path = "../standard", features = ["codec"] }
 serde = { version = "1.0", features = ["derive"] }
