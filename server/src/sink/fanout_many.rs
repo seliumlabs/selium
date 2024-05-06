@@ -44,10 +44,10 @@ impl<K, V> FanoutMany<K, V> {
         ret
     }
 
-    pub fn remove<Q: ?Sized>(&mut self, k: &Q) -> Option<V>
+    pub fn remove<Q>(&mut self, k: &Q) -> Option<V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
+        Q: Hash + Eq + ?Sized,
     {
         for i in 0..self.entries.len() {
             if self.entries[i].0.borrow() == k {

@@ -48,7 +48,7 @@ impl TestWrapper {
 
     pub async fn write_records(&mut self, records: &[String]) {
         for record in records {
-            self.write(&record).await;
+            self.write(record).await;
         }
     }
 
