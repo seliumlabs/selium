@@ -22,8 +22,8 @@ chrono = { version = "0.4", optional = true, default-features = false, features 
     "clock",
 ] }
 futures = "0.3"
-quinn = "0.10"
-rustls = "0.21"
+quinn = "0.11"
+rustls = "0.23"
 rustls-pemfile = "1.0"
 selium-protocol = { version = "0.4", path = "../protocol" }
 selium-std = { version = "0.2", path = "../standard" }
