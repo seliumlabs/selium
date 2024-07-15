@@ -14,12 +14,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-bytes = "1.5"
+bytes = "1.6"
 chrono = "0.4"
 crc32c = "0.6"
 futures = "0.3"
 memmap2 = "0.9"
-tokio = { version = "1.36", features = [
+tokio = { version = "1.38", features = [
     "fs",
     "io-util",
     "time",
@@ -32,7 +32,7 @@ thiserror = "1.0"
 
 [dev-dependencies]
 tempfile = "3.10"
-criterion = { version = "0.3", features = ["async_tokio"] }
+criterion = { version = "0.5", features = ["async_tokio"] }
 fake = "2.9"
 anyhow = "1.0"
 
