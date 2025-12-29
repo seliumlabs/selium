@@ -1,0 +1,5 @@
+error: #[entrypoint] does not support generics
+ --> tests/entrypoint/fail/generic.rs:6:9
+  |
+6 | fn guest<T>() {}
+  |         ^^^

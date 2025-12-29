@@ -1,0 +1,21 @@
+[package]
+name = "selium-module-remote-client"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+futures = { workspace = true, features = ["std"] }
+rkyv = { workspace = true }
+selium-userland = { path = "../../system/userland" }
+tracing = { workspace = true, features = ["attributes"] }

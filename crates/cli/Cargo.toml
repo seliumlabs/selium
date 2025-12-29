@@ -1,0 +1,32 @@
+[package]
+name = "selium-cli"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["derive", "env", "help", "std"] }
+futures = { workspace = true, features = ["alloc", "std"] }
+selium-abi = { path = "../system/abi" }
+selium-client = { path = "../client" }
+selium-userland = { path = "../system/userland" }
+tokio = { workspace = true, features = [
+  "macros",
+  "rt-multi-thread",
+  "time",
+] }
+tracing = { workspace = true, features = ["attributes"] }
+tracing-subscriber = { workspace = true, features = [
+  "ansi",
+  "env-filter",
+  "fmt",
+  "json",
+  "std",
+] }

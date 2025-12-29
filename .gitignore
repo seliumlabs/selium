@@ -1,6 +1,4 @@
-.cargo
-target/
-**/certs/
-.DS_Store
-**/logs/
-log/path
+/target
+examples/**/target
+certs
+/modules

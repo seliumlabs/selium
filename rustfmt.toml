@@ -1,0 +1,12 @@
+# Formatting configuration for Selium
+
+# https://github.com/rust-lang/rustfmt/issues/4991
+# Prefer grouped imports within the same crate
+# imports_granularity = "Crate"
+
+# https://github.com/rust-lang/rustfmt/issues/5083
+# Keep import groups separated (std, external, crate) for readability.
+# group_imports = "StdExternalCrate"
+
+# Ensure deterministic ordering of imports.
+reorder_imports = true

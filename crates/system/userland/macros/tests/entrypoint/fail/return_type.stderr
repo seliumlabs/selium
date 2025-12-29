@@ -1,0 +1,5 @@
+error: #[entrypoint] functions must return () or Result<(), E>
+ --> tests/entrypoint/fail/return_type.rs:6:15
+  |
+6 | fn guest() -> u32 {
+  |               ^^^

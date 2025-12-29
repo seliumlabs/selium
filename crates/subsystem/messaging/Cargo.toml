@@ -1,0 +1,25 @@
+[package]
+name = "selium-messaging"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+futures = { workspace = true, features = ["async-await", "std"] }
+loom = { workspace = true, features = ["futures"], optional = true }
+pin-project = { workspace = true }
+selium-abi = { path = "../../system/abi" }
+selium-kernel = { path = "../../system/kernel" }
+stable-vec = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing = { workspace = true, features = ["attributes"] }
+
+[features]
+loom = ["dep:loom"]
