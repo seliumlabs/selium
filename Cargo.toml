@@ -13,7 +13,8 @@ members = [
   "crates/system/kernel",
   "crates/system/runtime",
   "crates/system/userland",
-  "crates/system/userland/macros"
+  "crates/system/userland/macros",
+  "tests/request-reply"
 ]
 exclude = ["examples"]
 
@@ -31,6 +32,7 @@ categories = ["asynchronous", "network-programming", "wasm"]
 [workspace.dependencies]
 anyhow = { version = "1.0", default-features = false }
 blake3 = { version = "1.8", default-features = false }
+cargo = { version = "0.93", default-features = false }
 clap = { version = "4.5", default-features = false }
 flatbuffers = { version = "25.12", default-features = false }
 flatbuffers-build = { version = "0.2", default-features = false }
