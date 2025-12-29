@@ -1,0 +1,28 @@
+[package]
+name = "selium-test-request-reply"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dev-dependencies]
+anyhow = { workspace = true }
+cargo = { workspace = true, features = ["http-transport-reqwest"] }
+futures = { workspace = true, features = ["std"] }
+selium-abi = { path = "../../crates/system/abi" }
+selium-client = { path = "../../crates/client" }
+selium-userland = { path = "../../crates/system/userland" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[build-dependencies]
+flatbuffers-build = { workspace = true }
+flatc = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+anyhow = { workspace = true }
+flatbuffers = { workspace = true }
+futures = { workspace = true, features = ["std"] }
+selium-userland = { path = "../../crates/system/userland" }
+tracing = { workspace = true }

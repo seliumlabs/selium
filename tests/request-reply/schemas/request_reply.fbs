@@ -1,0 +1,16 @@
+namespace tests.request_reply;
+
+table RequestReplyRequest {
+  /// Handle where the caller has registered a shared response channel.
+  response_channel: ulong;
+  /// Payload to echo back to the caller.
+  msg: string;
+}
+
+table RequestReplyResponse {
+  /// The echoed payload.
+  msg: string;
+}
+
+root_type RequestReplyRequest;
+file_identifier "RRPL";

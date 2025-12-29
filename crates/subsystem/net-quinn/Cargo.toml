@@ -1,0 +1,21 @@
+[package]
+name = "selium-net-quinn"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+futures-util = { workspace = true }
+parking_lot = { workspace = true }
+quinn = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
+selium-kernel = { path = "../../system/kernel" }
+selium-abi = { path = "../../system/abi" }
+thiserror = { workspace = true }
+webpki-roots = { workspace = true }
+tracing = { workspace = true }

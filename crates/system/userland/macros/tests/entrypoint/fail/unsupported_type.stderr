@@ -1,0 +1,5 @@
+error: #[entrypoint] parameters must use identifier patterns
+ --> tests/entrypoint/fail/unsupported_type.rs:6:10
+  |
+6 | fn guest((a, b): (i32, i32)) {}
+  |          ^^^^^^
