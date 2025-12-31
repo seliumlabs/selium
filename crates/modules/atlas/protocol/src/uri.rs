@@ -4,9 +4,9 @@
 //!
 //! # Examples
 //! ```
-//! use selium_userland::uri::Uri;
+//! use selium_atlas_protocol::uri::{Uri, UriError};
 //!
-//! fn main() -> Result<(), selium_userland::uri::UriError> {
+//! fn main() -> Result<(), UriError> {
 //!     let uri = Uri::parse("sel://tenant/app.app/service:ep")?;
 //!     assert_eq!(uri.tenant(), "tenant");
 //!     assert_eq!(uri.application(), Some("app.app"));
@@ -23,7 +23,7 @@ use flatbuffers::{self, FlatBufferBuilder, WIPOffset};
 use thiserror::Error;
 use url::{ParseError, Url};
 
-use crate::fbs::selium::uri as fb;
+use crate::fbs::atlas::uri as fb;
 
 type Result<T, E = UriError> = std::result::Result<T, E>;
 

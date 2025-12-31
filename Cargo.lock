@@ -4144,6 +4144,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "selium-atlas"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "futures",
+ "selium-atlas-protocol",
+ "selium-switchboard",
+ "selium-userland",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
+name = "selium-atlas-module"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "futures",
+ "selium-atlas-protocol",
+ "selium-userland",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
+name = "selium-atlas-protocol"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "flatbuffers",
+ "flatbuffers-build",
+ "flatc",
+ "thiserror 2.0.17",
+ "url",
+]
+
+[[package]]
 name = "selium-cli"
 version = "1.0.0-alpha.1"
 dependencies = [

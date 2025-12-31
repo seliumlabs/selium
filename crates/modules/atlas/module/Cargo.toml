@@ -1,0 +1,22 @@
+[package]
+name = "selium-atlas-module"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+futures = { workspace = true, features = ["alloc", "std"] }
+selium-atlas-protocol = { path = "../protocol" }
+selium-userland = { path = "../../../system/userland" }
+thiserror = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }

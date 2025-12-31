@@ -332,11 +332,7 @@ where
     }
 }
 
-impl<In, Out> EndpointHandle<In, Out>
-where
-    In: FlatMsg + Send + Unpin + 'static,
-    Out: FlatMsg + Send + Unpin + 'static,
-{
+impl<In, Out> EndpointHandle<In, Out> {
     /// Return the endpoint identifier assigned by the switchboard.
     pub fn id(&self) -> EndpointId {
         self.id
@@ -351,7 +347,13 @@ where
     pub fn outbound_handle(&self, target: EndpointId) -> Option<ChannelHandle> {
         self.io.outbound_handle(target)
     }
+}
 
+impl<In, Out> EndpointHandle<In, Out>
+where
+    In: FlatMsg + Send + Unpin + 'static,
+    Out: FlatMsg + Send + Unpin + 'static,
+{
     pub(crate) fn poll_updates(&mut self, cx: &mut Context<'_>) -> Result<(), SwitchboardError> {
         loop {
             if let Some(pending) = self.pending.as_mut() {
@@ -391,6 +393,13 @@ where
     }
 }
 
+impl<In, Out> EndpointIo<In, Out> {
+    /// Lookup the outbound channel handle targeting a specific endpoint.
+    pub fn outbound_handle(&self, target: EndpointId) -> Option<ChannelHandle> {
+        self.outbound_map.get(&target).cloned()
+    }
+}
+
 impl<In, Out> EndpointIo<In, Out>
 where
     In: FlatMsg + Send + Unpin + 'static,
@@ -408,10 +417,6 @@ where
         self.inbound = wiring.inbound;
         self.outbound = wiring.outbound;
         self.outbound_map = wiring.outbound_map;
-    }
-
-    fn outbound_handle(&self, target: EndpointId) -> Option<ChannelHandle> {
-        self.outbound_map.get(&target).copied()
     }
 }
 

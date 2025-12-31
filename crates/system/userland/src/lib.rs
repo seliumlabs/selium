@@ -169,7 +169,6 @@ pub mod io;
 pub mod logging;
 pub mod net;
 pub mod process;
-pub mod uri;
 
 /// Re-export of the `rkyv` crate used for internal Selium serialisation.
 pub use rkyv;

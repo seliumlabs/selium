@@ -1,0 +1,20 @@
+[package]
+name = "selium-atlas-protocol"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+flatbuffers = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+
+[build-dependencies]
+flatbuffers-build = { workspace = true }
+flatc = { workspace = true }

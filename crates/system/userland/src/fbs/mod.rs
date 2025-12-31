@@ -18,9 +18,4 @@ pub mod selium {
     mod flat_result_generated;
     pub use self::flat_result_generated::*;
   }
-  pub mod uri {
-    use super::*;
-    mod uri_generated;
-    pub use self::uri_generated::*;
-  }
 }

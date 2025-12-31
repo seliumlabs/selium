@@ -91,11 +91,7 @@ impl<Req, Rep> ClientTarget<Req, Rep> for EndpointId {
     }
 }
 
-impl<Req, Rep> ClientTarget<Req, Rep> for &Server<Req, Rep>
-where
-    Req: FlatMsg + HasSchema + Send + Unpin + 'static,
-    Rep: FlatMsg + HasSchema + Send + Unpin + 'static,
-{
+impl<Req, Rep> ClientTarget<Req, Rep> for &Server<Req, Rep> {
     fn endpoint_id(&self) -> EndpointId {
         Server::endpoint_id(*self)
     }
@@ -107,19 +103,13 @@ impl<Req> SubscriberTarget<Req> for EndpointId {
     }
 }
 
-impl<Req> SubscriberTarget<Req> for &Publisher<Req>
-where
-    Req: FlatMsg + HasSchema + Send + Unpin + 'static,
-{
+impl<Req> SubscriberTarget<Req> for &Publisher<Req> {
     fn endpoint_id(&self) -> EndpointId {
         Publisher::endpoint_id(*self)
     }
 }
 
-impl<Req> SubscriberTarget<Req> for &Fanout<Req>
-where
-    Req: FlatMsg + HasSchema + Send + Unpin + 'static,
-{
+impl<Req> SubscriberTarget<Req> for &Fanout<Req> {
     fn endpoint_id(&self) -> EndpointId {
         Fanout::endpoint_id(*self)
     }
@@ -131,10 +121,7 @@ impl<Rep> PublisherTarget<Rep> for EndpointId {
     }
 }
 
-impl<Rep> PublisherTarget<Rep> for &Subscriber<Rep>
-where
-    Rep: FlatMsg + HasSchema + Send + Unpin + 'static,
-{
+impl<Rep> PublisherTarget<Rep> for &Subscriber<Rep> {
     fn endpoint_id(&self) -> EndpointId {
         Subscriber::endpoint_id(*self)
     }
@@ -146,11 +133,7 @@ impl<Req, Rep> ServerTarget<Req, Rep> for EndpointId {
     }
 }
 
-impl<Req, Rep> ServerTarget<Req, Rep> for &Client<Req, Rep>
-where
-    Req: FlatMsg + HasSchema + Send + Unpin + 'static,
-    Rep: FlatMsg + HasSchema + Send + Unpin + 'static,
-{
+impl<Req, Rep> ServerTarget<Req, Rep> for &Client<Req, Rep> {
     fn endpoint_id(&self) -> EndpointId {
         Client::endpoint_id(*self)
     }
@@ -162,6 +145,13 @@ impl<Rep> Clone for Responder<Rep> {
             handle: self.handle,
             _marker: PhantomData,
         }
+    }
+}
+
+impl<Rep> Publisher<Rep> {
+    /// Return the switchboard endpoint identifier.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint.get_id()
     }
 }
 
@@ -178,11 +168,6 @@ where
             .register()
             .await?;
         Ok(Self { endpoint })
-    }
-
-    /// Return the switchboard endpoint identifier.
-    pub fn endpoint_id(&self) -> EndpointId {
-        self.endpoint.get_id()
     }
 
     /// Connect this publisher to the supplied target, wiring outbound flows.
@@ -274,6 +259,13 @@ where
     }
 }
 
+impl<Req> Subscriber<Req> {
+    /// Return the switchboard endpoint identifier.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint.get_id()
+    }
+}
+
 impl<Req> Subscriber<Req>
 where
     Req: FlatMsg + HasSchema + Send + Unpin + 'static,
@@ -287,11 +279,6 @@ where
             .register()
             .await?;
         Ok(Self { endpoint })
-    }
-
-    /// Return the switchboard endpoint identifier.
-    pub fn endpoint_id(&self) -> EndpointId {
-        self.endpoint.get_id()
     }
 
     /// Connect this subscriber to the supplied target, wiring inbound flows.
@@ -349,6 +336,13 @@ where
     }
 }
 
+impl<Rep> Fanout<Rep> {
+    /// Return the switchboard endpoint identifier.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint.get_id()
+    }
+}
+
 impl<Rep> Fanout<Rep>
 where
     Rep: FlatMsg + HasSchema + Send + Unpin + 'static,
@@ -362,11 +356,6 @@ where
             .register()
             .await?;
         Ok(Self { endpoint, next: 0 })
-    }
-
-    /// Return the switchboard endpoint identifier.
-    pub fn endpoint_id(&self) -> EndpointId {
-        self.endpoint.get_id()
     }
 
     /// Connect this fanout to the supplied target, wiring outbound flows.
@@ -454,6 +443,13 @@ where
     }
 }
 
+impl<Req, Rep> Server<Req, Rep> {
+    /// Return the switchboard endpoint identifier.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint.get_id()
+    }
+}
+
 impl<Req, Rep> Server<Req, Rep>
 where
     Req: FlatMsg + HasSchema + Send + Unpin + 'static,
@@ -468,11 +464,6 @@ where
             .register()
             .await?;
         Ok(Self { endpoint })
-    }
-
-    /// Return the switchboard endpoint identifier.
-    pub fn endpoint_id(&self) -> EndpointId {
-        self.endpoint.get_id()
     }
 
     /// Connect this server to the supplied target, wiring request and reply flows.
@@ -542,6 +533,13 @@ where
     }
 }
 
+impl<Req, Rep> Client<Req, Rep> {
+    /// Return the switchboard endpoint identifier.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint.get_id()
+    }
+}
+
 impl<Req, Rep> Client<Req, Rep>
 where
     Req: FlatMsg + HasSchema + Send + Unpin + 'static,
@@ -556,11 +554,6 @@ where
             .register()
             .await?;
         Ok(Self { endpoint })
-    }
-
-    /// Return the switchboard endpoint identifier.
-    pub fn endpoint_id(&self) -> EndpointId {
-        self.endpoint.get_id()
     }
 
     /// Send a request and await the next reply.

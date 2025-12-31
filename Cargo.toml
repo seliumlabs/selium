@@ -3,6 +3,9 @@ resolver = "2"
 members = [
   "crates/cli",
   "crates/client",
+  "crates/modules/atlas/client",
+  "crates/modules/atlas/module",
+  "crates/modules/atlas/protocol",
   "crates/modules/remote-client",
   "crates/modules/switchboard/client",
   "crates/modules/switchboard/core",

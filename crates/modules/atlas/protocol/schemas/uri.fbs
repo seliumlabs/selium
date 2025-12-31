@@ -1,5 +1,5 @@
 // Flatbuffers schema for the Uri domain-model type.
-namespace selium.uri;
+namespace atlas.uri;
 
 /// Canonical representation of a Selium URI.
 table Uri {
