@@ -276,8 +276,10 @@ impl WeakWriter {
         if let Some(mut strong) = this.current.as_mut().as_pin_mut()
             && strong.is_idle()
         {
-            let strong_mut = strong.as_mut().get_mut();
-            strong_mut.release_tail();
+            strong.as_mut().get_mut().release_tail();
+            if let Some(chan) = this.chan.upgrade() {
+                chan.schedule_readers();
+            }
             this.current.set(None);
         }
     }
@@ -343,6 +345,9 @@ impl PinnedDrop for WeakWriter {
         let mut this = self.project();
         if let Some(mut strong) = this.current.take() {
             strong.release_tail();
+            if let Some(chan) = strong.chan.upgrade() {
+                chan.schedule_readers();
+            }
         }
     }
 }

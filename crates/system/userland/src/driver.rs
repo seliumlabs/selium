@@ -554,6 +554,24 @@ pub(crate) mod test_driver {
                     Err(_) => 0,
                 }
             }
+            selium_abi::hostcall_name!(CHANNEL_WEAK_WRITER_CREATE) => {
+                let args = match decode_args(args_ptr, args_len) {
+                    Ok(buf) => buf,
+                    Err(_) => return 0,
+                };
+                let channel: ChannelHandle = match decode_rkyv(args) {
+                    Ok(value) => value,
+                    Err(_) => return 0,
+                };
+                let writer_handle = guard.next_op.saturating_add(1000);
+                let writer_id = guard.next_writer_id;
+                guard.next_writer_id = guard.next_writer_id.saturating_add(1);
+                guard.writers.insert(writer_handle, (channel, writer_id));
+                match encode(&writer_handle) {
+                    Ok(bytes) => guard.insert_op(Operation::Return(bytes)),
+                    Err(_) => 0,
+                }
+            }
             selium_abi::hostcall_name!(CHANNEL_STRONG_READER_CREATE) => {
                 let args = match decode_args(args_ptr, args_len) {
                     Ok(buf) => buf,
@@ -570,7 +588,24 @@ pub(crate) mod test_driver {
                     Err(_) => 0,
                 }
             }
-            selium_abi::hostcall_name!(CHANNEL_WRITE) => {
+            selium_abi::hostcall_name!(CHANNEL_WEAK_READER_CREATE) => {
+                let args = match decode_args(args_ptr, args_len) {
+                    Ok(buf) => buf,
+                    Err(_) => return 0,
+                };
+                let channel: ChannelHandle = match decode_rkyv(args) {
+                    Ok(value) => value,
+                    Err(_) => return 0,
+                };
+                let reader_handle = guard.next_op.saturating_add(2000);
+                guard.readers.insert(reader_handle, channel);
+                match encode(&reader_handle) {
+                    Ok(bytes) => guard.insert_op(Operation::Return(bytes)),
+                    Err(_) => 0,
+                }
+            }
+            selium_abi::hostcall_name!(CHANNEL_STRONG_WRITE)
+            | selium_abi::hostcall_name!(CHANNEL_WEAK_WRITE) => {
                 let args = match decode_args(args_ptr, args_len) {
                     Ok(buf) => buf,
                     Err(_) => return 0,
@@ -581,7 +616,8 @@ pub(crate) mod test_driver {
                 };
                 guard.insert_op(Operation::Write(write))
             }
-            selium_abi::hostcall_name!(CHANNEL_READ) => {
+            selium_abi::hostcall_name!(CHANNEL_STRONG_READ)
+            | selium_abi::hostcall_name!(CHANNEL_WEAK_READ) => {
                 let args = match decode_args(args_ptr, args_len) {
                     Ok(buf) => buf,
                     Err(_) => return 0,

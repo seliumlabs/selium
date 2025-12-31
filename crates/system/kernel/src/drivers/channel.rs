@@ -36,12 +36,14 @@ type ChannelReadOps<S, W> = (
     Arc<Operation<IoCreateReaderDriver<S>>>,
     Arc<Operation<IoCreateReaderDriver<W>>>,
     Arc<Operation<IoReadDriver<S>>>,
+    Arc<Operation<IoReadDriver<W>>>,
 );
 
 type ChannelWriteOps<S, W> = (
     Arc<Operation<IoCreateWriterDriver<S>>>,
     Arc<Operation<IoCreateWriterDriver<W>>>,
     Arc<Operation<IoWriteDriver<S>>>,
+    Arc<Operation<IoWriteDriver<W>>>,
 );
 
 /// The capabilities that any subsystem implementation needs to provide
@@ -333,10 +335,14 @@ where
             selium_abi::hostcall_contract!(CHANNEL_STRONG_READER_CREATE),
         ),
         create_reader_op(
-            weak_cap,
+            weak_cap.clone(),
             selium_abi::hostcall_contract!(CHANNEL_WEAK_READER_CREATE),
         ),
-        read_op(strong_cap, selium_abi::hostcall_contract!(CHANNEL_READ)),
+        read_op(
+            strong_cap,
+            selium_abi::hostcall_contract!(CHANNEL_STRONG_READ),
+        ),
+        read_op(weak_cap, selium_abi::hostcall_contract!(CHANNEL_WEAK_READ)),
     )
 }
 
@@ -351,10 +357,14 @@ where
             selium_abi::hostcall_contract!(CHANNEL_STRONG_WRITER_CREATE),
         ),
         create_writer_op(
-            weak_cap,
+            weak_cap.clone(),
             selium_abi::hostcall_contract!(CHANNEL_WEAK_WRITER_CREATE),
         ),
-        write_op(strong_cap, selium_abi::hostcall_contract!(CHANNEL_WRITE)),
+        write_op(
+            strong_cap,
+            selium_abi::hostcall_contract!(CHANNEL_STRONG_WRITE),
+        ),
+        write_op(weak_cap, selium_abi::hostcall_contract!(CHANNEL_WEAK_WRITE)),
     )
 }
 

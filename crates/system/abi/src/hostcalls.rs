@@ -208,8 +208,14 @@ declare_hostcalls! {
         input: GuestUint,
         output: GuestUint
     },
-    CHANNEL_READ => {
-        name: "selium::channel::read",
+    CHANNEL_STRONG_READ => {
+        name: "selium::channel::strong_read",
+        capability: Capability::ChannelReader,
+        input: IoRead,
+        output: IoFrame
+    },
+    CHANNEL_WEAK_READ => {
+        name: "selium::channel::weak_read",
         capability: Capability::ChannelReader,
         input: IoRead,
         output: IoFrame
@@ -232,8 +238,14 @@ declare_hostcalls! {
         input: GuestUint,
         output: GuestUint
     },
-    CHANNEL_WRITE => {
-        name: "selium::channel::write",
+    CHANNEL_STRONG_WRITE => {
+        name: "selium::channel::strong_write",
+        capability: Capability::ChannelWriter,
+        input: IoWrite,
+        output: GuestUint
+    },
+    CHANNEL_WEAK_WRITE => {
+        name: "selium::channel::weak_write",
         capability: Capability::ChannelWriter,
         input: IoWrite,
         output: GuestUint

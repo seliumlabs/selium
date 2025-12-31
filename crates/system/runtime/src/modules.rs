@@ -104,11 +104,17 @@ pub async fn remote_client(
     let mut mod_path = work_dir.as_ref().to_owned();
     mod_path.push("selium_module_remote_client.wasm");
 
+    let mod_path = mod_path.to_str().ok_or_else(|| {
+        WasmtimeError::Kernel(KernelError::Driver(
+            "switchboard module path is not valid UTF-8".to_string(),
+        ))
+    })?;
+
     if let Err(err) = runtime
         .start(
             registry,
             process_id,
-            mod_path.to_str().expect("non-UTF8 path"),
+            mod_path,
             "start",
             vec![
                 Capability::ChannelLifecycle,
@@ -142,6 +148,61 @@ pub async fn remote_client(
     Ok(process_id)
 }
 
+pub async fn switchboard(
+    kernel: &Kernel,
+    registry: &Arc<Registry>,
+    work_dir: impl AsRef<Path>,
+) -> Result<ResourceId, <WasmtimeDriver as ProcessLifecycleCapability>::Error> {
+    let runtime = kernel.get::<WasmtimeDriver>().ok_or_else(|| {
+        WasmtimeError::Kernel(KernelError::Driver(
+            "missing Wasmtime driver in kernel".to_string(),
+        ))
+    })?;
+    let process_id = registry
+        .reserve(None, ResourceType::Process)
+        .map_err(KernelError::from)
+        .map_err(<WasmtimeDriver as ProcessLifecycleCapability>::Error::from)?;
+
+    let entrypoint =
+        EntrypointInvocation::new(AbiSignature::new(Vec::new(), Vec::new()), Vec::new())
+            .context("failed to construct entrypoint invocation")?;
+
+    let mut mod_path = work_dir.as_ref().to_owned();
+    mod_path.push("selium_module_switchboard.wasm");
+
+    if let Err(err) = runtime
+        .start(
+            registry,
+            process_id,
+            mod_path.to_str().expect("non-UTF8 path"),
+            "start",
+            vec![
+                Capability::ChannelLifecycle,
+                Capability::ChannelReader,
+                Capability::ChannelWriter,
+            ],
+            entrypoint,
+        )
+        .await
+    {
+        registry.discard(process_id);
+        return Err(err);
+    }
+
+    let registry_clone = Arc::clone(registry);
+    tokio::spawn(async move {
+        if let Err(err) = subscribe_switchboard_logs(registry_clone, process_id).await {
+            warn!(
+                process_id,
+                err = err.to_string(),
+                "switchboard log subscriber terminated"
+            );
+        }
+    });
+
+    Ok(process_id)
+}
+
 async fn subscribe_remote_client_logs(
     registry: Arc<Registry>,
     process_id: ResourceId,
@@ -151,6 +212,12 @@ async fn subscribe_remote_client_logs(
         process_id,
         "subscribing to selium-module-remote-client logs"
     );
+    forward_log_stream(channel).await
+}
+
+async fn subscribe_switchboard_logs(registry: Arc<Registry>, process_id: ResourceId) -> Result<()> {
+    let channel = wait_for_log_channel(&registry, process_id).await?;
+    info!(process_id, "subscribing to selium-module-switchboard logs");
     forward_log_stream(channel).await
 }
 

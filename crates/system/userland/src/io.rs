@@ -62,13 +62,37 @@ pub struct ChannelPair {
 pub struct Reader {
     handle: ChannelHandle,
     chunk_size: usize,
-    inflight: Option<DriverFuture<channel_read_frame::Module, RkyvDecoder<IoFrame>>>,
+    kind: ReaderKind,
+    inflight: Option<ReaderInflight>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ReaderKind {
+    Strong,
+    Weak,
+}
+
+enum ReaderInflight {
+    Strong(DriverFuture<channel_strong_read_frame::Module, RkyvDecoder<IoFrame>>),
+    Weak(DriverFuture<channel_weak_read_frame::Module, RkyvDecoder<IoFrame>>),
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum WriterKind {
+    Strong,
+    Weak,
+}
+
+enum WriterInflight {
+    Strong(DriverFuture<channel_strong_write_frame::Module, RkyvDecoder<GuestUint>>),
+    Weak(DriverFuture<channel_weak_write_frame::Module, RkyvDecoder<GuestUint>>),
 }
 
 /// Writer that serialises typed payloads onto the channel.
 pub struct Writer {
     handle: ChannelHandle,
-    inflight: Option<DriverFuture<channel_write_frame::Module, RkyvDecoder<GuestUint>>>,
+    kind: WriterKind,
+    inflight: Option<WriterInflight>,
 }
 
 impl Channel {
@@ -170,9 +194,19 @@ impl Channel {
         Reader::attach(self.0, chunk_size as usize).await
     }
 
+    /// Create a weak channel reader that implements [`Stream`].
+    pub async fn subscribe_weak(&self, chunk_size: GuestUint) -> Result<Reader, DriverError> {
+        Reader::attach_weak(self.0, chunk_size as usize).await
+    }
+
     /// Create a new channel writer that implements [`Sink`].
     pub async fn publish(&self) -> Result<Writer, DriverError> {
         Writer::attach(self.0).await
+    }
+
+    /// Create a weak channel writer that relinquishes its tail slot when idle.
+    pub async fn publish_weak(&self) -> Result<Writer, DriverError> {
+        Writer::attach_weak(self.0).await
     }
 }
 
@@ -247,8 +281,36 @@ impl Reader {
         Ok(Self {
             handle: GuestResourceId::from(handle),
             chunk_size,
+            kind: ReaderKind::Strong,
             inflight: None,
         })
+    }
+
+    async fn attach_weak(channel: ChannelHandle, chunk_size: usize) -> Result<Self, DriverError> {
+        let channel = guest_handle(channel)?;
+        let args = encode_args(&channel)?;
+        let handle = DriverFuture::<weak_reader_create::Module, RkyvDecoder<GuestUint>>::new(
+            &args,
+            8,
+            RkyvDecoder::new(),
+        )?
+        .await?;
+
+        Ok(Self {
+            handle: GuestResourceId::from(handle),
+            chunk_size,
+            kind: ReaderKind::Weak,
+            inflight: None,
+        })
+    }
+}
+
+impl ReaderInflight {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<IoFrame, DriverError>> {
+        match self {
+            ReaderInflight::Strong(fut) => Pin::new(fut).poll(cx),
+            ReaderInflight::Weak(fut) => Pin::new(fut).poll(cx),
+        }
     }
 }
 
@@ -276,11 +338,25 @@ impl Stream for Reader {
                 Ok(bytes) => bytes,
                 Err(err) => return Poll::Ready(Some(Err(err))),
             };
-            let fut = match DriverFuture::<channel_read_frame::Module, RkyvDecoder<IoFrame>>::new(
-                &encoded,
-                this.chunk_size + RKYV_VEC_OVERHEAD + 8,
-                RkyvDecoder::new(),
-            ) {
+            let fut = match this.kind {
+                ReaderKind::Strong => {
+                    DriverFuture::<channel_strong_read_frame::Module, RkyvDecoder<IoFrame>>::new(
+                        &encoded,
+                        this.chunk_size + RKYV_VEC_OVERHEAD + 8,
+                        RkyvDecoder::new(),
+                    )
+                    .map(ReaderInflight::Strong)
+                }
+                ReaderKind::Weak => {
+                    DriverFuture::<channel_weak_read_frame::Module, RkyvDecoder<IoFrame>>::new(
+                        &encoded,
+                        this.chunk_size + RKYV_VEC_OVERHEAD + 8,
+                        RkyvDecoder::new(),
+                    )
+                    .map(ReaderInflight::Weak)
+                }
+            };
+            let fut = match fut {
                 Ok(fut) => fut,
                 Err(err) => return Poll::Ready(Some(Err(err))),
             };
@@ -292,7 +368,7 @@ impl Stream for Reader {
             None => return Poll::Ready(Some(Err(DriverError::InvalidArgument))),
         };
 
-        match Pin::new(fut).poll(cx) {
+        match fut.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(res) => {
                 this.inflight = None;
@@ -314,6 +390,7 @@ impl FromHandle for Reader {
             handle,
             inflight: None,
             chunk_size: DEFAULT_CHUNK_SIZE as usize,
+            kind: ReaderKind::Strong,
         }
     }
 }
@@ -330,6 +407,23 @@ impl Writer {
         .await?;
         Ok(Self {
             handle: GuestResourceId::from(handle),
+            kind: WriterKind::Strong,
+            inflight: None,
+        })
+    }
+
+    async fn attach_weak(channel: ChannelHandle) -> Result<Self, DriverError> {
+        let channel = guest_handle(channel)?;
+        let args = encode_args(&channel)?;
+        let handle = DriverFuture::<weak_writer_create::Module, RkyvDecoder<GuestUint>>::new(
+            &args,
+            8,
+            RkyvDecoder::new(),
+        )?
+        .await?;
+        Ok(Self {
+            handle: GuestResourceId::from(handle),
+            kind: WriterKind::Weak,
             inflight: None,
         })
     }
@@ -348,7 +442,17 @@ impl Writer {
         )?
         .await?;
         self.handle = GuestResourceId::from(handle);
+        self.kind = WriterKind::Weak;
         Ok(())
+    }
+}
+
+impl WriterInflight {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Result<GuestUint, DriverError>> {
+        match self {
+            WriterInflight::Strong(fut) => Pin::new(fut).poll(cx),
+            WriterInflight::Weak(fut) => Pin::new(fut).poll(cx),
+        }
     }
 }
 
@@ -358,7 +462,7 @@ impl Sink<Vec<u8>> for Writer {
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let this = self.get_mut();
         match this.inflight.as_mut() {
-            Some(fut) => match Pin::new(fut).poll(cx) {
+            Some(fut) => match fut.poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(result) => {
                     this.inflight = None;
@@ -384,11 +488,20 @@ impl Sink<Vec<u8>> for Writer {
             payload: item,
         };
         let encoded = encode_args(&args)?;
-        let fut = DriverFuture::<channel_write_frame::Module, RkyvDecoder<GuestUint>>::new(
-            &encoded,
-            8,
-            RkyvDecoder::new(),
-        )?;
+        let fut = match self.kind {
+            WriterKind::Strong => {
+                WriterInflight::Strong(DriverFuture::<
+                    channel_strong_write_frame::Module,
+                    RkyvDecoder<GuestUint>,
+                >::new(&encoded, 8, RkyvDecoder::new())?)
+            }
+            WriterKind::Weak => {
+                WriterInflight::Weak(DriverFuture::<
+                    channel_weak_write_frame::Module,
+                    RkyvDecoder<GuestUint>,
+                >::new(&encoded, 8, RkyvDecoder::new())?)
+            }
+        };
         self.inflight = Some(fut);
 
         Ok(())
@@ -396,7 +509,7 @@ impl Sink<Vec<u8>> for Writer {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let poll = match self.as_mut().get_mut().inflight.as_mut() {
-            Some(fut) => Pin::new(fut).poll(cx),
+            Some(fut) => fut.poll(cx),
             None => return Poll::Ready(Ok(())),
         };
 
@@ -420,6 +533,7 @@ impl FromHandle for Writer {
     unsafe fn from_handle(handle: Self::Handles) -> Self {
         Self {
             handle,
+            kind: WriterKind::Strong,
             inflight: None,
         }
     }
@@ -435,17 +549,45 @@ driver_module!(
     "selium::channel::strong_reader_create"
 );
 driver_module!(
+    weak_reader_create,
+    CHANNEL_WEAK_READER_CREATE,
+    "selium::channel::weak_reader_create"
+);
+driver_module!(
     writer_create,
     CHANNEL_STRONG_WRITER_CREATE,
     "selium::channel::strong_writer_create"
+);
+driver_module!(
+    weak_writer_create,
+    CHANNEL_WEAK_WRITER_CREATE,
+    "selium::channel::weak_writer_create"
 );
 driver_module!(
     writer_downgrade,
     CHANNEL_WRITER_DOWNGRADE,
     "selium::channel::writer_downgrade"
 );
-driver_module!(channel_read_frame, CHANNEL_READ, "selium::channel::read");
-driver_module!(channel_write_frame, CHANNEL_WRITE, "selium::channel::write");
+driver_module!(
+    channel_strong_read_frame,
+    CHANNEL_STRONG_READ,
+    "selium::channel::strong_read"
+);
+driver_module!(
+    channel_weak_read_frame,
+    CHANNEL_WEAK_READ,
+    "selium::channel::weak_read"
+);
+driver_module!(
+    channel_strong_write_frame,
+    CHANNEL_STRONG_WRITE,
+    "selium::channel::strong_write"
+);
+driver_module!(
+    channel_weak_write_frame,
+    CHANNEL_WEAK_WRITE,
+    "selium::channel::weak_write"
+);
 driver_module!(channel_create, CHANNEL_CREATE, "selium::channel::create");
 driver_module!(channel_delete, CHANNEL_DELETE, "selium::channel::delete");
 driver_module!(channel_drain, CHANNEL_DRAIN, "selium::channel::drain");

@@ -4225,6 +4225,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "selium-module-switchboard"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "futures",
+ "selium-switchboard-core",
+ "selium-switchboard-protocol",
+ "selium-userland",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
 name = "selium-net-quinn"
 version = "1.0.0-alpha.1"
 dependencies = [
@@ -4257,6 +4270,38 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "selium-switchboard"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "futures",
+ "pin-project",
+ "selium-switchboard-core",
+ "selium-switchboard-protocol",
+ "selium-userland",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "selium-switchboard-core"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "selium-switchboard-protocol",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "selium-switchboard-protocol"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "flatbuffers",
+ "flatbuffers-build",
+ "flatc",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

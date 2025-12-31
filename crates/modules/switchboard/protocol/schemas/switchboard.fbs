@@ -1,0 +1,71 @@
+namespace selium.switchboard;
+
+enum Cardinality: ubyte {
+  Zero = 0,
+  One = 1,
+  Many = 2
+}
+
+table Direction {
+  schema_id: [ubyte];
+  cardinality: Cardinality;
+}
+
+table EndpointDirections {
+  input: Direction;
+  output: Direction;
+}
+
+table RegisterRequest {
+  directions: EndpointDirections;
+  updates_channel: ulong;
+}
+
+table ConnectRequest {
+  from: uint32;
+  to: uint32;
+  reply_channel: ulong;
+}
+
+table RegisterResponse {
+  endpoint_id: uint32;
+}
+
+table OkResponse {}
+
+table ErrorResponse {
+  message: string;
+}
+
+table WiringIngress {
+  from: uint32;
+  channel: ulong;
+}
+
+table WiringEgress {
+  to: uint32;
+  channel: ulong;
+}
+
+table WiringUpdate {
+  endpoint_id: uint32;
+  inbound: [WiringIngress];
+  outbound: [WiringEgress];
+}
+
+union SwitchboardPayload {
+  RegisterRequest,
+  ConnectRequest,
+  RegisterResponse,
+  OkResponse,
+  ErrorResponse,
+  WiringUpdate
+}
+
+table SwitchboardMessage {
+  request_id: ulong;
+  payload: SwitchboardPayload;
+}
+
+root_type SwitchboardMessage;
+file_identifier "SBSW";

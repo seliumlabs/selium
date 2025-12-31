@@ -77,10 +77,12 @@ pub fn build(work_dir: impl AsRef<Path>) -> Result<(Kernel, Arc<Notify>)> {
             reader.0.as_linkable(),
             reader.1.as_linkable(),
             reader.2.as_linkable(),
+            reader.3.as_linkable(),
         ]);
 
     // Channel Writer
     let writer = drivers::channel::write_ops(chan_strong_drv, chan_weak_drv);
+    let writer_downgrade = drivers::channel::writer_downgrade_op(chan_drv.clone());
     capability_ops
         .entry(Capability::ChannelWriter)
         .or_default()
@@ -88,6 +90,8 @@ pub fn build(work_dir: impl AsRef<Path>) -> Result<(Kernel, Arc<Notify>)> {
             writer.0.as_linkable(),
             writer.1.as_linkable(),
             writer.2.as_linkable(),
+            writer.3.as_linkable(),
+            writer_downgrade.as_linkable(),
         ]);
 
     let process_logs = drivers::process::log_ops::<WasmtimeDriver>();

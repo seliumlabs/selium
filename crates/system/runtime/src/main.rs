@@ -91,6 +91,7 @@ async fn run(
     let _session = Session::bootstrap(entitlements, [0; 32]);
     // @todo Store session in Registry, then pass FuncParam::Resource(id) to host bridge
 
+    modules::switchboard(&kernel, &registry, &work_dir).await?;
     modules::remote_client(&kernel, &registry, domain, port, work_dir).await?;
 
     signal::ctrl_c().await?;
