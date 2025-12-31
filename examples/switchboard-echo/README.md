@@ -25,7 +25,7 @@ cargo run -p selium-runtime
 
 Look out for a log line like this one:
 
-> INFO forward_log_stream{channel_id=0xa0b268290}: guest_target=selium_module_switchboard guest_spans=switchboard.start guest_fields=**request_channel=1** switchboard: created request channel
+> INFO forward_log_stream{channel_id=0xa0b268290}: guest_target=selium_switchboard_module guest_spans=switchboard.start guest_fields=**request_channel=1** switchboard: created request channel
 
 #### 4. Start the echo server via the CLI, passing the `request_channel` value in place of `SWITCHBOARD_CHANNEL`:
 

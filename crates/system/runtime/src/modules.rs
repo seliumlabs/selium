@@ -168,7 +168,7 @@ pub async fn switchboard(
             .context("failed to construct entrypoint invocation")?;
 
     let mut mod_path = work_dir.as_ref().to_owned();
-    mod_path.push("selium_module_switchboard.wasm");
+    mod_path.push("selium_switchboard_module.wasm");
 
     if let Err(err) = runtime
         .start(
@@ -217,7 +217,7 @@ async fn subscribe_remote_client_logs(
 
 async fn subscribe_switchboard_logs(registry: Arc<Registry>, process_id: ResourceId) -> Result<()> {
     let channel = wait_for_log_channel(&registry, process_id).await?;
-    info!(process_id, "subscribing to selium-module-switchboard logs");
+    info!(process_id, "subscribing to selium-switchboard-module logs");
     forward_log_stream(channel).await
 }
 

@@ -1,5 +1,5 @@
 [package]
-name = "selium-module-switchboard"
+name = "selium-switchboard-module"
 version.workspace = true
 edition.workspace = true
 description.workspace = true
