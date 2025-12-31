@@ -41,6 +41,7 @@ impl RuntimeGuard {
             .arg(port.to_string())
             .arg("--work-dir")
             .arg(".")
+            .arg("--without-switchboard")
             .current_dir(work_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
