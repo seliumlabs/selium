@@ -146,15 +146,17 @@ fn build_runtime(workspace_root: &Path) -> Result<PathBuf> {
     Ok(runtime_binary_path(workspace_root))
 }
 
-fn build_remote_client(workspace_root: &Path) -> Result<PathBuf> {
+fn build_remote_client() -> Result<PathBuf> {
+    let module_root = Path::new("selium-modules/remote-client/server");
+
     cargo_compile(
-        workspace_root,
-        "selium-module-remote-client",
+        module_root,
+        "selium-remote-client-server",
         Some("wasm32-unknown-unknown"),
         CompileFilter::lib_only(),
     )
-    .context("compile selium-module-remote-client")?;
-    Ok(wasm_module_path(workspace_root, REMOTE_CLIENT_MODULE))
+    .context("compile selium-remote-client-server")?;
+    Ok(wasm_module_path(module_root, REMOTE_CLIENT_MODULE))
 }
 
 fn build_request_reply_module(workspace_root: &Path) -> Result<PathBuf> {
@@ -380,7 +382,7 @@ async fn request_reply_end_to_end() -> Result<()> {
 
     let runtime_path = build_runtime(&workspace_root).context("build runtime")?;
     generate_certs(&runtime_path, work_dir.path()).context("generate certificates")?;
-    let remote_client_path = build_remote_client(&workspace_root).context("build remote-client")?;
+    let remote_client_path = build_remote_client().context("build remote-client")?;
     let request_reply_path =
         build_request_reply_module(&workspace_root).context("build request-reply module")?;
 
