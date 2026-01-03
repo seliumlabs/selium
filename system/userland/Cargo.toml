@@ -28,7 +28,6 @@ tracing-subscriber = { workspace = true, default-features = false, features = [
   "registry",
   "std",
 ] }
-url = { workspace = true }
 
 [build-dependencies]
 flatbuffers-build = { workspace = true }
