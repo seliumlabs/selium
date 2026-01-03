@@ -23,7 +23,7 @@ homepage = "https://selium.com"
 repository = "https://github.com/seliumlabs/selium"
 license = "MPL-2.0"
 keywords = ["data", "etl", "streaming", "wasm", "webassembly"]
-categories = ["asynchronous", "network-programming", "wasm"]
+categories = ["development-tools", "virtualization", "wasm"]
 
 [workspace.dependencies]
 anyhow = { version = "1.0", default-features = false }

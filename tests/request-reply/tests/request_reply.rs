@@ -2,6 +2,7 @@
 
 use std::{
     env, fs,
+    io::Write,
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -16,7 +17,9 @@ use cargo::{
 };
 use futures::StreamExt;
 use selium_abi::{AbiParam, AbiScalarType, AbiSignature, Capability};
-use selium_client::{Channel, Client, ClientConfigBuilder, Process, ProcessBuilder, Subscriber};
+use selium_remote_client::{
+    Channel, Client, ClientConfigBuilder, ClientError, Process, ProcessBuilder, Subscriber,
+};
 use selium_userland::fbs::selium::logging as log_fb;
 use tokio::time::{sleep, timeout};
 
@@ -32,22 +35,24 @@ struct RuntimeGuard {
 }
 
 impl RuntimeGuard {
-    fn start(runtime_path: &Path, work_dir: &Path, port: u16) -> Result<Self> {
+    fn start(runtime_path: &Path, work_dir: &Path, module_spec: &str) -> Result<Self> {
         let mut command = Command::new(runtime_path);
         command
-            .arg("--domain")
-            .arg("localhost")
-            .arg("--port")
-            .arg(port.to_string())
             .arg("--work-dir")
             .arg(".")
-            .arg("--without-switchboard")
             .current_dir(work_dir)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
 
-        let child = command.spawn().context("start selium-runtime")?;
+        let mut child = command.spawn().context("start selium-runtime")?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("selium-runtime stdin not available"))?;
+        stdin
+            .write_all(module_spec.as_bytes())
+            .context("write module specifications to selium-runtime")?;
         Ok(Self { child })
     }
 }
@@ -285,7 +290,7 @@ async fn wait_for_log_channel(process: &Process, timeout_window: Duration) -> Re
     loop {
         match process.log_channel().await {
             Ok(channel) => return Ok(channel),
-            Err(selium_client::ClientError::Remote(message))
+            Err(ClientError::Remote(message))
                 if message.to_ascii_lowercase().contains("not found")
                     && Instant::now() < deadline =>
             {
@@ -384,7 +389,12 @@ async fn request_reply_end_to_end() -> Result<()> {
     copy_module(request_reply_path, &modules_dir).context("install request-reply module")?;
 
     let port = find_available_port().context("select available port")?;
-    let _runtime = RuntimeGuard::start(&runtime_path, work_dir.path(), port)
+    let module_spec = format!(
+        "path=modules/{REMOTE_CLIENT_MODULE}\n\
+capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,ProcessLifecycle,NetBind,NetAccept,NetRead,NetWrite\n\
+args=utf8:localhost,u16:{port}\n"
+    );
+    let _runtime = RuntimeGuard::start(&runtime_path, work_dir.path(), &module_spec)
         .context("start selium-runtime")?;
 
     let client = connect_client(port, work_dir.path()).await?;

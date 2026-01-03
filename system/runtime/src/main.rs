@@ -29,23 +29,11 @@ struct ServerOptions {
     /// Log output format (text or JSON) for tracing events.
     #[arg(long, env = "SELIUM_LOG_FORMAT", default_value = "text")]
     log_format: LogFormat,
-    /// Domain name (SNI) that the control-plane listener routes for.
-    #[arg(long, env = "SELIUM_DOMAIN", default_value = "localhost")]
-    domain: String,
-    /// Port that the control-plane listener binds to.
-    #[arg(long, env = "SELIUM_PORT", default_value_t = 7000)]
-    port: u16,
     #[command(subcommand)]
     command: Option<ServerCommand>,
     /// Base directory where certificates and WASM modules are stored.
     #[arg(short, long, env = "SELIUM_WORK_DIR", default_value_os = ".")]
     work_dir: PathBuf,
-    /// Exclude remote-client service
-    #[arg(long, default_value_t = false)]
-    without_remote: bool,
-    /// Exclude switchboard service
-    #[arg(long, default_value_t = false)]
-    without_switchboard: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -74,11 +62,7 @@ async fn run(
     kernel: Kernel,
     registry: Arc<Registry>,
     shutdown: Arc<Notify>,
-    domain: &str,
-    port: u16,
     work_dir: impl AsRef<Path>,
-    with_remote: bool,
-    with_switchboard: bool,
 ) -> Result<()> {
     info!("kernel initialised; starting host bridge");
 
@@ -99,12 +83,7 @@ async fn run(
     let _session = Session::bootstrap(entitlements, [0; 32]);
     // @todo Store session in Registry, then pass FuncParam::Resource(id) to host bridge
 
-    if with_switchboard {
-        modules::switchboard(&kernel, &registry, &work_dir).await?;
-    }
-    if with_remote {
-        modules::remote_client(&kernel, &registry, domain, port, work_dir).await?;
-    }
+    modules::spawn_from_stdin(&kernel, &registry, &work_dir).await?;
 
     signal::ctrl_c().await?;
 
@@ -163,11 +142,7 @@ async fn main() -> Result<()> {
         kernel,
         registry,
         shutdown,
-        &args.domain,
-        args.port,
         &args.work_dir,
-        !args.without_remote,
-        !args.without_switchboard,
     )
     .await
 }
