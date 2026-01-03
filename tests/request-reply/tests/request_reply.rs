@@ -23,7 +23,7 @@ use selium_userland::fbs::selium::logging as log_fb;
 use tokio::time::{sleep, timeout};
 
 const REQUEST_REPLY_MODULE: &str = "selium_test_request_reply.wasm";
-const REMOTE_CLIENT_MODULE: &str = "selium_module_remote_client.wasm";
+const REMOTE_CLIENT_MODULE: &str = "selium_remote_client_server.wasm";
 const RUNTIME_BIN: &str = "selium-runtime";
 const LOG_CHUNK_SIZE: u32 = 64 * 1024;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
