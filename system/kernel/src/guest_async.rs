@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::{select, sync::Notify, task::yield_now};
+use tokio::{select, sync::Notify};
 use wasmtime::{Caller, Linker};
 
 use crate::{KernelError, mailbox::GuestMailbox, registry::InstanceRegistry};
@@ -28,14 +28,14 @@ impl GuestAsync {
                 let shutdown = Arc::clone(&shutdown);
                 Box::new(async move {
                     loop {
-                        if mailbox_ref.is_signalled() {
+                        if mailbox_ref.is_closed() || mailbox_ref.is_signalled() {
                             break;
                         }
                         select! {
                             _ = shutdown.notified() => {
                                 break;
                             }
-                            _ = yield_now() => {}
+                            _ = mailbox_ref.wait_for_signal() => {}
                         }
                     }
                 })

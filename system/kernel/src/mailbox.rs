@@ -28,6 +28,7 @@ use std::sync::{
 };
 
 use futures_util::task::{ArcWake, waker_ref};
+use tokio::sync::Notify;
 use wasmtime::{Memory, Store};
 
 use selium_abi::{
@@ -43,6 +44,7 @@ use selium_abi::{
 pub struct GuestMailbox {
     base: AtomicUsize,
     closed: AtomicBool,
+    notify: Notify,
 }
 
 unsafe impl Send for GuestMailbox {}
@@ -59,6 +61,7 @@ impl GuestMailbox {
         Self {
             base: AtomicUsize::new(base),
             closed: AtomicBool::new(false),
+            notify: Notify::new(),
         }
     }
 
@@ -67,8 +70,15 @@ impl GuestMailbox {
         self.base.store(base, Ordering::Release);
     }
 
+    /// Mark the mailbox as closed and wake any waiting host tasks.
     pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        self.notify.notify_one();
+    }
+
+    /// Return whether the mailbox has been closed.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
     }
 
     fn ptrs(
@@ -108,6 +118,7 @@ impl GuestMailbox {
                 );
             }
         }
+        self.notify.notify_one();
     }
 
     /// Returns whether the guest has pending wake-ups to drain.
@@ -117,6 +128,11 @@ impl GuestMailbox {
         }
         let (flag, _tail, _ring) = self.ptrs();
         unsafe { (*flag).load(Ordering::Acquire) != 0 }
+    }
+
+    /// Await the next mailbox wake-up notification from the host.
+    pub(crate) async fn wait_for_signal(&self) {
+        self.notify.notified().await;
     }
 
     /// Produce a [`std::task::Waker`] that enqueues the provided task id when triggered.
