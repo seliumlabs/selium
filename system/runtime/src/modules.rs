@@ -1,5 +1,5 @@
 use std::{
-    io::{self, ErrorKind, Read},
+    io::ErrorKind,
     path::{Component, Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -150,23 +150,24 @@ macro_rules! emit_guest_log_event {
     };
 }
 
-/// Read module specifications from stdin and start each module with log forwarding.
+/// Read module specifications from CLI strings and start each module with log forwarding.
 ///
-/// Input format: each module is a block of `key=value` lines separated by blank lines.
-/// Required keys are `path`, `capabilities`, and `args`. Optional keys are `entrypoint`
-/// (defaults to `start`) and `params`. The `args` value is a comma-separated list of values
-/// that may be prefixed with `TYPE:` to infer parameter kinds. When `params` is omitted,
-/// every arg must be typed. The `path` must be relative to `work_dir`.
+/// Input format per module: a `;`-delimited list of `key=value` entries. Required keys are
+/// `path`, `capabilities`, and `args`. Optional keys are `entrypoint` (defaults to `start`)
+/// and `params`. The `args` value is a comma-separated list of values that may be prefixed
+/// with `TYPE:` to infer parameter kinds. When `params` is omitted, every arg must be typed.
+/// The `path` must be relative to `work_dir`.
 ///
 /// Supported argument types: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`,
 /// `f64`, `buffer`, `utf8`, `resource`. Buffer values support a `hex:` prefix to pass raw
 /// bytes.
-pub async fn spawn_from_stdin(
+pub async fn spawn_from_cli(
     kernel: &Kernel,
     registry: &Arc<Registry>,
     work_dir: impl AsRef<Path>,
+    specs: &Vec<String>,
 ) -> Result<Vec<ResourceId>> {
-    let specs = read_module_specs(io::stdin(), work_dir.as_ref())?;
+    let specs = parse_module_specs(specs, work_dir.as_ref())?;
     let runtime = kernel.get::<WasmtimeDriver>().ok_or_else(|| {
         WasmtimeError::Kernel(KernelError::Driver(
             "missing Wasmtime driver in kernel".to_string(),
@@ -182,90 +183,79 @@ pub async fn spawn_from_stdin(
     Ok(processes)
 }
 
-fn read_module_specs(mut reader: impl Read, work_dir: &Path) -> Result<Vec<ModuleSpec>> {
-    let mut input = String::new();
-    reader
-        .read_to_string(&mut input)
-        .context("read module specifications from stdin")?;
-    parse_module_specs(&input, work_dir)
+fn parse_module_specs(specs: &[String], work_dir: &Path) -> Result<Vec<ModuleSpec>> {
+    if specs.is_empty() {
+        return Err(anyhow!("no module specifications provided"));
+    }
+
+    specs
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| {
+            parse_module_spec(spec, work_dir)
+                .with_context(|| format!("parse module specification {}", index + 1))
+        })
+        .collect()
 }
 
-fn parse_module_specs(input: &str, work_dir: &Path) -> Result<Vec<ModuleSpec>> {
-    let mut specs = Vec::new();
+fn parse_module_spec(raw: &str, work_dir: &Path) -> Result<ModuleSpec> {
     let mut builder = ModuleSpecBuilder::default();
+    let normalized = raw.replace(';', "\n");
 
-    for (index, raw_line) in input.lines().enumerate() {
+    for (index, raw_line) in normalized.lines().enumerate() {
         let line_no = index + 1;
         let line = raw_line.trim();
 
-        if line.is_empty() {
-            if !builder.is_empty() {
-                let spec = build_module_spec(builder, work_dir).with_context(|| {
-                    format!("parse module specification ending at line {line_no}")
-                })?;
-                specs.push(spec);
-                builder = ModuleSpecBuilder::default();
-            }
-            continue;
-        }
-
-        if line.starts_with('#') {
+        if line.is_empty() || line.starts_with('#') {
             continue;
         }
 
         let (key, value) = line
             .split_once('=')
-            .ok_or_else(|| anyhow!("line {line_no}: expected key=value"))?;
+            .ok_or_else(|| anyhow!("entry {line_no}: expected key=value"))?;
         let key = key.trim();
         let value = value.trim();
 
         match key {
             "path" => {
                 if builder.path.is_some() {
-                    return Err(anyhow!("line {line_no}: duplicate path"));
+                    return Err(anyhow!("entry {line_no}: duplicate path"));
                 }
                 builder.path = Some(value.to_string());
             }
             "entrypoint" => {
                 if builder.entrypoint.is_some() {
-                    return Err(anyhow!("line {line_no}: duplicate entrypoint"));
+                    return Err(anyhow!("entry {line_no}: duplicate entrypoint"));
                 }
                 builder.entrypoint = Some(value.to_string());
             }
             "capabilities" => {
                 if builder.capabilities.is_some() {
-                    return Err(anyhow!("line {line_no}: duplicate capabilities"));
+                    return Err(anyhow!("entry {line_no}: duplicate capabilities"));
                 }
                 builder.capabilities = Some(parse_capabilities(value)?);
             }
             "params" | "param" => {
                 if builder.params.is_some() {
-                    return Err(anyhow!("line {line_no}: duplicate params"));
+                    return Err(anyhow!("entry {line_no}: duplicate params"));
                 }
                 builder.params = Some(parse_params(value)?);
             }
             "args" => {
                 if builder.args.is_some() {
-                    return Err(anyhow!("line {line_no}: duplicate args"));
+                    return Err(anyhow!("entry {line_no}: duplicate args"));
                 }
                 builder.args = Some(parse_args(value)?);
             }
-            _ => return Err(anyhow!("line {line_no}: unknown key `{key}`")),
+            _ => return Err(anyhow!("entry {line_no}: unknown key `{key}`")),
         }
     }
 
-    if !builder.is_empty() {
-        let line_no = input.lines().count();
-        let spec = build_module_spec(builder, work_dir)
-            .with_context(|| format!("parse module specification ending at line {line_no}"))?;
-        specs.push(spec);
+    if builder.is_empty() {
+        return Err(anyhow!("module specification is empty"));
     }
 
-    if specs.is_empty() {
-        return Err(anyhow!("no module specifications provided on stdin"));
-    }
-
-    Ok(specs)
+    build_module_spec(builder, work_dir)
 }
 
 fn build_module_spec(builder: ModuleSpecBuilder, work_dir: &Path) -> Result<ModuleSpec> {
@@ -377,8 +367,8 @@ fn parse_params(raw: &str) -> Result<Vec<ParamKind>> {
         if item.is_empty() {
             return Err(anyhow!("param {} must not be empty", index + 1));
         }
-        let kind = ParamKind::from_label(item)
-            .ok_or_else(|| anyhow!("unknown param kind `{item}`"))?;
+        let kind =
+            ParamKind::from_label(item).ok_or_else(|| anyhow!("unknown param kind `{item}`"))?;
         params.push(kind);
     }
 
@@ -479,9 +469,8 @@ fn build_module_args(params: Vec<ParamKind>, values: Vec<String>) -> Result<Modu
 
     for (index, (kind, value)) in params.iter().zip(values.iter()).enumerate() {
         abi_params.push(map_param(kind));
-        let arg = parse_entrypoint_arg(kind, value).with_context(|| {
-            format!("parse argument {}", index + 1)
-        })?;
+        let arg = parse_entrypoint_arg(kind, value)
+            .with_context(|| format!("parse argument {}", index + 1))?;
         args.push(arg);
     }
 
@@ -625,9 +614,8 @@ async fn spawn_module(
     } = spec;
 
     let entrypoint_invocation =
-        EntrypointInvocation::new(AbiSignature::new(params, Vec::new()), args).with_context(
-            || format!("build entrypoint invocation for {module_label}"),
-        )?;
+        EntrypointInvocation::new(AbiSignature::new(params, Vec::new()), args)
+            .with_context(|| format!("build entrypoint invocation for {module_label}"))?;
 
     let module_id = module_path.to_str().ok_or_else(|| {
         WasmtimeError::Kernel(KernelError::Driver(format!(

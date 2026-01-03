@@ -2,7 +2,6 @@
 
 use std::{
     env, fs,
-    io::Write,
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -40,19 +39,14 @@ impl RuntimeGuard {
         command
             .arg("--work-dir")
             .arg(".")
+            .arg("--module")
+            .arg(module_spec)
             .current_dir(work_dir)
-            .stdin(Stdio::piped())
+            .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
 
-        let mut child = command.spawn().context("start selium-runtime")?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("selium-runtime stdin not available"))?;
-        stdin
-            .write_all(module_spec.as_bytes())
-            .context("write module specifications to selium-runtime")?;
+        let child = command.spawn().context("start selium-runtime")?;
         Ok(Self { child })
     }
 }
@@ -392,9 +386,7 @@ async fn request_reply_end_to_end() -> Result<()> {
 
     let port = find_available_port().context("select available port")?;
     let module_spec = format!(
-        "path=modules/{REMOTE_CLIENT_MODULE}\n\
-capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,ProcessLifecycle,NetBind,NetAccept,NetRead,NetWrite\n\
-args=utf8:localhost,u16:{port}\n"
+        "path={REMOTE_CLIENT_MODULE};capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,ProcessLifecycle,NetBind,NetAccept,NetRead,NetWrite;args=utf8:localhost,u16:{port}"
     );
     let _runtime = RuntimeGuard::start(&runtime_path, work_dir.path(), &module_spec)
         .context("start selium-runtime")?;

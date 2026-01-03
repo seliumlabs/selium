@@ -34,6 +34,9 @@ struct ServerOptions {
     /// Base directory where certificates and WASM modules are stored.
     #[arg(short, long, env = "SELIUM_WORK_DIR", default_value_os = ".")]
     work_dir: PathBuf,
+    /// Module specification to start (repeatable). Format: `path=...;capabilities=...;args=...`
+    #[arg(long, value_name = "SPEC")]
+    module: Option<Vec<String>>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -63,6 +66,7 @@ async fn run(
     registry: Arc<Registry>,
     shutdown: Arc<Notify>,
     work_dir: impl AsRef<Path>,
+    modules: Option<&Vec<String>>,
 ) -> Result<()> {
     info!("kernel initialised; starting host bridge");
 
@@ -83,7 +87,9 @@ async fn run(
     let _session = Session::bootstrap(entitlements, [0; 32]);
     // @todo Store session in Registry, then pass FuncParam::Resource(id) to host bridge
 
-    modules::spawn_from_stdin(&kernel, &registry, &work_dir).await?;
+    if let Some(mods) = modules {
+        modules::spawn_from_cli(&kernel, &registry, &work_dir, mods).await?;
+    }
 
     signal::ctrl_c().await?;
 
@@ -120,7 +126,7 @@ fn initialise_tracing(format: LogFormat) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse stdin
+    // Parse CLI options
     let args = ServerOptions::parse();
 
     // Initialise logging
@@ -143,6 +149,7 @@ async fn main() -> Result<()> {
         registry,
         shutdown,
         &args.work_dir,
+        args.module.as_ref(),
     )
     .await
 }
