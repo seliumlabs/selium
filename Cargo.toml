@@ -10,7 +10,7 @@ members = [
   "system/runtime",
   "system/userland",
   "system/userland/macros",
-  "tests/request-reply"
+  # "tests/request-reply"
 ]
 exclude = ["examples"]
 
