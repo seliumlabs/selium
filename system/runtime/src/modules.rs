@@ -613,6 +613,8 @@ async fn spawn_module(
         args,
     } = spec;
 
+    info!(module = module_label, "spawning module");
+
     let entrypoint_invocation =
         EntrypointInvocation::new(AbiSignature::new(params, Vec::new()), args)
             .with_context(|| format!("build entrypoint invocation for {module_label}"))?;
