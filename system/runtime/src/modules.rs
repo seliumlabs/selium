@@ -21,8 +21,6 @@ use selium_wasmtime::{Error as WasmtimeError, WasmtimeDriver};
 use tokio::time::sleep;
 use tracing::{Level, Span, info, instrument, warn};
 
-type ProcessHandle = <WasmtimeDriver as ProcessLifecycleCapability>::Process;
-
 const LOG_FRAME_CAPACITY: usize = 512 * 1024;
 const LOG_CHANNEL_WAIT: Duration = Duration::from_secs(5);
 const LOG_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -709,11 +707,7 @@ async fn wait_for_log_channel(
 }
 
 fn lookup_log_handle(registry: &Arc<Registry>, process_id: ResourceId) -> Option<GuestResourceId> {
-    registry
-        .with::<ProcessHandle, _>(ResourceHandle::new(process_id), |process| {
-            process.log_channel()
-        })
-        .flatten()
+    registry.log_channel_handle(process_id)
 }
 
 fn resolve_channel(registry: &Arc<Registry>, handle: GuestResourceId) -> Option<Arc<Channel>> {

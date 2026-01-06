@@ -154,9 +154,9 @@ where
             shared.resolve(result);
         });
 
-        let handle = caller.data_mut().insert_future(Arc::clone(&state));
+        let handle = caller.data_mut().insert_future(Arc::clone(&state))?;
 
-        Ok(handle as GuestUint)
+        GuestUint::try_from(handle).map_err(KernelError::IntConvert)
     }
 
     fn poll(

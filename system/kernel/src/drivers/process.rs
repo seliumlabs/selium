@@ -55,46 +55,27 @@ pub trait ProcessLifecycleCapability {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-/// Process entry stored in the registry, including per-instance metadata.
+/// Process entry stored in the registry.
 #[derive(Debug)]
 pub struct ProcessInstance<P> {
     identity: ProcessIdentity,
     inner: P,
-    log_channel: Option<GuestResourceId>,
 }
 
 /// Shared metadata surface for processes managed by the kernel.
 pub trait ProcessHandleExt {
     /// Stable identity for this process.
     fn identity(&self) -> ProcessIdentity;
-    /// Lookup the registered logging channel, if any.
-    fn log_channel(&self) -> Option<GuestResourceId>;
-    /// Record the logging channel handle exported by the guest.
-    fn set_log_channel(&mut self, handle: GuestResourceId);
 }
 
 impl<P> ProcessInstance<P> {
     pub fn new(identity: ProcessIdentity, inner: P) -> Self {
-        Self {
-            identity,
-            inner,
-            log_channel: None,
-        }
+        Self { identity, inner }
     }
 
     /// Return the stable identity assigned to this process.
     pub fn identity(&self) -> ProcessIdentity {
         self.identity
-    }
-
-    /// Return the registered logging channel, if one has been provided by the guest.
-    pub fn log_channel(&self) -> Option<GuestResourceId> {
-        self.log_channel
-    }
-
-    /// Store the logging channel handle exported by the guest.
-    pub fn set_log_channel(&mut self, handle: GuestResourceId) {
-        self.log_channel = Some(handle);
     }
 
     /// Access the underlying process handle.
@@ -116,14 +97,6 @@ impl<P> ProcessInstance<P> {
 impl<P> ProcessHandleExt for ProcessInstance<P> {
     fn identity(&self) -> ProcessIdentity {
         self.identity
-    }
-
-    fn log_channel(&self) -> Option<GuestResourceId> {
-        self.log_channel
-    }
-
-    fn set_log_channel(&mut self, handle: GuestResourceId) {
-        self.log_channel = Some(handle);
     }
 }
 
@@ -276,21 +249,27 @@ where
         let identity = caller
             .data()
             .extension::<ProcessIdentity>()
-            .cloned()
-            .ok_or(GuestError::PermissionDenied);
+            .map(|identity| *identity);
         let registry = caller.data().registry_arc();
 
-        ready(identity.and_then(|identity| {
-            let handle = identity.raw();
-            match registry.metadata(handle) {
-                Some(meta) if meta.kind == ResourceType::Process => registry
-                    .with::<Impl::Process, _>(ResourceHandle::new(handle), |process| {
-                        process.set_log_channel(input.channel)
-                    })
-                    .ok_or(GuestError::NotFound),
-                _ => Err(GuestError::NotFound),
+        ready((|| -> GuestResult<Self::Output> {
+            let identity = identity.ok_or(GuestError::PermissionDenied)?;
+            let process_id = identity.raw();
+            let channel_id = registry
+                .resolve_shared(input.channel)
+                .ok_or(GuestError::NotFound)?;
+
+            match registry.metadata(process_id) {
+                Some(meta) if meta.kind == ResourceType::Process => {}
+                Some(_) => return Err(GuestError::InvalidArgument),
+                None => return Err(GuestError::NotFound),
             }
-        }))
+
+            registry
+                .set_log_channel(process_id, channel_id)
+                .map_err(GuestError::from)?;
+            Ok(())
+        })())
     }
 }
 
@@ -312,13 +291,11 @@ where
             ResourceId::try_from(input.process_id)
                 .map_err(|_| GuestError::InvalidArgument)
                 .and_then(|id| match registry.metadata(id) {
-                    Some(meta) if meta.kind == ResourceType::Process => registry
-                        .with::<Impl::Process, _>(ResourceHandle::new(id), |process| {
-                            process.log_channel()
-                        })
-                        .flatten()
-                        .ok_or(GuestError::NotFound),
-                    _ => Err(GuestError::NotFound),
+                    Some(meta) if meta.kind == ResourceType::Process => {
+                        registry.log_channel_handle(id).ok_or(GuestError::NotFound)
+                    }
+                    Some(_) => Err(GuestError::InvalidArgument),
+                    None => Err(GuestError::NotFound),
                 }),
         )
     }

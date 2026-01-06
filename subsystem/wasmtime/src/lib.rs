@@ -127,7 +127,8 @@ impl WasmRuntime {
 
         self.guest_async.link(&mut linker)?;
 
-        let mut store = Store::new(&self.engine, registry.instance());
+        let instance_registry = registry.instance().map_err(KernelError::from)?;
+        let mut store = Store::new(&self.engine, instance_registry);
         store.data_mut().set_process_id(process_id);
         let identity = ProcessIdentity::new(process_id);
         store.data_mut().insert_extension(identity);
@@ -323,7 +324,7 @@ impl StubOperation {
 
         let state = FutureSharedState::new();
         state.resolve(Err(GuestError::PermissionDenied));
-        let handle = caller.data_mut().insert_future(state);
+        let handle = caller.data_mut().insert_future(state)?;
 
         GuestUint::try_from(handle).map_err(KernelError::IntConvert)
     }
