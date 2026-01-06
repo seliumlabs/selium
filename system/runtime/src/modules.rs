@@ -163,7 +163,7 @@ pub async fn spawn_from_cli(
     kernel: &Kernel,
     registry: &Arc<Registry>,
     work_dir: impl AsRef<Path>,
-    specs: &Vec<String>,
+    specs: &[String],
 ) -> Result<Vec<ResourceId>> {
     let specs = parse_module_specs(specs, work_dir.as_ref())?;
     let runtime = kernel.get::<WasmtimeDriver>().ok_or_else(|| {

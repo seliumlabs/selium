@@ -371,11 +371,10 @@ impl Drop for HttpWriter {
                         None
                     }
                 };
-                if let Some(responder) = responder {
-                    if responder.send(response).is_err() {
+                if let Some(responder) = responder
+                    && responder.send(response).is_err() {
                         debug!("response receiver dropped before completion");
                     }
-                }
             }
         }
     }

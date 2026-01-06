@@ -176,11 +176,10 @@ pub(crate) fn parse_request(
         builder = builder.header(name, value);
     }
 
-    if let Some(host) = host_header.as_deref() {
-        if !host_matches(domain, host) {
+    if let Some(host) = host_header.as_deref()
+        && !host_matches(domain, host) {
             return Err(HyperError::HostMismatch);
         }
-    }
 
     if host_header.is_none() {
         let host = host_header_value(domain, port, protocol)?;
@@ -392,14 +391,13 @@ fn version_label(protocol: NetProtocol) -> Result<&'static str, HyperError> {
 
 fn normalise_path(raw: &str) -> Result<String, HyperError> {
     let trimmed = if raw.is_empty() { "/" } else { raw };
-    if let Ok(uri) = trimmed.parse::<Uri>() {
-        if uri.scheme().is_some() {
+    if let Ok(uri) = trimmed.parse::<Uri>()
+        && uri.scheme().is_some() {
             if let Some(path) = uri.path_and_query() {
                 return Ok(path.as_str().to_string());
             }
             return Ok("/".to_string());
         }
-    }
 
     if trimmed.starts_with('/') {
         Ok(trimmed.to_string())
