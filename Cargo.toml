@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "subsystem/filesystem-store",
   "subsystem/messaging",
+  "subsystem/net-hyper",
   "subsystem/net-quinn",
   "subsystem/wasmtime",
   "system/abi",
@@ -35,6 +36,7 @@ flatbuffers-build = { version = "0.2", default-features = false }
 flatc = { git = "https://github.com/petehayes102/flatc.rs", branch = "v25.12.19" }
 futures = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
+hyper = { version = "0.14", default-features = false }
 libc = { version = "0.2", default-features = false }
 loom = { version = "0.7", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
@@ -52,6 +54,7 @@ stable-vec = { version = "0.4", default-features = false }
 syn = { version = "2.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 tokio = { version = "1.48", default-features = false }
+tokio-rustls = { version = "0.26", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = { version = "1.0", default-features = false }

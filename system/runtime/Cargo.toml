@@ -13,6 +13,7 @@ categories.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env", "help", "std"] }
+flatbuffers = { workspace = true }
 rcgen = { workspace = true, features = ["crypto", "pem", "ring"] }
 rustls = { workspace = true, features = ["ring", "std"] }
 rustls-pki-types = { workspace = true, features = ["std"] }
@@ -20,6 +21,7 @@ selium-abi = { path = "../abi" }
 selium-filesystem-store = { path = "../../subsystem/filesystem-store" }
 selium-kernel = { path = "../kernel" }
 selium-messaging = { path = "../../subsystem/messaging" }
+selium-net-hyper = { path = "../../subsystem/net-hyper" }
 selium-net-quinn = { path = "../../subsystem/net-quinn" }
 selium-userland = { path = "../userland" }
 selium-wasmtime = { path = "../../subsystem/wasmtime" }
@@ -40,3 +42,4 @@ tracing-subscriber = { workspace = true, features = [
   "json",
   "std",
 ] }
+wasmtime = { workspace = true, features = ["async", "cranelift", "runtime", "std"] }

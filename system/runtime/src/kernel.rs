@@ -12,16 +12,19 @@ use rustls::{
     sign,
 };
 use rustls_pki_types::{PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, pem::SliceIter};
-use selium_abi::Capability;
+use selium_abi::{Capability, NetProtocol};
 use selium_filesystem_store::{FilesystemStore, FilesystemStoreReadDriver};
 use selium_kernel::{
     Kernel, drivers, guest_async::GuestAsync, operation::LinkableOperation,
     session::SessionLifecycleDriver,
 };
 use selium_messaging::{ChannelDriver, ChannelStrongIoDriver, ChannelWeakIoDriver};
+use selium_net_hyper::HyperDriver;
 use selium_net_quinn::QuinnDriver;
 use selium_wasmtime::{WasmRuntime, WasmtimeDriver};
 use tokio::sync::Notify;
+
+use crate::tls;
 
 /// Where certificates are stored
 const CERTS_SUBDIR: &str = "certs";
@@ -100,32 +103,65 @@ pub fn build(work_dir: impl AsRef<Path>) -> Result<(Kernel, Arc<Notify>)> {
         .or_default()
         .push(process_logs.0.as_linkable());
 
+    let tls_ops = tls::operations();
+    capability_ops
+        .entry(Capability::NetTlsServerConfig)
+        .or_default()
+        .push(tls_ops.0.as_linkable());
+    capability_ops
+        .entry(Capability::NetTlsClientConfig)
+        .or_default()
+        .push(tls_ops.1.as_linkable());
+
     // Network
     let cert_path = certs_dir.join("server.crt");
     let key_path = certs_dir.join("server.key");
-    let server_certified_key = load_certified_key(&cert_path, &key_path)
-        .context("load QUIC listener certificate and key")?;
-    let drv = builder.add_capability(QuinnDriver::new(Arc::new(server_certified_key)));
+    let server_certified_key = Arc::new(
+        load_certified_key(&cert_path, &key_path)
+            .context("load QUIC listener certificate and key")?,
+    );
+    let drv = builder.add_capability(QuinnDriver::new(Arc::clone(&server_certified_key)));
     capability_ops
-        .entry(Capability::NetBind)
+        .entry(Capability::NetQuicBind)
         .or_default()
-        .push(drivers::net::listener_op(drv.clone()).as_linkable());
+        .push(drivers::net::listener_op(drv.clone(), NetProtocol::Quic).as_linkable());
     capability_ops
-        .entry(Capability::NetAccept)
+        .entry(Capability::NetQuicAccept)
         .or_default()
-        .push(drivers::net::accept_op(drv.clone()).as_linkable());
+        .push(drivers::net::accept_op(drv.clone(), NetProtocol::Quic).as_linkable());
     capability_ops
-        .entry(Capability::NetConnect)
+        .entry(Capability::NetQuicConnect)
         .or_default()
-        .push(drivers::net::connect_op(drv.clone()).as_linkable());
+        .push(drivers::net::connect_op(drv.clone(), NetProtocol::Quic).as_linkable());
     capability_ops
-        .entry(Capability::NetRead)
+        .entry(Capability::NetQuicRead)
         .or_default()
-        .push(drivers::net::read_op(drv.clone()).as_linkable());
+        .push(drivers::net::read_op(drv.clone(), NetProtocol::Quic).as_linkable());
     capability_ops
-        .entry(Capability::NetWrite)
+        .entry(Capability::NetQuicWrite)
         .or_default()
-        .push(drivers::net::write_op(drv).as_linkable());
+        .push(drivers::net::write_op(drv, NetProtocol::Quic).as_linkable());
+    let http_drv = builder.add_capability(HyperDriver::new(Arc::clone(&server_certified_key))?);
+    capability_ops
+        .entry(Capability::NetHttpBind)
+        .or_default()
+        .push(drivers::net::listener_op(http_drv.clone(), NetProtocol::Http).as_linkable());
+    capability_ops
+        .entry(Capability::NetHttpAccept)
+        .or_default()
+        .push(drivers::net::accept_op(http_drv.clone(), NetProtocol::Http).as_linkable());
+    capability_ops
+        .entry(Capability::NetHttpConnect)
+        .or_default()
+        .push(drivers::net::connect_op(http_drv.clone(), NetProtocol::Http).as_linkable());
+    capability_ops
+        .entry(Capability::NetHttpRead)
+        .or_default()
+        .push(drivers::net::read_op(http_drv.clone(), NetProtocol::Http).as_linkable());
+    capability_ops
+        .entry(Capability::NetHttpWrite)
+        .or_default()
+        .push(drivers::net::write_op(http_drv, NetProtocol::Http).as_linkable());
 
     // Module Filesystem Store
     let fs_store = FilesystemStore::new(&modules_dir);

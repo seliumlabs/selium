@@ -18,6 +18,7 @@ mod io;
 mod net;
 mod process;
 mod session;
+mod tls;
 
 // pub use external::*;
 pub use hostcalls::*;
@@ -25,6 +26,7 @@ pub use io::*;
 pub use net::*;
 pub use process::*;
 pub use session::*;
+pub use tls::*;
 
 /// Guest pointer-sized signed integer.
 pub type GuestInt = i32;
@@ -111,26 +113,40 @@ pub enum Capability {
     ChannelReader = 2,
     ChannelWriter = 3,
     ProcessLifecycle = 4,
-    NetBind = 5,
-    NetAccept = 6,
-    NetConnect = 7,
-    NetRead = 8,
-    NetWrite = 9,
+    NetQuicBind = 5,
+    NetQuicAccept = 6,
+    NetQuicConnect = 7,
+    NetQuicRead = 8,
+    NetQuicWrite = 9,
+    NetHttpBind = 10,
+    NetHttpAccept = 11,
+    NetHttpConnect = 12,
+    NetHttpRead = 13,
+    NetHttpWrite = 14,
+    NetTlsServerConfig = 15,
+    NetTlsClientConfig = 16,
 }
 
 impl Capability {
     /// All capabilities understood by the Selium kernel ABI.
-    pub const ALL: [Capability; 10] = [
+    pub const ALL: [Capability; 17] = [
         Capability::SessionLifecycle,
         Capability::ChannelLifecycle,
         Capability::ChannelReader,
         Capability::ChannelWriter,
         Capability::ProcessLifecycle,
-        Capability::NetBind,
-        Capability::NetAccept,
-        Capability::NetConnect,
-        Capability::NetRead,
-        Capability::NetWrite,
+        Capability::NetQuicBind,
+        Capability::NetQuicAccept,
+        Capability::NetQuicConnect,
+        Capability::NetQuicRead,
+        Capability::NetQuicWrite,
+        Capability::NetHttpBind,
+        Capability::NetHttpAccept,
+        Capability::NetHttpConnect,
+        Capability::NetHttpRead,
+        Capability::NetHttpWrite,
+        Capability::NetTlsServerConfig,
+        Capability::NetTlsClientConfig,
     ];
 }
 
@@ -277,11 +293,16 @@ impl TryFrom<u8> for Capability {
             2 => Ok(Capability::ChannelReader),
             3 => Ok(Capability::ChannelWriter),
             4 => Ok(Capability::ProcessLifecycle),
-            5 => Ok(Capability::NetBind),
-            6 => Ok(Capability::NetAccept),
-            7 => Ok(Capability::NetConnect),
-            8 => Ok(Capability::NetRead),
-            9 => Ok(Capability::NetWrite),
+            5 => Ok(Capability::NetQuicBind),
+            6 => Ok(Capability::NetQuicAccept),
+            7 => Ok(Capability::NetQuicConnect),
+            8 => Ok(Capability::NetQuicRead),
+            9 => Ok(Capability::NetQuicWrite),
+            10 => Ok(Capability::NetHttpBind),
+            11 => Ok(Capability::NetHttpAccept),
+            12 => Ok(Capability::NetHttpConnect),
+            13 => Ok(Capability::NetHttpRead),
+            14 => Ok(Capability::NetHttpWrite),
             _ => Err(CapabilityDecodeError),
         }
     }
@@ -301,11 +322,18 @@ impl Display for Capability {
             Capability::ChannelReader => write!(f, "ChannelReader"),
             Capability::ChannelWriter => write!(f, "ChannelWriter"),
             Capability::ProcessLifecycle => write!(f, "ProcessLifecycle"),
-            Capability::NetBind => write!(f, "NetBind"),
-            Capability::NetAccept => write!(f, "NetAccept"),
-            Capability::NetConnect => write!(f, "NetConnect"),
-            Capability::NetRead => write!(f, "NetRead"),
-            Capability::NetWrite => write!(f, "NetWrite"),
+            Capability::NetQuicBind => write!(f, "NetQuicBind"),
+            Capability::NetQuicAccept => write!(f, "NetQuicAccept"),
+            Capability::NetQuicConnect => write!(f, "NetQuicConnect"),
+            Capability::NetQuicRead => write!(f, "NetQuicRead"),
+            Capability::NetQuicWrite => write!(f, "NetQuicWrite"),
+            Capability::NetHttpBind => write!(f, "NetHttpBind"),
+            Capability::NetHttpAccept => write!(f, "NetHttpAccept"),
+            Capability::NetHttpConnect => write!(f, "NetHttpConnect"),
+            Capability::NetHttpRead => write!(f, "NetHttpRead"),
+            Capability::NetHttpWrite => write!(f, "NetHttpWrite"),
+            Capability::NetTlsClientConfig => write!(f, "NetTlsClientConfig"),
+            Capability::NetTlsServerConfig => write!(f, "NetTlsServerConfig"),
         }
     }
 }

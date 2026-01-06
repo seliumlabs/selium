@@ -11,7 +11,7 @@ use crate::{
 };
 use selium_abi::{
     GuestResourceId, NetAccept, NetAcceptReply, NetConnect, NetConnectReply, NetCreateListener,
-    NetCreateListenerReply,
+    NetCreateListenerReply, NetProtocol, hostcalls::Hostcall,
 };
 
 type NetFuture<'a, T, E> = BoxFuture<'a, Result<T, E>>;
@@ -23,16 +23,24 @@ pub trait NetCapability {
     type Writer: Send + Unpin;
     type Error: Into<GuestError>;
 
-    /// Creates a new network listener for the implementor's protocol, returning a handle
+    /// Creates a new network listener for the selected protocol, returning a handle
     /// to the listener.
-    fn create(&self, domain: &str, port: u16) -> NetFuture<'_, Self::Handle, Self::Error>;
+    fn create(
+        &self,
+        protocol: NetProtocol,
+        domain: &str,
+        port: u16,
+        tls: Option<Arc<TlsServerConfig>>,
+    ) -> NetFuture<'_, Self::Handle, Self::Error>;
 
-    /// Connect to a remote listener for the implementor's protocol, returning
+    /// Connect to a remote listener for the selected protocol, returning
     /// bidirectional comms.
     fn connect(
         &self,
+        protocol: NetProtocol,
         domain: &str,
         port: u16,
+        tls: Option<Arc<TlsClientConfig>>,
     ) -> NetIoFuture<'_, Self::Reader, Self::Writer, Self::Error>;
 
     /// Accept a new inbound connection for the listener represented by `handle`.
@@ -40,6 +48,34 @@ pub trait NetCapability {
         &self,
         handle: &Self::Handle,
     ) -> NetIoFuture<'_, Self::Reader, Self::Writer, Self::Error>;
+}
+
+/// TLS configuration supplied for server listeners.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TlsServerConfig {
+    /// PEM-encoded certificate chain presented by the server.
+    pub cert_chain_pem: Vec<u8>,
+    /// PEM-encoded private key for the certificate chain.
+    pub private_key_pem: Vec<u8>,
+    /// PEM-encoded CA bundle used to verify client certificates.
+    pub client_ca_pem: Option<Vec<u8>>,
+    /// Optional ALPN protocol list override.
+    pub alpn: Option<Vec<String>>,
+    /// Require client authentication when true.
+    pub require_client_auth: bool,
+}
+
+/// TLS configuration supplied for client connections.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TlsClientConfig {
+    /// PEM-encoded CA bundle used to verify servers.
+    pub ca_bundle_pem: Option<Vec<u8>>,
+    /// PEM-encoded client certificate chain.
+    pub client_cert_pem: Option<Vec<u8>>,
+    /// PEM-encoded private key for the client certificate.
+    pub client_key_pem: Option<Vec<u8>>,
+    /// Optional ALPN protocol list override.
+    pub alpn: Option<Vec<String>>,
 }
 
 /// Driver creating network listeners.
@@ -58,16 +94,24 @@ where
     type Writer = T::Writer;
     type Error = T::Error;
 
-    fn create(&self, domain: &str, port: u16) -> NetFuture<'_, Self::Handle, Self::Error> {
-        self.as_ref().create(domain, port)
+    fn create(
+        &self,
+        protocol: NetProtocol,
+        domain: &str,
+        port: u16,
+        tls: Option<Arc<TlsServerConfig>>,
+    ) -> NetFuture<'_, Self::Handle, Self::Error> {
+        self.as_ref().create(protocol, domain, port, tls)
     }
 
     fn connect(
         &self,
+        protocol: NetProtocol,
         domain: &str,
         port: u16,
+        tls: Option<Arc<TlsClientConfig>>,
     ) -> NetIoFuture<'_, Self::Reader, Self::Writer, Self::Error> {
-        self.as_ref().connect(domain, port)
+        self.as_ref().connect(protocol, domain, port, tls)
     }
 
     fn accept(
@@ -93,10 +137,18 @@ where
     ) -> impl Future<Output = GuestResult<Self::Output>> + 'static {
         let inner = self.0.clone();
         let registrar = caller.data().registrar();
+        let registry = caller.data().registry_arc();
+        let NetCreateListener {
+            protocol,
+            domain,
+            port,
+            tls,
+        } = input;
+        let tls = resolve_tls_server_config(caller.data(), &registry, protocol, tls);
 
         async move {
             let handle = inner
-                .create(&input.domain, input.port)
+                .create(protocol, &domain, port, tls?)
                 .await
                 .map_err(Into::into)?;
 
@@ -183,10 +235,18 @@ where
     ) -> impl Future<Output = GuestResult<Self::Output>> + 'static {
         let inner = self.0.clone();
         let registrar = caller.data().registrar();
+        let registry = caller.data().registry_arc();
+        let NetConnect {
+            protocol,
+            domain,
+            port,
+            tls,
+        } = input;
+        let tls = resolve_tls_client_config(caller.data(), &registry, protocol, tls);
 
         async move {
             let (reader, writer, remote_addr) = inner
-                .connect(&input.domain, input.port)
+                .connect(protocol, &domain, port, tls?)
                 .await
                 .map_err(Into::into)?;
 
@@ -211,44 +271,120 @@ where
     }
 }
 
-pub fn listener_op<C>(cap: C) -> Arc<Operation<BindDriver<C>>>
+pub fn listener_op<C>(cap: C, protocol: NetProtocol) -> Arc<Operation<BindDriver<C>>>
 where
     C: NetCapability + Clone + Send + 'static,
 {
-    Operation::from_hostcall(BindDriver(cap), selium_abi::hostcall_contract!(NET_BIND))
+    let hostcall = hostcall_for_protocol(
+        protocol,
+        selium_abi::hostcall_contract!(NET_QUIC_BIND),
+        selium_abi::hostcall_contract!(NET_HTTP_BIND),
+    );
+    Operation::from_hostcall(BindDriver(cap), hostcall)
 }
 
-pub fn connect_op<C>(cap: C) -> Arc<Operation<ConnectDriver<C>>>
+pub fn connect_op<C>(cap: C, protocol: NetProtocol) -> Arc<Operation<ConnectDriver<C>>>
 where
     C: NetCapability + Clone + Send + 'static,
 {
-    Operation::from_hostcall(
-        ConnectDriver(cap),
-        selium_abi::hostcall_contract!(NET_CONNECT),
-    )
+    let hostcall = hostcall_for_protocol(
+        protocol,
+        selium_abi::hostcall_contract!(NET_QUIC_CONNECT),
+        selium_abi::hostcall_contract!(NET_HTTP_CONNECT),
+    );
+    Operation::from_hostcall(ConnectDriver(cap), hostcall)
 }
 
 /// Host operation for accepting inbound connections on a listener.
-pub fn accept_op<C>(cap: C) -> Arc<Operation<AcceptDriver<C>>>
+pub fn accept_op<C>(cap: C, protocol: NetProtocol) -> Arc<Operation<AcceptDriver<C>>>
 where
     C: NetCapability + Clone + Send + 'static,
 {
-    Operation::from_hostcall(
-        AcceptDriver(cap),
-        selium_abi::hostcall_contract!(NET_ACCEPT),
-    )
+    let hostcall = hostcall_for_protocol(
+        protocol,
+        selium_abi::hostcall_contract!(NET_QUIC_ACCEPT),
+        selium_abi::hostcall_contract!(NET_HTTP_ACCEPT),
+    );
+    Operation::from_hostcall(AcceptDriver(cap), hostcall)
 }
 
-pub fn read_op<C>(cap: C) -> Arc<Operation<IoReadDriver<C>>>
+pub fn read_op<C>(cap: C, protocol: NetProtocol) -> Arc<Operation<IoReadDriver<C>>>
 where
     C: IoCapability + Clone + Send + 'static,
 {
-    io::read_op(cap, selium_abi::hostcall_contract!(NET_READ))
+    let hostcall = hostcall_for_protocol(
+        protocol,
+        selium_abi::hostcall_contract!(NET_QUIC_READ),
+        selium_abi::hostcall_contract!(NET_HTTP_READ),
+    );
+    io::read_op(cap, hostcall)
 }
 
-pub fn write_op<C>(cap: C) -> Arc<Operation<IoWriteDriver<C>>>
+pub fn write_op<C>(cap: C, protocol: NetProtocol) -> Arc<Operation<IoWriteDriver<C>>>
 where
     C: IoCapability + Clone + Send + 'static,
 {
-    io::write_op(cap, selium_abi::hostcall_contract!(NET_WRITE))
+    let hostcall = hostcall_for_protocol(
+        protocol,
+        selium_abi::hostcall_contract!(NET_QUIC_WRITE),
+        selium_abi::hostcall_contract!(NET_HTTP_WRITE),
+    );
+    io::write_op(cap, hostcall)
+}
+
+fn resolve_tls_server_config(
+    instance: &InstanceRegistry,
+    registry: &Arc<crate::registry::Registry>,
+    protocol: NetProtocol,
+    handle: Option<GuestResourceId>,
+) -> GuestResult<Option<Arc<TlsServerConfig>>> {
+    let Some(handle) = handle else {
+        return Ok(None);
+    };
+    if matches!(protocol, NetProtocol::Http) {
+        return Err(GuestError::InvalidArgument);
+    }
+    let slot = usize::try_from(handle).map_err(|_| GuestError::InvalidArgument)?;
+    let resource_id = instance.entry(slot).ok_or(GuestError::NotFound)?;
+    let config = registry
+        .with(
+            ResourceHandle::<Arc<TlsServerConfig>>::new(resource_id),
+            |config| Arc::clone(config),
+        )
+        .ok_or(GuestError::NotFound)?;
+    Ok(Some(config))
+}
+
+fn resolve_tls_client_config(
+    instance: &InstanceRegistry,
+    registry: &Arc<crate::registry::Registry>,
+    protocol: NetProtocol,
+    handle: Option<GuestResourceId>,
+) -> GuestResult<Option<Arc<TlsClientConfig>>> {
+    let Some(handle) = handle else {
+        return Ok(None);
+    };
+    if matches!(protocol, NetProtocol::Http) {
+        return Err(GuestError::InvalidArgument);
+    }
+    let slot = usize::try_from(handle).map_err(|_| GuestError::InvalidArgument)?;
+    let resource_id = instance.entry(slot).ok_or(GuestError::NotFound)?;
+    let config = registry
+        .with(
+            ResourceHandle::<Arc<TlsClientConfig>>::new(resource_id),
+            |config| Arc::clone(config),
+        )
+        .ok_or(GuestError::NotFound)?;
+    Ok(Some(config))
+}
+
+fn hostcall_for_protocol<I, O>(
+    protocol: NetProtocol,
+    quic: &'static Hostcall<I, O>,
+    http: &'static Hostcall<I, O>,
+) -> &'static Hostcall<I, O> {
+    match protocol {
+        NetProtocol::Quic => quic,
+        NetProtocol::Http | NetProtocol::Https => http,
+    }
 }

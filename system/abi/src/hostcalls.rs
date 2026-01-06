@@ -10,9 +10,9 @@ use std::collections::BTreeMap;
 
 use crate::{
     Capability, GuestResourceId, GuestUint, IoFrame, IoRead, IoWrite, NetAccept, NetAcceptReply,
-    NetConnect, NetConnectReply, NetCreateListener, NetCreateListenerReply, ProcessLogLookup,
-    ProcessLogRegistration, ProcessStart, RkyvEncode, SessionCreate, SessionEntitlement,
-    SessionRemove, SessionResource,
+    NetConnect, NetConnectReply, NetCreateListener, NetCreateListenerReply, NetTlsClientConfig,
+    NetTlsConfigReply, NetTlsServerConfig, ProcessLogLookup, ProcessLogRegistration, ProcessStart,
+    RkyvEncode, SessionCreate, SessionEntitlement, SessionRemove, SessionResource,
 };
 
 /// Type-erased metadata describing a hostcall.
@@ -268,34 +268,76 @@ declare_hostcalls! {
         input: GuestResourceId,
         output: ()
     },
-    NET_BIND => {
-        name: "selium::net::bind",
-        capability: Capability::NetBind,
+    NET_QUIC_BIND => {
+        name: "selium::net::quic::bind",
+        capability: Capability::NetQuicBind,
         input: NetCreateListener,
         output: NetCreateListenerReply
     },
-    NET_ACCEPT => {
-        name: "selium::net::accept",
-        capability: Capability::NetBind,
+    NET_QUIC_ACCEPT => {
+        name: "selium::net::quic::accept",
+        capability: Capability::NetQuicAccept,
         input: NetAccept,
         output: NetAcceptReply
     },
-    NET_CONNECT => {
-        name: "selium::net::connect",
-        capability: Capability::NetConnect,
+    NET_QUIC_CONNECT => {
+        name: "selium::net::quic::connect",
+        capability: Capability::NetQuicConnect,
         input: NetConnect,
         output: NetConnectReply
     },
-    NET_READ => {
-        name: "selium::net::read",
-        capability: Capability::NetRead,
+    NET_QUIC_READ => {
+        name: "selium::net::quic::read",
+        capability: Capability::NetQuicRead,
         input: IoRead,
         output: IoFrame
     },
-    NET_WRITE => {
-        name: "selium::net::write",
-        capability: Capability::NetWrite,
+    NET_QUIC_WRITE => {
+        name: "selium::net::quic::write",
+        capability: Capability::NetQuicWrite,
         input: IoWrite,
         output: GuestUint
+    },
+    NET_HTTP_BIND => {
+        name: "selium::net::http::bind",
+        capability: Capability::NetHttpBind,
+        input: NetCreateListener,
+        output: NetCreateListenerReply
+    },
+    NET_HTTP_ACCEPT => {
+        name: "selium::net::http::accept",
+        capability: Capability::NetHttpAccept,
+        input: NetAccept,
+        output: NetAcceptReply
+    },
+    NET_HTTP_CONNECT => {
+        name: "selium::net::http::connect",
+        capability: Capability::NetHttpConnect,
+        input: NetConnect,
+        output: NetConnectReply
+    },
+    NET_HTTP_READ => {
+        name: "selium::net::http::read",
+        capability: Capability::NetHttpRead,
+        input: IoRead,
+        output: IoFrame
+    },
+    NET_HTTP_WRITE => {
+        name: "selium::net::http::write",
+        capability: Capability::NetHttpWrite,
+        input: IoWrite,
+        output: GuestUint
+    },
+    NET_TLS_SERVER_CONFIG_CREATE => {
+        name: "selium::net::tls::server_config_create",
+        capability: Capability::NetTlsServerConfig,
+        input: NetTlsServerConfig,
+        output: NetTlsConfigReply
+    },
+    NET_TLS_CLIENT_CONFIG_CREATE => {
+        name: "selium::net::tls::client_config_create",
+        capability: Capability::NetTlsClientConfig,
+        input: NetTlsClientConfig,
+        output: NetTlsConfigReply
     },
 }

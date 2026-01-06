@@ -386,7 +386,7 @@ async fn request_reply_end_to_end() -> Result<()> {
 
     let port = find_available_port().context("select available port")?;
     let module_spec = format!(
-        "path={REMOTE_CLIENT_MODULE};capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,ProcessLifecycle,NetBind,NetAccept,NetRead,NetWrite;args=utf8:localhost,u16:{port}"
+        "path={REMOTE_CLIENT_MODULE};capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,ProcessLifecycle,NetQuicBind,NetQuicAccept,NetQuicRead,NetQuicWrite;args=utf8:localhost,u16:{port}"
     );
     let _runtime = RuntimeGuard::start(&runtime_path, work_dir.path(), &module_spec)
         .context("start selium-runtime")?;

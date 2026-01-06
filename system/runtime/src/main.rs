@@ -14,6 +14,7 @@ use tracing_subscriber::{EnvFilter, fmt::time::SystemTime};
 mod certs;
 mod kernel;
 mod modules;
+mod tls;
 
 #[derive(Copy, Clone, Debug, ValueEnum, PartialEq, Eq)]
 enum LogFormat {
@@ -78,11 +79,11 @@ async fn run(
         Capability::ChannelReader,
         Capability::ChannelWriter,
         Capability::ProcessLifecycle,
-        Capability::NetBind,
-        Capability::NetAccept,
-        Capability::NetConnect,
-        Capability::NetRead,
-        Capability::NetWrite,
+        Capability::NetQuicBind,
+        Capability::NetQuicAccept,
+        Capability::NetQuicConnect,
+        Capability::NetQuicRead,
+        Capability::NetQuicWrite,
     ];
     let _session = Session::bootstrap(entitlements, [0; 32]);
     // @todo Store session in Registry, then pass FuncParam::Resource(id) to host bridge

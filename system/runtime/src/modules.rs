@@ -339,11 +339,26 @@ fn parse_capabilities(raw: &str) -> Result<Vec<Capability>> {
             "processlifecycle" | "process_lifecycle" | "process-lifecycle" => {
                 Capability::ProcessLifecycle
             }
-            "netbind" | "net_bind" | "net-bind" => Capability::NetBind,
-            "netaccept" | "net_accept" | "net-accept" => Capability::NetAccept,
-            "netconnect" | "net_connect" | "net-connect" => Capability::NetConnect,
-            "netread" | "net_read" | "net-read" => Capability::NetRead,
-            "netwrite" | "net_write" | "net-write" => Capability::NetWrite,
+            "netquicbind" | "net_quic_bind" | "net-quic-bind" => Capability::NetQuicBind,
+            "netquicaccept" | "net_quic_accept" | "net-quic-accept" => Capability::NetQuicAccept,
+            "netquicconnect" | "net_quic_connect" | "net-quic-connect" => {
+                Capability::NetQuicConnect
+            }
+            "netquicread" | "net_quic_read" | "net-quic-read" => Capability::NetQuicRead,
+            "netquicwrite" | "net_quic_write" | "net-quic-write" => Capability::NetQuicWrite,
+            "nethttpbind" | "net_http_bind" | "net-http-bind" => Capability::NetHttpBind,
+            "nethttpaccept" | "net_http_accept" | "net-http-accept" => Capability::NetHttpAccept,
+            "nethttpconnect" | "net_http_connect" | "net-http-connect" => {
+                Capability::NetHttpConnect
+            }
+            "nethttpread" | "net_http_read" | "net-http-read" => Capability::NetHttpRead,
+            "nethttpwrite" | "net_http_write" | "net-http-write" => Capability::NetHttpWrite,
+            "nettlsserverconfig" | "net_tls_server_config" | "net-tls-server-config" => {
+                Capability::NetTlsServerConfig
+            }
+            "nettlsclientconfig" | "net_tls_client_config" | "net-tls-client-config" => {
+                Capability::NetTlsClientConfig
+            }
             _ => return Err(anyhow!("unknown capability `{item}`")),
         };
 
