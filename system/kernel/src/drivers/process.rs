@@ -34,7 +34,7 @@ type ProcessLogOps<C> = (
 
 /// Capability responsible for starting/stopping guest instances.
 pub trait ProcessLifecycleCapability {
-    type Process: Send + ProcessHandleExt;
+    type Process: Send;
     type Error: Into<GuestError>;
 
     /// Start a new process, identified by `module_id` and `name`
@@ -55,52 +55,9 @@ pub trait ProcessLifecycleCapability {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-/// Process entry stored in the registry.
-#[derive(Debug)]
-pub struct ProcessInstance<P> {
-    identity: ProcessIdentity,
-    inner: P,
-}
-
-/// Shared metadata surface for processes managed by the kernel.
-pub trait ProcessHandleExt {
-    /// Stable identity for this process.
-    fn identity(&self) -> ProcessIdentity;
-}
-
-impl<P> ProcessInstance<P> {
-    pub fn new(identity: ProcessIdentity, inner: P) -> Self {
-        Self { identity, inner }
-    }
-
-    /// Return the stable identity assigned to this process.
-    pub fn identity(&self) -> ProcessIdentity {
-        self.identity
-    }
-
-    /// Access the underlying process handle.
-    pub fn inner_mut(&mut self) -> &mut P {
-        &mut self.inner
-    }
-
-    /// Borrow the underlying process handle.
-    pub fn inner(&self) -> &P {
-        &self.inner
-    }
-
-    /// Consume the wrapper and return the inner process handle.
-    pub fn into_inner(self) -> P {
-        self.inner
-    }
-}
-
-impl<P> ProcessHandleExt for ProcessInstance<P> {
-    fn identity(&self) -> ProcessIdentity {
-        self.identity
-    }
-}
-
+/// Hostcall driver that starts new processes.
 pub struct ProcessStartDriver<Impl>(Impl);
+/// Hostcall driver that stops running processes.
 pub struct ProcessStopDriver<Impl>(Impl);
 /// Hostcall driver that records the logging channel exported by a process.
 pub struct ProcessRegisterLogDriver<Impl>(PhantomData<Impl>);
@@ -265,6 +222,12 @@ where
                 None => return Err(GuestError::NotFound),
             }
 
+            match registry.metadata(channel_id) {
+                Some(meta) if meta.kind == ResourceType::Channel => {}
+                Some(_) => return Err(GuestError::InvalidArgument),
+                None => return Err(GuestError::NotFound),
+            }
+
             registry
                 .set_log_channel(process_id, channel_id)
                 .map_err(GuestError::from)?;
@@ -399,6 +362,7 @@ fn resolve_entrypoint_resources(
     })
 }
 
+/// Build hostcall operations for process lifecycle management.
 pub fn lifecycle_ops<C>(cap: C) -> ProcessLifecycleOps<C>
 where
     C: ProcessLifecycleCapability + Clone + Send + 'static,
@@ -415,6 +379,7 @@ where
     )
 }
 
+/// Build hostcall operations for process log channel metadata.
 pub fn log_ops<C>() -> ProcessLogOps<C>
 where
     C: ProcessLifecycleCapability + Clone + Send + 'static,

@@ -21,7 +21,7 @@ use crate::{
     mailbox::GuestMailbox,
     session::{Session, SessionError},
 };
-use selium_abi::GuestResourceId;
+use selium_abi::{DependencyId, GuestResourceId};
 use wasmtime::{StoreLimits, StoreLimitsBuilder};
 
 /// Stable registry identifier for stored resources.
@@ -31,22 +31,34 @@ type GuestFuture = Arc<FutureSharedState<GuestResult<Vec<u8>>>>;
 /// High-level classification of a resource stored in the registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceType {
+    /// Guest process resource.
     Process,
+    /// Host-side instance state.
     Instance,
+    /// Channel resource.
     Channel,
+    /// Reader handle resource.
     Reader,
+    /// Writer handle resource.
     Writer,
+    /// Session resource.
     Session,
+    /// Network configuration or handle resource.
     Network,
+    /// Guest-visible future state resource.
     Future,
+    /// Uncategorised resource.
     Other,
 }
 
 /// Metadata describing a registered resource.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceMetadata {
+    /// Resource identifier for this entry.
     pub id: ResourceId,
+    /// Owner resource identifier, if recorded.
     pub owner: Option<ResourceId>,
+    /// Resource kind classification.
     pub kind: ResourceType,
 }
 
@@ -91,6 +103,8 @@ struct RelationIndex {
     process_to_instance: HashMap<ResourceId, ResourceId>,
     process_log_channel: HashMap<ResourceId, ResourceId>,
     log_channel_process: HashMap<ResourceId, ResourceId>,
+    singletons: HashMap<DependencyId, ResourceId>,
+    singleton_ids: HashMap<ResourceId, DependencyId>,
 }
 
 /// Registry of guest resources.
@@ -333,6 +347,20 @@ impl RelationIndex {
         self.process_log_channel.get(&process_id).copied()
     }
 
+    fn register_singleton(&mut self, id: DependencyId, resource: ResourceId) -> bool {
+        if self.singletons.contains_key(&id) || self.singleton_ids.contains_key(&resource) {
+            return false;
+        }
+
+        self.singletons.insert(id, resource);
+        self.singleton_ids.insert(resource, id);
+        true
+    }
+
+    fn singleton(&self, id: DependencyId) -> Option<ResourceId> {
+        self.singletons.get(&id).copied()
+    }
+
     fn remove_resource(&mut self, id: ResourceId) {
         if let Some(owner) = self.owner_of.remove(&id) {
             Self::remove_from_list(self.owned_by.get_mut(&owner), id);
@@ -356,6 +384,10 @@ impl RelationIndex {
 
         if let Some(process) = self.log_channel_process.remove(&id) {
             self.process_log_channel.remove(&process);
+        }
+
+        if let Some(singleton_id) = self.singleton_ids.remove(&id) {
+            self.singletons.remove(&singleton_id);
         }
     }
 
@@ -680,6 +712,26 @@ impl Registry {
         self.shared_handle(channel_id)
     }
 
+    /// Register a singleton dependency identifier against the supplied resource.
+    ///
+    /// Returns `false` if the identifier or resource is already registered.
+    pub fn register_singleton(
+        &self,
+        id: DependencyId,
+        resource: ResourceId,
+    ) -> Result<bool, RegistryError> {
+        let mut relations = self
+            .relations
+            .lock()
+            .map_err(|_| RegistryError::LockPoisoned)?;
+        Ok(relations.register_singleton(id, resource))
+    }
+
+    /// Resolve a singleton dependency identifier to its backing resource id.
+    pub fn singleton(&self, id: DependencyId) -> Option<ResourceId> {
+        self.relations.lock().ok()?.singleton(id)
+    }
+
     fn record_resource_added<T: 'static>(&self, id: ResourceId) {
         if let Some(resource) = self.resources.get(id) {
             resource.span.record("resource_id", field::display(id));
@@ -801,8 +853,11 @@ impl InstanceRegistry {
     }
 
     /// Attach a mailbox used for guest async wake-ups.
-    pub fn load_mailbox(&mut self, mb: &'static GuestMailbox) {
-        let _ = self.with_instance_state(|state| state.mailbox = Some(mb));
+    ///
+    /// Returns an error if the instance state is missing.
+    pub fn load_mailbox(&mut self, mb: &'static GuestMailbox) -> Result<(), RegistryError> {
+        self.with_instance_state(|state| state.mailbox = Some(mb))
+            .ok_or(RegistryError::MissingInstance)
     }
 
     /// Create a lightweight registrar for instance-scoped resources.
@@ -828,10 +883,13 @@ impl InstanceRegistry {
     }
 
     /// Set a hard memory limit for this instance.
-    pub fn set_memory_limit(&mut self, bytes: usize) {
-        let _ = self.with_instance_state(|state| {
+    ///
+    /// Returns an error if the instance state is missing.
+    pub fn set_memory_limit(&mut self, bytes: usize) -> Result<(), RegistryError> {
+        self.with_instance_state(|state| {
             state.limits = StoreLimitsBuilder::new().memory_size(bytes).build();
-        });
+        })
+        .ok_or(RegistryError::MissingInstance)
     }
 
     fn insert_instance_handle(&self, resource_id: ResourceId) -> Result<usize, RegistryError> {
@@ -907,11 +965,17 @@ impl InstanceRegistry {
     }
 
     /// Attach custom extension data to the instance.
-    pub fn insert_extension<T: Any + Send + Sync>(&mut self, value: T) {
+    ///
+    /// Returns an error if the instance state is missing.
+    pub fn insert_extension<T: Any + Send + Sync>(
+        &mut self,
+        value: T,
+    ) -> Result<(), RegistryError> {
         let ext: Arc<dyn Any + Send + Sync> = Arc::new(value);
-        let _ = self.with_instance_state(|state| {
+        self.with_instance_state(|state| {
             state.extensions.insert(TypeId::of::<T>(), ext);
-        });
+        })
+        .ok_or(RegistryError::MissingInstance)
     }
 
     /// Borrow extension data by type.
@@ -941,11 +1005,9 @@ impl InstanceRegistry {
         resource_id
     }
 
-    /// Produce a waker for the specified guest task.
-    pub fn waker(&self, task_id: usize) -> Waker {
-        self.mailbox()
-            .expect("mailbox is not instantiated")
-            .waker(task_id)
+    /// Produce a waker for the specified guest task if the mailbox is available.
+    pub fn waker(&self, task_id: usize) -> Option<Waker> {
+        self.mailbox().map(|mailbox| mailbox.waker(task_id))
     }
 
     /// Access the guest mailbox backing async wake-ups.
@@ -965,11 +1027,13 @@ impl InstanceRegistry {
 
     /// Set the process identifier for this instance. Must be called before guest
     /// code can create resources.
-    pub fn set_process_id(&mut self, process_id: ResourceId) {
-        let _ = self.with_instance_state(|state| state.process_id = Some(process_id));
-        let _ = self
-            .registry
-            .set_instance_process(self.instance_id, process_id);
+    ///
+    /// Returns an error if the instance state is missing.
+    pub fn set_process_id(&mut self, process_id: ResourceId) -> Result<(), RegistryError> {
+        self.with_instance_state(|state| state.process_id = Some(process_id))
+            .ok_or(RegistryError::MissingInstance)?;
+        self.registry
+            .set_instance_process(self.instance_id, process_id)
     }
 
     fn process_id(&self) -> Result<Option<ResourceId>, RegistryError> {
@@ -1145,7 +1209,7 @@ mod tests {
 
         let mut instance = registry.instance().expect("instance registry");
         let instance_id = instance.instance_id;
-        instance.set_process_id(process_id);
+        instance.set_process_id(process_id).expect("set process id");
 
         assert_eq!(registry.instance_process(instance_id), Some(process_id));
         assert_eq!(registry.process_instance(process_id), Some(instance_id));
@@ -1243,7 +1307,7 @@ mod tests {
         let process_id = process.into_id();
 
         let mut instance = registry.instance().expect("instance registry");
-        instance.set_process_id(process_id);
+        instance.set_process_id(process_id).expect("set process id");
         let registrar = instance.registrar();
 
         let slot = registrar

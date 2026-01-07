@@ -12,7 +12,8 @@ use crate::{
     Capability, GuestResourceId, GuestUint, IoFrame, IoRead, IoWrite, NetAccept, NetAcceptReply,
     NetConnect, NetConnectReply, NetCreateListener, NetCreateListenerReply, NetTlsClientConfig,
     NetTlsConfigReply, NetTlsServerConfig, ProcessLogLookup, ProcessLogRegistration, ProcessStart,
-    RkyvEncode, SessionCreate, SessionEntitlement, SessionRemove, SessionResource,
+    RkyvEncode, SessionCreate, SessionEntitlement, SessionRemove, SessionResource, SingletonLookup,
+    SingletonRegister,
 };
 
 /// Type-erased metadata describing a hostcall.
@@ -195,6 +196,18 @@ declare_hostcalls! {
         capability: Capability::ChannelLifecycle,
         input: ProcessLogRegistration,
         output: ()
+    },
+    SINGLETON_REGISTER => {
+        name: "selium::singleton::register",
+        capability: Capability::SingletonRegistry,
+        input: SingletonRegister,
+        output: ()
+    },
+    SINGLETON_LOOKUP => {
+        name: "selium::singleton::lookup",
+        capability: Capability::SingletonLookup,
+        input: SingletonLookup,
+        output: GuestResourceId
     },
     CHANNEL_STRONG_READER_CREATE => {
         name: "selium::channel::strong_reader_create",

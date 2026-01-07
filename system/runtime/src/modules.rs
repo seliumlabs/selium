@@ -357,6 +357,12 @@ fn parse_capabilities(raw: &str) -> Result<Vec<Capability>> {
             "nettlsclientconfig" | "net_tls_client_config" | "net-tls-client-config" => {
                 Capability::NetTlsClientConfig
             }
+            "singletonregistry" | "singleton_registry" | "singleton-registry" => {
+                Capability::SingletonRegistry
+            }
+            "singletonlookup" | "singleton_lookup" | "singleton-lookup" => {
+                Capability::SingletonLookup
+            }
             _ => return Err(anyhow!("unknown capability `{item}`")),
         };
 

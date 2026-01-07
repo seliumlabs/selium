@@ -147,6 +147,7 @@ macro_rules! driver_module {
 
 pub mod abi;
 mod r#async;
+pub mod context;
 mod driver;
 pub mod encoding;
 /// Generated Flatbuffers schema bindings.
@@ -169,13 +170,18 @@ pub mod io;
 pub mod logging;
 pub mod net;
 pub mod process;
+pub mod singleton;
 
 /// Re-export of the `rkyv` crate used for internal Selium serialisation.
 pub use rkyv;
 
 pub use r#async::{block_on, spawn};
+pub use context::{Context, Dependency, DependencyDescriptor, DependencyError};
 /// Re-export of Selium's derive and attribute macros for guest crates.
 pub use selium_userland_macros::*;
+
+/// Re-export of singleton dependency identifiers.
+pub use selium_abi::DependencyId;
 
 pub trait FromHandle: Sized {
     /// Construct a typed wrapper from raw handle(s).

@@ -235,6 +235,14 @@ impl SharedChannel {
     }
 }
 
+impl FromHandle for SharedChannel {
+    type Handles = GuestResourceId;
+
+    unsafe fn from_handle(handle: Self::Handles) -> Self {
+        Self(handle)
+    }
+}
+
 impl fmt::Debug for Channel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Channel").field(&self.0).finish()

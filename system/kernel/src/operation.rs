@@ -180,7 +180,9 @@ where
             let registry = caller.data_mut();
             match registry.future_state(state_id) {
                 Some(state) => {
-                    let waker = registry.waker(task_id);
+                    let waker = registry.waker(task_id).ok_or_else(|| {
+                        KernelError::Driver("guest mailbox unavailable".to_string())
+                    })?;
                     state.register_waker(waker);
 
                     match state.take_result() {

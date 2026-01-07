@@ -12,11 +12,7 @@ use selium_abi::{
 };
 use selium_kernel::{
     KernelError,
-    drivers::{
-        Capability,
-        module_store::ModuleStoreError,
-        process::{EntrypointInvocationExt, ProcessInstance},
-    },
+    drivers::{Capability, module_store::ModuleStoreError, process::EntrypointInvocationExt},
     futures::FutureSharedState,
     guest_async::GuestAsync,
     guest_data::{GuestError, GuestInt, GuestUint, write_poll_result},
@@ -129,9 +125,15 @@ impl WasmRuntime {
 
         let instance_registry = registry.instance().map_err(KernelError::from)?;
         let mut store = Store::new(&self.engine, instance_registry);
-        store.data_mut().set_process_id(process_id);
+        store
+            .data_mut()
+            .set_process_id(process_id)
+            .map_err(KernelError::from)?;
         let identity = ProcessIdentity::new(process_id);
-        store.data_mut().insert_extension(identity);
+        store
+            .data_mut()
+            .insert_extension(identity)
+            .map_err(KernelError::from)?;
         // Limit linear memory growth to keep the mailbox pointers stable across the
         // instance lifetime. We preallocate and then lock the limit to the current
         // size so guest-initiated growth fails fast instead of moving the base
@@ -139,12 +141,15 @@ impl WasmRuntime {
         let instance = linker.instantiate_async(&mut store, &module).await?;
 
         // Initialise waker mailbox
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .expect("could not get instance memory");
+        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| {
+            Error::Kernel(KernelError::Driver("guest memory missing".to_string()))
+        })?;
         preallocate_memory(&memory, &mut store);
         let mb = unsafe { mailbox::create_guest_mailbox(&memory, &mut store) };
-        store.data_mut().load_mailbox(mb);
+        store
+            .data_mut()
+            .load_mailbox(mb)
+            .map_err(KernelError::from)?;
 
         let signature = entrypoint.signature().clone();
         let call_values = {
@@ -215,11 +220,13 @@ impl WasmRuntime {
         });
 
         registry
-            .initialise(process_id, ProcessInstance::new(identity, handle))
+            .initialise(process_id, handle)
             .map_err(|err| Error::Kernel(KernelError::from(err)))?;
 
         // Trigger entrypoint exec
-        let _ = start_tx.send(());
+        start_tx.send(()).map_err(|_| {
+            Error::Kernel(KernelError::Driver("process start cancelled".to_string()))
+        })?;
 
         Ok(())
     }

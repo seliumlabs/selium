@@ -3,9 +3,7 @@ use std::sync::Arc;
 use selium_abi::{AbiValue, EntrypointInvocation};
 use selium_kernel::{
     drivers::{
-        Capability,
-        module_store::ModuleStoreReadCapability,
-        process::{ProcessInstance, ProcessLifecycleCapability},
+        Capability, module_store::ModuleStoreReadCapability, process::ProcessLifecycleCapability,
     },
     guest_data::GuestError,
     registry::{Registry, ResourceId},
@@ -31,7 +29,7 @@ impl WasmtimeDriver {
 }
 
 impl ProcessLifecycleCapability for WasmtimeDriver {
-    type Process = ProcessInstance<JoinHandle<Result<Vec<AbiValue>, wasmtime::Error>>>;
+    type Process = JoinHandle<Result<Vec<AbiValue>, wasmtime::Error>>;
     type Error = Error;
 
     fn start(
@@ -63,7 +61,7 @@ impl ProcessLifecycleCapability for WasmtimeDriver {
     }
 
     async fn stop(&self, instance: &mut Self::Process) -> Result<(), Self::Error> {
-        instance.inner_mut().abort();
+        instance.abort();
         Ok(())
     }
 }

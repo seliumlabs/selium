@@ -18,6 +18,7 @@ mod io;
 mod net;
 mod process;
 mod session;
+mod singleton;
 mod tls;
 
 // pub use external::*;
@@ -26,6 +27,7 @@ pub use io::*;
 pub use net::*;
 pub use process::*;
 pub use session::*;
+pub use singleton::*;
 pub use tls::*;
 
 /// Guest pointer-sized signed integer.
@@ -125,11 +127,13 @@ pub enum Capability {
     NetHttpWrite = 14,
     NetTlsServerConfig = 15,
     NetTlsClientConfig = 16,
+    SingletonRegistry = 17,
+    SingletonLookup = 18,
 }
 
 impl Capability {
     /// All capabilities understood by the Selium kernel ABI.
-    pub const ALL: [Capability; 17] = [
+    pub const ALL: [Capability; 19] = [
         Capability::SessionLifecycle,
         Capability::ChannelLifecycle,
         Capability::ChannelReader,
@@ -147,6 +151,8 @@ impl Capability {
         Capability::NetHttpWrite,
         Capability::NetTlsServerConfig,
         Capability::NetTlsClientConfig,
+        Capability::SingletonRegistry,
+        Capability::SingletonLookup,
     ];
 }
 
@@ -303,6 +309,10 @@ impl TryFrom<u8> for Capability {
             12 => Ok(Capability::NetHttpConnect),
             13 => Ok(Capability::NetHttpRead),
             14 => Ok(Capability::NetHttpWrite),
+            15 => Ok(Capability::NetTlsServerConfig),
+            16 => Ok(Capability::NetTlsClientConfig),
+            17 => Ok(Capability::SingletonRegistry),
+            18 => Ok(Capability::SingletonLookup),
             _ => Err(CapabilityDecodeError),
         }
     }
@@ -334,6 +344,8 @@ impl Display for Capability {
             Capability::NetHttpWrite => write!(f, "NetHttpWrite"),
             Capability::NetTlsClientConfig => write!(f, "NetTlsClientConfig"),
             Capability::NetTlsServerConfig => write!(f, "NetTlsServerConfig"),
+            Capability::SingletonRegistry => write!(f, "SingletonRegistry"),
+            Capability::SingletonLookup => write!(f, "SingletonLookup"),
         }
     }
 }

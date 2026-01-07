@@ -103,6 +103,16 @@ pub fn build(work_dir: impl AsRef<Path>) -> Result<(Kernel, Arc<Notify>)> {
         .or_default()
         .push(process_logs.0.as_linkable());
 
+    let singleton_ops = drivers::singleton::operations();
+    capability_ops
+        .entry(Capability::SingletonRegistry)
+        .or_default()
+        .push(singleton_ops.0.as_linkable());
+    capability_ops
+        .entry(Capability::SingletonLookup)
+        .or_default()
+        .push(singleton_ops.1.as_linkable());
+
     let tls_ops = tls::operations();
     capability_ops
         .entry(Capability::NetTlsServerConfig)

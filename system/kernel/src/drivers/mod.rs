@@ -6,3 +6,4 @@ pub mod module_store;
 pub mod net;
 pub mod process;
 pub mod session;
+pub mod singleton;
