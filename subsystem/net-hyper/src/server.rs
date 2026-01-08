@@ -129,7 +129,7 @@ async fn serve_connection(
                 .await
                 .map_err(HyperError::Hyper)
         }
-        _ => return Err(HyperError::UnsupportedProtocol { protocol }),
+        _ => Err(HyperError::UnsupportedProtocol { protocol }),
     }
 }
 
