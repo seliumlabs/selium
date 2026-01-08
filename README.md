@@ -39,7 +39,7 @@ A messaging platform was never our end-goal. We have taken all of our learning f
 
 The fastest way to orient yourself is by [checking out an example](examples/echo/).
 
-You can also find [Selium modules in their own repo](/seliumlabs/selium-modules). These modules add significant extra functionality on top of the core platform.
+You can also find [Selium modules in their own repo](https://github.com/seliumlabs/selium-modules). These modules add significant extra functionality on top of the core platform.
 
 ---
 
