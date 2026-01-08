@@ -178,7 +178,7 @@ impl WasmRuntime {
 
         if !params_match {
             return Err(Error::Kernel(KernelError::Driver(format!(
-                "entrypoint expects params {:?}, got {:?}",
+                "entrypoint `{name}` expects params {:?}, got {:?}",
                 expected_params, param_types
             ))));
         }

@@ -25,6 +25,7 @@ use tokio::time::{sleep, timeout};
 const REQUEST_REPLY_MODULE: &str = "selium_test_request_reply.wasm";
 const REMOTE_CLIENT_MODULE: &str = "selium_remote_client_server.wasm";
 const RUNTIME_BIN: &str = "selium-runtime";
+const SINGLETON_ENTRYPOINT: &str = "singleton_stub";
 const LOG_CHUNK_SIZE: u32 = 64 * 1024;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const LOG_TIMEOUT: Duration = Duration::from_secs(10);
@@ -281,6 +282,17 @@ async fn start_client(client: &Client, request_id: u64) -> Result<Process> {
         .context("launch request-reply client")
 }
 
+async fn start_singleton_stub(client: &Client) -> Result<Process> {
+    let builder = ProcessBuilder::new(REQUEST_REPLY_MODULE, SINGLETON_ENTRYPOINT)
+        .capability(Capability::ChannelLifecycle)
+        .capability(Capability::SingletonRegistry)
+        .capability(Capability::SingletonLookup);
+
+    Process::start(client, builder)
+        .await
+        .context("launch singleton stub")
+}
+
 async fn wait_for_log_channel(process: &Process, timeout_window: Duration) -> Result<Channel> {
     let deadline = Instant::now() + timeout_window;
     loop {
@@ -417,6 +429,53 @@ async fn request_reply_end_to_end() -> Result<()> {
     server.stop().await.context("stop request-reply server")?;
     drain_log_frames(&mut client_logs, Duration::from_millis(500)).await?;
     drain_log_frames(&mut server_logs, Duration::from_millis(500)).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "end-to-end tests run separately"]
+async fn singleton_round_trip_end_to_end() -> Result<()> {
+    let workspace_root = workspace_root()?;
+    let work_dir = WorkDir::new()?;
+    let modules_dir = work_dir.path().join("modules");
+    fs::create_dir_all(&modules_dir).context("create modules directory")?;
+
+    let runtime_path = build_runtime(&workspace_root).context("build runtime")?;
+    generate_certs(&runtime_path, work_dir.path()).context("generate certificates")?;
+    let remote_client_path = build_remote_client().context("build remote-client")?;
+    let request_reply_path =
+        build_request_reply_module(&workspace_root).context("build request-reply module")?;
+
+    copy_module(remote_client_path, &modules_dir).context("install remote-client module")?;
+
+    copy_module(request_reply_path, &modules_dir).context("install request-reply module")?;
+
+    let port = find_available_port().context("select available port")?;
+    let module_spec = format!(
+        "path={REMOTE_CLIENT_MODULE};capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,ProcessLifecycle,NetQuicBind,NetQuicAccept,NetQuicRead,NetQuicWrite;args=utf8:localhost,u16:{port}"
+    );
+    let _runtime = RuntimeGuard::start(&runtime_path, work_dir.path(), &module_spec)
+        .context("start selium-runtime")?;
+
+    let client = connect_client(port, work_dir.path()).await?;
+    let singleton_process = start_singleton_stub(&client)
+        .await
+        .context("start singleton stub")?;
+
+    let log_channel = wait_for_log_channel(&singleton_process, LOG_TIMEOUT).await?;
+    let mut logs = subscribe_log_channel(&log_channel).await?;
+    let status = wait_for_log_field(&mut logs, "singleton_status", LOG_TIMEOUT).await?;
+
+    if status != "ok" {
+        bail!("unexpected singleton status: {status}");
+    }
+
+    singleton_process
+        .stop()
+        .await
+        .context("stop singleton stub")?;
+    drain_log_frames(&mut logs, Duration::from_millis(500)).await?;
 
     Ok(())
 }

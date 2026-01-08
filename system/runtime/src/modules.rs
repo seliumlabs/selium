@@ -263,12 +263,8 @@ fn build_module_spec(builder: ModuleSpecBuilder, work_dir: &Path) -> Result<Modu
     let entrypoint = builder
         .entrypoint
         .unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_string());
-    let capabilities = builder
-        .capabilities
-        .ok_or_else(|| anyhow!("module specification missing capabilities"))?;
-    let args = builder
-        .args
-        .ok_or_else(|| anyhow!("module specification missing args"))?;
+    let capabilities = builder.capabilities.unwrap_or_default();
+    let args = builder.args.unwrap_or_default();
     let params = builder.params.unwrap_or_default();
     let (params, values) = resolve_arguments(params, args)?;
     let ModuleArgs { params, args } = build_module_args(params, values)?;

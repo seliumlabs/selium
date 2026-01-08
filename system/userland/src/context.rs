@@ -2,8 +2,6 @@
 
 use core::future::Future;
 
-use thiserror::Error;
-
 use crate::{DependencyId, FromHandle, driver::DriverError, singleton};
 use selium_abi::GuestResourceId;
 
@@ -27,22 +25,14 @@ impl DependencyDescriptor {
 pub trait Dependency: Sized {
     /// Handle type required to build the dependency.
     type Handle: FromHandle<Handles = GuestResourceId>;
-    /// Future returned when constructing the dependency.
-    type Future: Future<Output = Result<Self, DependencyError>>;
+    /// Error type used by the implementor.
+    type Error: std::error::Error;
 
     /// Static descriptor used to locate the dependency.
     const DESCRIPTOR: DependencyDescriptor;
 
     /// Build the dependency from the raw handle.
-    fn from_handle(handle: Self::Handle) -> Self::Future;
-}
-
-/// Errors surfaced when resolving dependencies.
-#[derive(Debug, Error)]
-pub enum DependencyError {
-    /// The host returned an error while resolving the dependency.
-    #[error("dependency lookup failed: {0}")]
-    Driver(#[from] DriverError),
+    fn from_handle(handle: Self::Handle) -> impl Future<Output = Result<Self, Self::Error>>;
 }
 
 /// Read-only view of the guest environment.
@@ -58,9 +48,10 @@ impl Context {
     }
 
     /// Look up a singleton dependency by type.
-    pub async fn singleton<T>(&self) -> Result<T, DependencyError>
+    pub async fn singleton<T>(&self) -> Result<T, T::Error>
     where
         T: Dependency,
+        T::Error: From<DriverError>,
     {
         let raw = singleton::lookup(T::DESCRIPTOR.id).await?;
         let handle = unsafe { T::Handle::from_handle(raw) };
@@ -71,6 +62,7 @@ impl Context {
     pub async fn require<T>(&self) -> T
     where
         T: Dependency,
+        T::Error: From<DriverError>,
     {
         match self.singleton::<T>().await {
             Ok(value) => value,

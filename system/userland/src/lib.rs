@@ -176,7 +176,7 @@ pub mod singleton;
 pub use rkyv;
 
 pub use r#async::{block_on, spawn};
-pub use context::{Context, Dependency, DependencyDescriptor, DependencyError};
+pub use context::{Context, Dependency, DependencyDescriptor};
 /// Re-export of Selium's derive and attribute macros for guest crates.
 pub use selium_userland_macros::*;
 

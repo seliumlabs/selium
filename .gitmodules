@@ -1,3 +1,3 @@
 [submodule "tests/request-reply/selium-modules"]
-	path = tests/request-reply/selium-modules
+	path = tests/selium-modules
 	url = https://github.com/seliumlabs/selium-modules
