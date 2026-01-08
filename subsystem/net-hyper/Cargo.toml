@@ -12,7 +12,14 @@ categories.workspace = true
 
 [dependencies]
 futures-util = { workspace = true }
-hyper = { workspace = true, features = ["backports", "client", "http1", "http2", "server", "tcp", "runtime"] }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = [
+  "client",
+  "http1",
+  "http2",
+  "server",
+] }
+hyper-util = { workspace = true, features = ["tokio"] }
 rustls = { workspace = true, features = ["ring", "std"] }
 rustls-pki-types = { workspace = true, features = ["std"] }
 selium-abi = { path = "../../system/abi" }

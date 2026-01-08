@@ -4,7 +4,6 @@
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
-    future::Future,
     net::SocketAddr,
     sync::{
         Arc, Mutex,
@@ -13,8 +12,9 @@ use std::{
 };
 
 use futures_util::future::BoxFuture;
+use http_body_util::Full;
 use hyper::{
-    Body,
+    body::Bytes,
     client::conn::{http1, http2},
     http::{
         header::{InvalidHeaderName, InvalidHeaderValue},
@@ -22,6 +22,7 @@ use hyper::{
         uri::InvalidUri,
     },
 };
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls::{ClientConfig, ServerConfig, sign};
 use selium_abi::{IoFrame, NetProtocol};
 use selium_kernel::{
@@ -48,6 +49,9 @@ use crate::{
     },
 };
 
+/// Body type used for outbound Hyper messages.
+pub(crate) type HyperBody = Full<Bytes>;
+/// IO type used for Hyper streams.
 pub(crate) type HyperStream = Box<dyn HyperIo + 'static>;
 
 const PENDING_QUEUE: usize = 64;
@@ -57,8 +61,8 @@ pub(crate) trait HyperIo: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> HyperIo for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 
 pub(crate) enum OutboundSender {
-    Http1(http1::SendRequest<Body>),
-    Http2(http2::SendRequest<Body>),
+    Http1(http1::SendRequest<HyperBody>),
+    Http2(http2::SendRequest<HyperBody>),
 }
 
 /// Errors produced by the Hyper-backed listener driver.
@@ -123,9 +127,6 @@ pub enum HyperError {
     #[error("unsupported protocol: {protocol:?}")]
     UnsupportedProtocol { protocol: NetProtocol },
 }
-
-#[derive(Clone, Debug)]
-struct TokioExec;
 
 struct ListenerRegistry {
     listeners: Mutex<HashMap<u16, Arc<Listener>>>,
@@ -454,6 +455,7 @@ impl NetCapability for HyperDriver {
                 None => default_client_config,
             };
             let stream = connect_stream(protocol, &domain, port, client_config).await?;
+            let stream = TokioIo::new(stream);
             let sender = match protocol {
                 NetProtocol::Http => {
                     let (sender, connection) =
@@ -466,7 +468,7 @@ impl NetCapability for HyperDriver {
                     OutboundSender::Http1(sender)
                 }
                 NetProtocol::Https => {
-                    let (sender, connection) = http2::handshake(TokioExec, stream)
+                    let (sender, connection) = http2::handshake(TokioExecutor::new(), stream)
                         .await
                         .map_err(HyperError::Hyper)?;
                     tokio::spawn(async move {
@@ -572,15 +574,6 @@ impl From<HyperError> for GuestError {
             HyperError::TransferEncoding => GuestError::InvalidArgument,
             _ => GuestError::Subsystem(value.to_string()),
         }
-    }
-}
-
-impl<F> hyper::rt::Executor<F> for TokioExec
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    fn execute(&self, fut: F) {
-        tokio::spawn(fut);
     }
 }
 

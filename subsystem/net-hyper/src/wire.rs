@@ -1,13 +1,15 @@
 //! HTTP wire helpers for the Hyper driver.
 
+use http_body_util::BodyExt;
 use hyper::{
-    Body, Request, Response, StatusCode, Uri, Version,
+    Request, Response, StatusCode, Uri, Version,
+    body::Incoming,
     header::{CONTENT_LENGTH, HOST, TRANSFER_ENCODING},
     http::{HeaderName, HeaderValue, Method},
 };
 use selium_abi::NetProtocol;
 
-use crate::driver::HyperError;
+use crate::driver::{HyperBody, HyperError};
 
 const MAX_HEADERS: usize = 64;
 const HTTP1_VERSION: &str = "HTTP/1.1";
@@ -15,22 +17,21 @@ const HTTP2_VERSION: &str = "HTTP/2";
 const HTTP2_VERSION_ALT: &str = "HTTP/2.0";
 
 pub(crate) async fn format_request_bytes(
-    mut request: Request<Body>,
+    request: Request<Incoming>,
     protocol: NetProtocol,
 ) -> Result<Vec<u8>, HyperError> {
-    let body = hyper::body::to_bytes(request.body_mut())
-        .await
-        .map_err(HyperError::Hyper)?;
+    let (parts, body) = request.into_parts();
+    let body = body.collect().await.map_err(HyperError::Hyper)?.to_bytes();
     let mut buf = Vec::with_capacity(body.len() + 256);
     let version = version_label(protocol)?;
 
-    let path = request
-        .uri()
+    let path = parts
+        .uri
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/");
 
-    buf.extend_from_slice(request.method().as_str().as_bytes());
+    buf.extend_from_slice(parts.method.as_str().as_bytes());
     buf.extend_from_slice(b" ");
     buf.extend_from_slice(path.as_bytes());
     buf.extend_from_slice(b" ");
@@ -38,7 +39,7 @@ pub(crate) async fn format_request_bytes(
     buf.extend_from_slice(b"\r\n");
 
     let mut has_content_length = false;
-    for (name, value) in request.headers().iter() {
+    for (name, value) in parts.headers.iter() {
         if name == TRANSFER_ENCODING {
             continue;
         }
@@ -60,18 +61,16 @@ pub(crate) async fn format_request_bytes(
     }
 
     buf.extend_from_slice(b"\r\n");
-    buf.extend_from_slice(&body);
+    buf.extend_from_slice(body.as_ref());
     Ok(buf)
 }
 
 pub(crate) async fn format_response_bytes(
-    response: Response<Body>,
+    response: Response<Incoming>,
     protocol: NetProtocol,
 ) -> Result<Vec<u8>, HyperError> {
     let (parts, body) = response.into_parts();
-    let body = hyper::body::to_bytes(body)
-        .await
-        .map_err(HyperError::Hyper)?;
+    let body = body.collect().await.map_err(HyperError::Hyper)?.to_bytes();
     let mut buf = Vec::with_capacity(body.len() + 256);
     let version = version_label(protocol)?;
 
@@ -110,7 +109,7 @@ pub(crate) async fn format_response_bytes(
     }
 
     buf.extend_from_slice(b"\r\n");
-    buf.extend_from_slice(&body);
+    buf.extend_from_slice(body.as_ref());
     Ok(buf)
 }
 
@@ -119,7 +118,7 @@ pub(crate) fn parse_request(
     domain: &str,
     port: u16,
     bytes: &[u8],
-) -> Result<Request<Body>, HyperError> {
+) -> Result<Request<HyperBody>, HyperError> {
     let (head, body) = split_message(bytes)?;
     let header_text = std::str::from_utf8(head)
         .map_err(|_| HyperError::HttpParse("invalid header encoding".to_string()))?;
@@ -203,14 +202,14 @@ pub(crate) fn parse_request(
     };
 
     builder
-        .body(Body::from(body.to_vec()))
+        .body(HyperBody::from(body.to_vec()))
         .map_err(HyperError::Http)
 }
 
 pub(crate) fn parse_response(
     protocol: NetProtocol,
     bytes: &[u8],
-) -> Result<Response<Body>, HyperError> {
+) -> Result<Response<HyperBody>, HyperError> {
     let (head, body) = split_message(bytes)?;
     let header_text = std::str::from_utf8(head)
         .map_err(|_| HyperError::HttpParse("invalid header encoding".to_string()))?;
@@ -278,7 +277,7 @@ pub(crate) fn parse_response(
     };
 
     builder
-        .body(Body::from(body.to_vec()))
+        .body(HyperBody::from(body.to_vec()))
         .map_err(HyperError::Http)
 }
 
@@ -286,8 +285,8 @@ pub(crate) fn error_response(
     protocol: NetProtocol,
     status: StatusCode,
     message: &str,
-) -> Response<Body> {
-    let mut response = Response::new(Body::from(message.to_string()));
+) -> Response<HyperBody> {
+    let mut response = Response::new(HyperBody::from(message.to_string()));
     *response.status_mut() = status;
     *response.version_mut() = protocol_version(protocol).unwrap_or(Version::HTTP_2);
     match HeaderValue::from_str(&message.len().to_string()) {

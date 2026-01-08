@@ -5,12 +5,13 @@ use std::{
     sync::Arc,
 };
 
+use hyper::body::Incoming;
 use selium_abi::{IoFrame, NetProtocol};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
 use crate::{
-    driver::{HyperError, HyperStream, OutboundSender, OutboundState},
+    driver::{HyperBody, HyperError, HyperStream, OutboundSender, OutboundState},
     tls::server_name,
     wire::{format_response_bytes, parse_request},
 };
@@ -95,8 +96,8 @@ pub(crate) async fn write_outbound(state: &OutboundState, bytes: &[u8]) -> Resul
 
 async fn send_request(
     sender: &mut OutboundSender,
-    request: hyper::Request<hyper::Body>,
-) -> Result<hyper::Response<hyper::Body>, HyperError> {
+    request: hyper::Request<HyperBody>,
+) -> Result<hyper::Response<Incoming>, HyperError> {
     match sender {
         OutboundSender::Http1(sender) => sender
             .send_request(request)

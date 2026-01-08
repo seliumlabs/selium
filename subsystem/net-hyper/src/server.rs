@@ -2,7 +2,13 @@
 
 use std::{convert::Infallible, net::SocketAddr, sync::Arc};
 
-use hyper::{Body, Response, StatusCode, server::conn::Http, service::service_fn};
+use hyper::{
+    Response, StatusCode,
+    body::Incoming,
+    server::conn::{http1, http2},
+    service::service_fn,
+};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls::ServerConfig;
 use selium_abi::NetProtocol;
 use tokio::net::TcpListener;
@@ -11,7 +17,7 @@ use tokio_rustls::TlsAcceptor;
 use tracing::warn;
 
 use crate::{
-    driver::{HyperError, HyperStream, InboundState, PendingRequest},
+    driver::{HyperBody, HyperError, HyperStream, InboundState, PendingRequest},
     wire::{error_response, format_request_bytes, host_matches, parse_response},
 };
 
@@ -108,28 +114,32 @@ async fn serve_connection(
         }
     });
 
-    let mut http = Http::new();
     match protocol {
         NetProtocol::Http => {
-            http.http1_only(true);
+            let io = TokioIo::new(io);
+            http1::Builder::new()
+                .serve_connection(io, service)
+                .await
+                .map_err(HyperError::Hyper)
         }
         NetProtocol::Https => {
-            http.http2_only(true);
+            let io = TokioIo::new(io);
+            http2::Builder::new(TokioExecutor::new())
+                .serve_connection(io, service)
+                .await
+                .map_err(HyperError::Hyper)
         }
         _ => return Err(HyperError::UnsupportedProtocol { protocol }),
     }
-    http.serve_connection(io, service)
-        .await
-        .map_err(HyperError::Hyper)
 }
 
 async fn handle_incoming_request(
     protocol: NetProtocol,
-    request: hyper::Request<Body>,
+    request: hyper::Request<Incoming>,
     domain: &str,
     sender: &mpsc::Sender<PendingRequest>,
     remote_addr: SocketAddr,
-) -> Result<Response<Body>, HyperError> {
+) -> Result<Response<HyperBody>, HyperError> {
     if !domain.is_empty() {
         let host = request
             .headers()

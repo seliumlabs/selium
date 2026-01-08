@@ -13,7 +13,6 @@ categories.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env", "help", "std"] }
-flatbuffers = { workspace = true }
 rcgen = { workspace = true, features = ["crypto", "pem", "ring"] }
 rustls = { workspace = true, features = ["ring", "std"] }
 rustls-pki-types = { workspace = true, features = ["std"] }
