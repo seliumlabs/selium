@@ -11,9 +11,9 @@ crate-type = ["cdylib"]
 anyhow = { workspace = true }
 cargo = { workspace = true, features = ["http-transport-reqwest"] }
 futures = { workspace = true, features = ["std"] }
-selium-abi = { path = "../../crates/system/abi" }
-selium-client = { path = "../../crates/client" }
-selium-userland = { path = "../../crates/system/userland" }
+selium-abi = { path = "../../system/abi" }
+selium-remote-client = { path = "selium-modules/remote-client/client" }
+selium-userland = { path = "../../system/userland" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [build-dependencies]
@@ -24,5 +24,5 @@ flatc = { workspace = true }
 anyhow = { workspace = true }
 flatbuffers = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-selium-userland = { path = "../../crates/system/userland" }
+selium-userland = { path = "../../system/userland" }
 tracing = { workspace = true }

@@ -16,13 +16,16 @@ use cargo::{
 };
 use futures::StreamExt;
 use selium_abi::{AbiParam, AbiScalarType, AbiSignature, Capability};
-use selium_client::{Channel, Client, ClientConfigBuilder, Process, ProcessBuilder, Subscriber};
+use selium_remote_client::{
+    Channel, Client, ClientConfigBuilder, ClientError, Process, ProcessBuilder, Subscriber,
+};
 use selium_userland::fbs::selium::logging as log_fb;
 use tokio::time::{sleep, timeout};
 
 const REQUEST_REPLY_MODULE: &str = "selium_test_request_reply.wasm";
-const REMOTE_CLIENT_MODULE: &str = "selium_module_remote_client.wasm";
+const REMOTE_CLIENT_MODULE: &str = "selium_remote_client_server.wasm";
 const RUNTIME_BIN: &str = "selium-runtime";
+const SINGLETON_ENTRYPOINT: &str = "singleton_stub";
 const LOG_CHUNK_SIZE: u32 = 64 * 1024;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const LOG_TIMEOUT: Duration = Duration::from_secs(10);
@@ -32,15 +35,13 @@ struct RuntimeGuard {
 }
 
 impl RuntimeGuard {
-    fn start(runtime_path: &Path, work_dir: &Path, port: u16) -> Result<Self> {
+    fn start(runtime_path: &Path, work_dir: &Path, module_spec: &str) -> Result<Self> {
         let mut command = Command::new(runtime_path);
         command
-            .arg("--domain")
-            .arg("localhost")
-            .arg("--port")
-            .arg(port.to_string())
             .arg("--work-dir")
             .arg(".")
+            .arg("--module")
+            .arg(module_spec)
             .current_dir(work_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
@@ -140,15 +141,17 @@ fn build_runtime(workspace_root: &Path) -> Result<PathBuf> {
     Ok(runtime_binary_path(workspace_root))
 }
 
-fn build_remote_client(workspace_root: &Path) -> Result<PathBuf> {
+fn build_remote_client() -> Result<PathBuf> {
+    let module_root = Path::new("selium-modules/remote-client/server");
+
     cargo_compile(
-        workspace_root,
-        "selium-module-remote-client",
+        module_root,
+        "selium-remote-client-server",
         Some("wasm32-unknown-unknown"),
         CompileFilter::lib_only(),
     )
-    .context("compile selium-module-remote-client")?;
-    Ok(wasm_module_path(workspace_root, REMOTE_CLIENT_MODULE))
+    .context("compile selium-remote-client-server")?;
+    Ok(wasm_module_path(module_root, REMOTE_CLIENT_MODULE))
 }
 
 fn build_request_reply_module(workspace_root: &Path) -> Result<PathBuf> {
@@ -279,12 +282,23 @@ async fn start_client(client: &Client, request_id: u64) -> Result<Process> {
         .context("launch request-reply client")
 }
 
+async fn start_singleton_stub(client: &Client) -> Result<Process> {
+    let builder = ProcessBuilder::new(REQUEST_REPLY_MODULE, SINGLETON_ENTRYPOINT)
+        .capability(Capability::ChannelLifecycle)
+        .capability(Capability::SingletonRegistry)
+        .capability(Capability::SingletonLookup);
+
+    Process::start(client, builder)
+        .await
+        .context("launch singleton stub")
+}
+
 async fn wait_for_log_channel(process: &Process, timeout_window: Duration) -> Result<Channel> {
     let deadline = Instant::now() + timeout_window;
     loop {
         match process.log_channel().await {
             Ok(channel) => return Ok(channel),
-            Err(selium_client::ClientError::Remote(message))
+            Err(ClientError::Remote(message))
                 if message.to_ascii_lowercase().contains("not found")
                     && Instant::now() < deadline =>
             {
@@ -374,7 +388,7 @@ async fn request_reply_end_to_end() -> Result<()> {
 
     let runtime_path = build_runtime(&workspace_root).context("build runtime")?;
     generate_certs(&runtime_path, work_dir.path()).context("generate certificates")?;
-    let remote_client_path = build_remote_client(&workspace_root).context("build remote-client")?;
+    let remote_client_path = build_remote_client().context("build remote-client")?;
     let request_reply_path =
         build_request_reply_module(&workspace_root).context("build request-reply module")?;
 
@@ -383,7 +397,10 @@ async fn request_reply_end_to_end() -> Result<()> {
     copy_module(request_reply_path, &modules_dir).context("install request-reply module")?;
 
     let port = find_available_port().context("select available port")?;
-    let _runtime = RuntimeGuard::start(&runtime_path, work_dir.path(), port)
+    let module_spec = format!(
+        "path={REMOTE_CLIENT_MODULE};capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,ProcessLifecycle,NetQuicBind,NetQuicAccept,NetQuicRead,NetQuicWrite;args=utf8:localhost,u16:{port}"
+    );
+    let _runtime = RuntimeGuard::start(&runtime_path, work_dir.path(), &module_spec)
         .context("start selium-runtime")?;
 
     let client = connect_client(port, work_dir.path()).await?;
@@ -412,6 +429,53 @@ async fn request_reply_end_to_end() -> Result<()> {
     server.stop().await.context("stop request-reply server")?;
     drain_log_frames(&mut client_logs, Duration::from_millis(500)).await?;
     drain_log_frames(&mut server_logs, Duration::from_millis(500)).await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "end-to-end tests run separately"]
+async fn singleton_round_trip_end_to_end() -> Result<()> {
+    let workspace_root = workspace_root()?;
+    let work_dir = WorkDir::new()?;
+    let modules_dir = work_dir.path().join("modules");
+    fs::create_dir_all(&modules_dir).context("create modules directory")?;
+
+    let runtime_path = build_runtime(&workspace_root).context("build runtime")?;
+    generate_certs(&runtime_path, work_dir.path()).context("generate certificates")?;
+    let remote_client_path = build_remote_client().context("build remote-client")?;
+    let request_reply_path =
+        build_request_reply_module(&workspace_root).context("build request-reply module")?;
+
+    copy_module(remote_client_path, &modules_dir).context("install remote-client module")?;
+
+    copy_module(request_reply_path, &modules_dir).context("install request-reply module")?;
+
+    let port = find_available_port().context("select available port")?;
+    let module_spec = format!(
+        "path={REMOTE_CLIENT_MODULE};capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,ProcessLifecycle,NetQuicBind,NetQuicAccept,NetQuicRead,NetQuicWrite;args=utf8:localhost,u16:{port}"
+    );
+    let _runtime = RuntimeGuard::start(&runtime_path, work_dir.path(), &module_spec)
+        .context("start selium-runtime")?;
+
+    let client = connect_client(port, work_dir.path()).await?;
+    let singleton_process = start_singleton_stub(&client)
+        .await
+        .context("start singleton stub")?;
+
+    let log_channel = wait_for_log_channel(&singleton_process, LOG_TIMEOUT).await?;
+    let mut logs = subscribe_log_channel(&log_channel).await?;
+    let status = wait_for_log_field(&mut logs, "singleton_status", LOG_TIMEOUT).await?;
+
+    if status != "ok" {
+        bail!("unexpected singleton status: {status}");
+    }
+
+    singleton_process
+        .stop()
+        .await
+        .context("stop singleton stub")?;
+    drain_log_frames(&mut logs, Duration::from_millis(500)).await?;
 
     Ok(())
 }

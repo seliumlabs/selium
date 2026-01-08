@@ -3,14 +3,22 @@
 #[cfg(target_arch = "wasm32")]
 use anyhow::{Context, Result, anyhow, bail};
 #[cfg(target_arch = "wasm32")]
+use core::future::{Ready, ready};
+#[cfg(target_arch = "wasm32")]
 use futures::{SinkExt, StreamExt};
 #[cfg(target_arch = "wasm32")]
 use selium_userland::{
     abi::GuestResourceId,
+    dependency_id,
     encoding::FlatMsg,
     entrypoint,
     io::{Channel, SharedChannel},
     schema,
+    singleton,
+    Context,
+    Dependency,
+    DependencyDescriptor,
+    DependencyError,
 };
 #[cfg(target_arch = "wasm32")]
 use tracing::{info, warn};
@@ -45,6 +53,24 @@ pub struct RequestReplyRequest {
 pub struct RequestReplyResponse {
     /// Echoed payload.
     pub msg: String,
+}
+
+#[cfg(target_arch = "wasm32")]
+struct StubSingleton {
+    handle: SharedChannel,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Dependency for StubSingleton {
+    type Handle = SharedChannel;
+    type Future = Ready<Result<Self, DependencyError>>;
+
+    const DESCRIPTOR: DependencyDescriptor =
+        DependencyDescriptor::new("tests.singleton.stub", dependency_id!("tests.singleton.stub"));
+
+    fn from_handle(handle: Self::Handle) -> Self::Future {
+        ready(Ok(Self { handle }))
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -140,6 +166,40 @@ async fn request_reply_server() -> Result<()> {
             );
         }
     }
+
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[entrypoint]
+async fn singleton_stub() -> Result<()> {
+    let channel = Channel::create(8 * 1024)
+        .await
+        .context("create stub channel")?;
+    let shared = channel.share().await.context("share stub channel")?;
+
+    singleton::register(StubSingleton::DESCRIPTOR.id, shared.raw())
+        .await
+        .context("register singleton")?;
+
+    let resolved = Context::current()
+        .singleton::<StubSingleton>()
+        .await
+        .context("lookup singleton")?;
+
+    if resolved.handle.raw() != shared.raw() {
+        bail!(
+            "singleton handle mismatch: expected {} got {}",
+            shared.raw(),
+            resolved.handle.raw()
+        );
+    }
+
+    info!(
+        singleton_status = "ok",
+        singleton_handle = shared.raw(),
+        "singleton round-trip ok"
+    );
 
     Ok(())
 }
