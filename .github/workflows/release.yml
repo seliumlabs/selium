@@ -1,0 +1,19 @@
+name: Draft the release
+
+on:
+  push:
+    branches:
+      - main
+      - hotfix
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: itpetey/breezy@v0.1
+        with:
+          language: rust
