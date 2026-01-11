@@ -1,0 +1,27 @@
+name: Publish project artifacts
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: cargo build
+        run: cargo build --release
+
+      - name: cargo login
+        run: cargo login ${{ secrets.CRATES_TOKEN }}
+
+      - name: cargo publish
+        run: cargo publish --workspace
