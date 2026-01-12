@@ -17,8 +17,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: cargo build
+        run: cargo build --release
+
       - name: cargo login
         run: echo ${{ secrets.CRATES_TOKEN }} | cargo login
 
       - name: cargo publish
-        run: cargo publish --workspace
+        run: cargo publish --workspace --keep-going
