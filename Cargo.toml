@@ -32,7 +32,7 @@ blake3 = { version = "1.8", default-features = false }
 clap = { version = "4.5", default-features = false }
 flatbuffers = { version = "25.12", default-features = false }
 flatbuffers-build = { version = "0.2", default-features = false }
-flatc = { git = "https://github.com/petehayes102/flatc.rs", branch = "v25.12.19" }
+flatc-fork = "0.5.0"
 futures = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 http-body-util = { version = "0.1", default-features = false }

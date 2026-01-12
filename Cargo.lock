@@ -543,9 +543,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "flatc"
-version = "0.4.0+25.12.19"
-source = "git+https://github.com/petehayes102/flatc.rs?branch=v25.12.19#7ca870b7c576f95dfc869b0f7aa48b605cb60c70"
+name = "flatc-fork"
+version = "0.5.0+25.12.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c530de940dbc04b9b85816f61ba10973731d2ec3e64643baa5f7f15ecda55440"
 dependencies = [
  "cmake",
 ]
@@ -1676,7 +1677,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc",
+ "flatc-fork",
  "futures",
  "rkyv",
  "selium-abi",

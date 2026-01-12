@@ -31,4 +31,4 @@ tracing-subscriber = { workspace = true, default-features = false, features = [
 
 [build-dependencies]
 flatbuffers-build = { workspace = true }
-flatc = { workspace = true }
+flatc-fork = { workspace = true }

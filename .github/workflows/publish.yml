@@ -21,7 +21,7 @@ jobs:
         run: cargo build --release
 
       - name: cargo login
-        run: cargo login ${{ secrets.CRATES_TOKEN }}
+        run: echo ${{ secrets.CRATES_TOKEN }} | cargo login
 
       - name: cargo publish
         run: cargo publish --workspace
