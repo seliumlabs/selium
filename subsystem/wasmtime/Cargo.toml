@@ -11,8 +11,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-selium-abi = { path = "../../system/abi" }
-selium-kernel = { path = "../../system/kernel" }
+selium-abi = { workspace = true }
+selium-kernel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

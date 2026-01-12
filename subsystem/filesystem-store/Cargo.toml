@@ -12,4 +12,4 @@ categories.workspace = true
 
 [dependencies]
 path-security = { workspace = true }
-selium-kernel = { path = "../../system/kernel" }
+selium-kernel = { workspace = true }

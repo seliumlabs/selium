@@ -15,8 +15,8 @@ futures-util = { workspace = true }
 parking_lot = { workspace = true }
 quinn = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
 rustls-pki-types = { workspace = true, features = ["std"] }
-selium-kernel = { path = "../../system/kernel" }
-selium-abi = { path = "../../system/abi" }
+selium-abi = { workspace = true }
+selium-kernel = { workspace = true }
 thiserror = { workspace = true }
-webpki-roots = { workspace = true }
 tracing = { workspace = true }
+webpki-roots = { workspace = true }

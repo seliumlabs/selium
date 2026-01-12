@@ -22,8 +22,8 @@ hyper = { workspace = true, features = [
 hyper-util = { workspace = true, features = ["tokio"] }
 rustls = { workspace = true, features = ["ring", "std"] }
 rustls-pki-types = { workspace = true, features = ["std"] }
-selium-abi = { path = "../../system/abi" }
-selium-kernel = { path = "../../system/kernel" }
+selium-abi = { workspace = true }
+selium-kernel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net", "rt", "sync"] }
 tokio-rustls = { workspace = true }

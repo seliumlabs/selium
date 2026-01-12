@@ -16,14 +16,14 @@ clap = { workspace = true, features = ["derive", "env", "help", "std"] }
 rcgen = { workspace = true, features = ["crypto", "pem", "ring"] }
 rustls = { workspace = true, features = ["ring", "std"] }
 rustls-pki-types = { workspace = true, features = ["std"] }
-selium-abi = { path = "../abi" }
-selium-filesystem-store = { path = "../../subsystem/filesystem-store" }
-selium-kernel = { path = "../kernel" }
-selium-messaging = { path = "../../subsystem/messaging" }
-selium-net-hyper = { path = "../../subsystem/net-hyper" }
-selium-net-quinn = { path = "../../subsystem/net-quinn" }
-selium-userland = { path = "../userland" }
-selium-wasmtime = { path = "../../subsystem/wasmtime" }
+selium-abi = { workspace = true }
+selium-filesystem-store = { workspace = true }
+selium-kernel = { workspace = true }
+selium-messaging = { workspace = true }
+selium-net-hyper = { workspace = true }
+selium-net-quinn = { workspace = true }
+selium-userland = { workspace = true }
+selium-wasmtime = { workspace = true }
 tokio = { workspace = true, features = [
   "io-std",
   "io-util",
@@ -41,4 +41,9 @@ tracing-subscriber = { workspace = true, features = [
   "json",
   "std",
 ] }
-wasmtime = { workspace = true, features = ["async", "cranelift", "runtime", "std"] }
+wasmtime = { workspace = true, features = [
+  "async",
+  "cranelift",
+  "runtime",
+  "std"
+] }

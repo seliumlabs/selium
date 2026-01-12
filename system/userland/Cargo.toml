@@ -18,8 +18,8 @@ anyhow = { workspace = true }
 flatbuffers = { workspace = true }
 futures = { workspace = true, features = ["alloc", "std"] }
 rkyv = { workspace = true }
-selium-abi = { path = "../abi" }
-selium-userland-macros = { path = "macros" }
+selium-abi = { workspace = true }
+selium-userland-macros = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 tracing = { workspace = true }

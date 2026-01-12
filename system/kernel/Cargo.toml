@@ -15,7 +15,7 @@ futures-util = { workspace = true, features = ["alloc"] }
 libc = { workspace = true }
 parking_lot = { workspace = true }
 rkyv = { workspace = true }
-selium-abi = { path = "../abi" }
+selium-abi = { workspace = true }
 sharded-slab = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = [

@@ -7,7 +7,7 @@ on:
 
 jobs:
   publish:
-    name: Build and publish
+    name: Publish to crates.io
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
@@ -16,9 +16,6 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: cargo build
-        run: cargo build --release
 
       - name: cargo login
         run: echo ${{ secrets.CRATES_TOKEN }} | cargo login

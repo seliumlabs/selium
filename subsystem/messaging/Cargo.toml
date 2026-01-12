@@ -14,8 +14,8 @@ categories.workspace = true
 futures = { workspace = true, features = ["async-await", "std"] }
 loom = { workspace = true, features = ["futures"], optional = true }
 pin-project = { workspace = true }
-selium-abi = { path = "../../system/abi" }
-selium-kernel = { path = "../../system/kernel" }
+selium-abi = { workspace = true }
+selium-kernel = { workspace = true }
 stable-vec = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
