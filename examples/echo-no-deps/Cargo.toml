@@ -1,5 +1,5 @@
 [package]
-name = "selium-example-echo"
+name = "selium-example-echo-no-deps"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -11,7 +11,6 @@ crate-type = ["cdylib"]
 anyhow = { version = "1.0", default-features = false }
 flatbuffers = { version = "25.12", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["std"] }
-selium-switchboard = "0.1.0"
 selium-userland = "1.0.0-alpha.1"
 tracing = { version = "0.1", default-features = false }
 
