@@ -1,7 +1,7 @@
 use std::{io, process};
 
 use flatbuffers_build::BuilderOptions;
-use flatc::flatc;
+use flatc_fork::flatc;
 
 const SCHEMAS: [&str; 1] = ["schemas/request_reply.fbs"];
 

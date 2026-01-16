@@ -11,14 +11,14 @@ crate-type = ["cdylib"]
 anyhow = { workspace = true }
 cargo = { workspace = true, features = ["http-transport-reqwest"] }
 futures = { workspace = true, features = ["std"] }
-selium-abi = { path = "../../system/abi" }
-selium-remote-client = { path = "selium-modules/remote-client/client" }
+reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
+selium-remote-client = { workspace = true }
 selium-userland = { path = "../../system/userland" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [build-dependencies]
 flatbuffers-build = { workspace = true }
-flatc = { workspace = true }
+flatc-fork = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 anyhow = { workspace = true }

@@ -1,7 +1,10 @@
 //! End-to-end request/reply test for Selium.
 
 use std::{
-    env, fs,
+    env,
+    ffi::OsStr,
+    fs,
+    io,
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -11,13 +14,13 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use cargo::{
     core::{Shell, Workspace, compiler::CompileKind, compiler::UserIntent},
-    ops::{self, CompileFilter, CompileOptions, FilterRule, LibRule, Packages},
+    ops::{self, CompileFilter, CompileOptions, Packages},
     util::{GlobalContext, homedir},
 };
 use futures::StreamExt;
-use selium_abi::{AbiParam, AbiScalarType, AbiSignature, Capability};
 use selium_remote_client::{
-    Channel, Client, ClientConfigBuilder, ClientError, Process, ProcessBuilder, Subscriber,
+    AbiParam, AbiScalarType, AbiSignature, Capability, Channel, Client, ClientConfigBuilder,
+    ClientError, Process, ProcessBuilder, Subscriber,
 };
 use selium_userland::fbs::selium::logging as log_fb;
 use tokio::time::{sleep, timeout};
@@ -25,6 +28,11 @@ use tokio::time::{sleep, timeout};
 const REQUEST_REPLY_MODULE: &str = "selium_test_request_reply.wasm";
 const REMOTE_CLIENT_MODULE: &str = "selium_remote_client_server.wasm";
 const RUNTIME_BIN: &str = "selium-runtime";
+const RUNTIME_URL: &str =
+    "https://github.com/seliumlabs/selium/releases/latest/download/selium-runtime-x86_64-unknown-linux-gnu.tar.gz";
+const REMOTE_CLIENT_URL: &str = "https://github.com/seliumlabs/selium-modules/releases/latest/download/selium-remote-client-server-wasm32-unknown-unknown.tar.gz";
+const ARTIFACTS_DIR: &str = "request-reply-artifacts";
+const ARCHIVE_NAME: &str = "artifact.tar.gz";
 const SINGLETON_ENTRYPOINT: &str = "singleton_stub";
 const LOG_CHUNK_SIZE: u32 = 64 * 1024;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -129,29 +137,24 @@ fn generate_certs(runtime_path: &Path, work_dir: &Path) -> Result<()> {
 }
 
 fn build_runtime(workspace_root: &Path) -> Result<PathBuf> {
-    let filter = CompileFilter::new(
-        LibRule::False,
-        FilterRule::Just(vec![RUNTIME_BIN.to_string()]),
-        FilterRule::none(),
-        FilterRule::none(),
-        FilterRule::none(),
-    );
-    cargo_compile(workspace_root, "selium-runtime", None, filter)
-        .context("compile selium-runtime")?;
-    Ok(runtime_binary_path(workspace_root))
+    download_artifact(
+        workspace_root,
+        RUNTIME_URL,
+        "runtime",
+        RUNTIME_BIN,
+    )
+    .context("download selium-runtime")
 }
 
 fn build_remote_client() -> Result<PathBuf> {
-    let module_root = Path::new("selium-modules/remote-client/server");
-
-    cargo_compile(
-        module_root,
-        "selium-remote-client-server",
-        Some("wasm32-unknown-unknown"),
-        CompileFilter::lib_only(),
+    let workspace_root = workspace_root()?;
+    download_artifact(
+        &workspace_root,
+        REMOTE_CLIENT_URL,
+        "remote-client",
+        REMOTE_CLIENT_MODULE,
     )
-    .context("compile selium-remote-client-server")?;
-    Ok(wasm_module_path(module_root, REMOTE_CLIENT_MODULE))
+    .context("download selium-remote-client-server")
 }
 
 fn build_request_reply_module(workspace_root: &Path) -> Result<PathBuf> {
@@ -171,6 +174,83 @@ fn run_command(command: &mut Command, label: &str) -> Result<()> {
         bail!("{label} failed with status {status}");
     }
     Ok(())
+}
+
+fn download_artifact(
+    workspace_root: &Path,
+    url: &str,
+    subdir: &str,
+    expected_filename: &str,
+) -> Result<PathBuf> {
+    let artifacts_root = workspace_root.join("target").join(ARTIFACTS_DIR);
+    let artifact_root = artifacts_root.join(subdir);
+    if let Some(path) = find_artifact(&artifact_root, expected_filename)? {
+        return Ok(path);
+    }
+    if artifact_root.exists() {
+        fs::remove_dir_all(&artifact_root)
+            .with_context(|| format!("clean artifact dir {}", artifact_root.display()))?;
+    }
+    fs::create_dir_all(&artifact_root)
+        .with_context(|| format!("create artifact dir {}", artifact_root.display()))?;
+    let archive_path = artifact_root.join(ARCHIVE_NAME);
+    download_file(url, &archive_path)
+        .with_context(|| format!("download artifact from {url}"))?;
+    extract_archive(&archive_path, &artifact_root).context("extract artifact")?;
+    fs::remove_file(&archive_path)
+        .with_context(|| format!("remove archive {}", archive_path.display()))?;
+    find_artifact(&artifact_root, expected_filename)?.ok_or_else(|| {
+        anyhow!(
+            "locate artifact {expected_filename} in {}",
+            artifact_root.display()
+        )
+    })
+}
+
+fn download_file(url: &str, destination: &Path) -> Result<()> {
+    let client = reqwest::blocking::Client::builder()
+        .build()
+        .context("build http client")?;
+    let response = client
+        .get(url)
+        .send()
+        .context("send download request")?;
+    let mut response = response
+        .error_for_status()
+        .context("download response status")?;
+    let mut output =
+        fs::File::create(destination).with_context(|| format!("create {}", destination.display()))?;
+    io::copy(&mut response, &mut output).context("write download payload")?;
+    Ok(())
+}
+
+fn extract_archive(archive_path: &Path, destination: &Path) -> Result<()> {
+    let mut command = Command::new("tar");
+    command
+        .arg("-xzf")
+        .arg(archive_path)
+        .arg("-C")
+        .arg(destination);
+    run_command(&mut command, "extract artifact")
+}
+
+fn find_artifact(root: &Path, expected_filename: &str) -> Result<Option<PathBuf>> {
+    if !root.exists() {
+        return Ok(None);
+    }
+    let entries = fs::read_dir(root).with_context(|| format!("read dir {}", root.display()))?;
+    for entry in entries {
+        let entry = entry.context("read dir entry")?;
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_artifact(&path, expected_filename)? {
+                return Ok(Some(found));
+            }
+        } else if path.file_name() == Some(OsStr::new(expected_filename)) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
 }
 
 fn cargo_compile(
@@ -210,12 +290,6 @@ fn wasm_module_path(workspace_root: &Path, module_name: &str) -> PathBuf {
     workspace_root
         .join("target/wasm32-unknown-unknown/debug")
         .join(module_name)
-}
-
-fn runtime_binary_path(workspace_root: &Path) -> PathBuf {
-    workspace_root
-        .join("target/debug")
-        .join(format!("{}{}", RUNTIME_BIN, env::consts::EXE_SUFFIX))
 }
 
 fn copy_module(source: PathBuf, modules_dir: &Path) -> Result<PathBuf> {

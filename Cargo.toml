@@ -29,10 +29,11 @@ categories = ["development-tools", "virtualization", "wasm"]
 [workspace.dependencies]
 anyhow = { version = "1.0", default-features = false }
 blake3 = { version = "1.8", default-features = false }
+cargo = { version = "0.93", default-features = false }
 clap = { version = "4.5", default-features = false }
 flatbuffers = { version = "25.12", default-features = false }
 flatbuffers-build = { version = "0.2", default-features = false }
-flatc-fork = "0.5.0"
+flatc-fork = { version = "0.5.0", default-features = false }
 futures = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 http-body-util = { version = "0.1", default-features = false }
@@ -47,6 +48,7 @@ proc-macro2 = { version = "1.0", default-features = false }
 quinn = { version = "0.11", default-features = false }
 quote = { version = "1.0", default-features = false }
 rcgen = { version = "0.14", default-features = false }
+reqwest = { version = "0.12", default-features = false }
 rkyv = { version = "0.8", default-features = false }
 rustls = { version = "0.23", default-features = false }
 rustls-pki-types = { version = "1.13", default-features = false }
@@ -56,6 +58,7 @@ selium-kernel = { path = "system/kernel", version = "1.0.0-alpha.1" }
 selium-messaging = { path = "subsystem/messaging", version = "1.0.0-alpha.1" }
 selium-net-hyper = { path = "subsystem/net-hyper", version = "1.0.0-alpha.1" }
 selium-net-quinn = { path = "subsystem/net-quinn", version = "1.0.0-alpha.1" }
+selium-remote-client = { version = "0.1", default-features = false }
 selium-userland = { path = "system/userland", version = "1.0.0-alpha.1" }
 selium-userland-macros = { path = "system/userland/macros", version = "1.0.0-alpha.1" }
 selium-wasmtime = { path = "subsystem/wasmtime", version = "1.0.0-alpha.1" }
