@@ -11,7 +11,9 @@ categories:
       - bugfix
       - bug
   - title: 🧰 Maintenance
-    label: chore
+    labels:
+      - chore
+      - dependencies
 exclude-labels:
   - skip-log
 change-template: "* $TITLE @$AUTHOR (#$NUMBER)"
