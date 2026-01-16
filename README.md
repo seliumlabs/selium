@@ -5,8 +5,8 @@
 [![Build Status][build-badge]][build-url]
 [![Audit Status][audit-badge]][audit-url]
 
-[crates-badge]: https://img.shields.io/crates/v/selium.svg
-[crates-url]: https://crates.io/crates/selium
+[crates-badge]: https://img.shields.io/crates/v/selium-kernel.svg
+[crates-url]: https://crates.io/crates/selium-kernel
 [mpl-badge]: https://img.shields.io/badge/licence-MPL2-blue.svg
 [mpl-url]: https://github.com/seliumlabs/selium/blob/main/LICENCE
 [build-badge]: https://github.com/seliumlabs/selium/actions/workflows/ci.yml/badge.svg

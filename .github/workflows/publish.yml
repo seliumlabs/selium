@@ -1,13 +1,15 @@
 name: Publish project artifacts
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - v*
 
+permissions:
+  contents: write
+
 jobs:
-  publish:
+  crates-io:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     env:
@@ -23,3 +25,66 @@ jobs:
 
       - name: cargo publish
         run: cargo publish --workspace --keep-going
+
+  artifacts:
+    name: Publish release artifacts
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: cargo build
+        run: cargo build --release -p selium-runtime --target ${{ matrix.target }}
+
+      - name: package artifact (nix)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          target_dir="target/${{ matrix.target }}/release"
+          bin="selium-runtime"
+          out="selium-runtime-${{ matrix.target }}"
+          mkdir -p dist
+          cp "${target_dir}/${bin}" "dist/${bin}"
+          tar -C dist -czf "${out}.tar.gz" "${bin}"
+
+      - name: package artifact (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targetDir = "target\\${{ matrix.target }}\\release"
+          $bin = "selium-runtime.exe"
+          $out = "selium-runtime-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "$targetDir\\$bin" "dist\\$bin"
+          Push-Location dist
+          Compress-Archive -Path "$bin" -DestinationPath "..\\$out.zip"
+          Pop-Location
+
+      - name: upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            selium-runtime-*.tar.gz
+            selium-runtime-*.zip
