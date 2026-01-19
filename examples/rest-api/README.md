@@ -27,7 +27,7 @@ To control a Selium Runtime from the outside, we need the `remote-client` module
 git clone https://github.com/seliumlabs/selium-modules
 cd selium-modules/remote-client
 cargo build -p selium-remote-client-server --target wasm32-unknown-unknown
-cp target/wasm32-unknown-unknown/debug/selium_remote_client_server.wasm modules/
+cp target/wasm32-unknown-unknown/debug/selium_remote_client_server.wasm ../../modules/
 ```
 
 ### 4. Start the Selium Runtime
@@ -46,8 +46,10 @@ The long `--module` definition tells the runtime to compile and run the remote c
 In a fresh terminal, run:
 
 ```bash
+cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
-    start selium_example_http_rpc.wasm http_server \
+    --cert-dir ../../certs \
+    start selium_example_rest_api.wasm http_server \
     --attach \
     -a utf8:localhost -a u16:8080 \
     --capabilities NetHttpBind,NetHttpAccept,NetHttpRead,NetHttpWrite
@@ -60,8 +62,8 @@ cargo run -p selium-remote-cli -- \
 Last but not least, we can now query the HTTP server:
 
 ```bash
-$ curl localhost:8080 -d '{"password":"Its an illusion, Michael!"}'
-{"status":true}
+curl localhost:8080 -d '{"password":"Its an illusion, Michael!"}'
 ```
 
 You should see `curl` return some JSON with a truthy status, indicating that you cracked the code!
+> {"status":true}

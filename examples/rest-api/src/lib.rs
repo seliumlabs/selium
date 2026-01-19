@@ -92,17 +92,13 @@ fn request_read_state(payload: &[u8]) -> RequestReadState {
 
 fn body_from_request(payload: &[u8]) -> Result<&[u8], &'static str> {
     let header_end = header_end_index(payload).ok_or("request missing header terminator")?;
-    let headers = std::str::from_utf8(&payload[..header_end])
-        .map_err(|_| "invalid header encoding")?;
+    let headers =
+        std::str::from_utf8(&payload[..header_end]).map_err(|_| "invalid header encoding")?;
     let content_length = parse_content_length(headers)?;
     let body_start = header_end + HEADER_END.len();
-    let body = payload
-        .get(body_start..)
-        .ok_or("request body missing")?;
+    let body = payload.get(body_start..).ok_or("request body missing")?;
     match content_length {
-        Some(expected) => body
-            .get(..expected)
-            .ok_or("request body incomplete"),
+        Some(expected) => body.get(..expected).ok_or("request body incomplete"),
         None => Ok(body),
     }
 }
@@ -122,7 +118,8 @@ fn response_for_payload(payload: &[u8]) -> Vec<u8> {
         }
     };
 
-    let matched = request.password == PASSWORD_EXPECTED || request.password == PASSWORD_EXPECTED_ALT;
+    let matched =
+        request.password == PASSWORD_EXPECTED || request.password == PASSWORD_EXPECTED_ALT;
     let response_body = if matched {
         STATUS_OK_BODY
     } else {

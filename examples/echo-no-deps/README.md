@@ -29,7 +29,7 @@ To control a Selium Runtime from the outside, we need the `remote-client` module
 git clone https://github.com/seliumlabs/selium-modules
 cd selium-modules/remote-client
 cargo build -p selium-remote-client-server --target wasm32-unknown-unknown
-cp target/wasm32-unknown-unknown/debug/selium_remote_client_server.wasm modules/
+cp target/wasm32-unknown-unknown/debug/selium_remote_client_server.wasm ../../modules/
 ```
 
 It is not possible to run this example without the remote client dependency, because we need to observe the server output before running the client (see below). For situations where this isn't necessary, you can run Selium Runtime without any dependencies.
@@ -52,15 +52,16 @@ In a fresh terminal, run:
 ```bash
 cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
-    start selium_example_echo.wasm echo_server \
+    --cert-dir ../../certs \
+    start selium_example_echo_no_deps.wasm echo_server \
     --attach \
-    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup \
-    --cert-dir ../../certs
+    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter
 ```
 
 `--attach` tells the CLI to subscribe to the example's log channel so we can see what it's doing. `-a` identifies an argument to pass; in our case the HTTP address to bind. Finally we grant the example module the capability to create/read/write an HTTP socket.
 
-**Note the `request_id` that is logged to the console**.
+**Note the `request_id` that is logged to the console:**
+> [INFO] selium_example_echo_no_deps: echo server ready request_id=2
 
 ### 6. Run the example echo client
 
@@ -68,9 +69,9 @@ Last but not least, we can run the echo client, passing the server's shared requ
 
 ```bash
 cargo run -p selium-remote-cli -- \
-    start selium_example_echo.wasm echo_client \
-    --attach \
-    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup \
     --cert-dir ../../certs \
-    --arg resource:REQUEST_ID \
+    start selium_example_echo_no_deps.wasm echo_client \
+    --attach \
+    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter \
+    --arg resource:REQUEST_ID
 ```
