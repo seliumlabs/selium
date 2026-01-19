@@ -4,9 +4,7 @@ pub mod examples {
   use super::*;
   pub mod echo {
     use super::*;
-    mod echo_request_generated;
-    pub use self::echo_request_generated::*;
-    mod echo_response_generated;
-    pub use self::echo_response_generated::*;
+    mod echo_msg_generated;
+    pub use self::echo_msg_generated::*;
   } // echo
 } // examples

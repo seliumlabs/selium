@@ -1,8 +1,6 @@
-# Echo Example (no dependencies)
+# REST API Example
 
-A simple echo client/server that demonstrates how to build a typed request/response flow without the Switchboard or Atlas Selium modules.
-
-**Note that this approach is not recommended for general use**, but if you need to keep the footprint to a minimum, this is how you'd do it.
+A simple REST API over HTTP.
 
 ## Usage
 
@@ -17,8 +15,8 @@ cargo run -p selium-runtime generate-certs
 ### 2. Build this example
 
 ```bash
-cargo build -p selium-example-echo-no-deps --target wasm32-unknown-unknown
-cp target/wasm32-unknown-unknown/debug/selium_example_echo_no_deps.wasm modules/
+cargo build -p selium-example-rest-api --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/debug/selium_example_rest_api.wasm modules/
 ```
 
 ### 3. Build runtime dependencies
@@ -32,8 +30,6 @@ cargo build -p selium-remote-client-server --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/debug/selium_remote_client_server.wasm modules/
 ```
 
-It is not possible to run this example without the remote client dependency, because we need to observe the server output before running the client (see below). For situations where this isn't necessary, you can run Selium Runtime without any dependencies.
-
 ### 4. Start the Selium Runtime
 
 In a fresh terminal, run:
@@ -45,32 +41,27 @@ cargo run -p selium-runtime -- \
 
 The long `--module` definition tells the runtime to compile and run the remote client dependency with capabilities to create/read/write channels, and create/read/write QUIC sockets. Finally we provide two arguments to the remote client server, telling it to bind to localhost:7000.
 
-### 5. Start the example echo server
+### 5. Start this example
 
 In a fresh terminal, run:
 
 ```bash
-cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
-    start selium_example_echo.wasm echo_server \
+    start selium_example_http_rpc.wasm http_server \
     --attach \
-    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup \
-    --cert-dir ../../certs
+    -a utf8:localhost -a u16:8080 \
+    --capabilities NetHttpBind,NetHttpAccept,NetHttpRead,NetHttpWrite
 ```
 
 `--attach` tells the CLI to subscribe to the example's log channel so we can see what it's doing. `-a` identifies an argument to pass; in our case the HTTP address to bind. Finally we grant the example module the capability to create/read/write an HTTP socket.
 
-**Note the `request_id` that is logged to the console**.
+### 6. Test the example
 
-### 6. Run the example echo client
-
-Last but not least, we can run the echo client, passing the server's shared request handle in place of `REQUEST_ID`:
+Last but not least, we can now query the HTTP server:
 
 ```bash
-cargo run -p selium-remote-cli -- \
-    start selium_example_echo.wasm echo_client \
-    --attach \
-    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup \
-    --cert-dir ../../certs \
-    --arg resource:REQUEST_ID \
+$ curl localhost:8080 -d '{"password":"Its an illusion, Michael!"}'
+{"status":true}
 ```
+
+You should see `curl` return some JSON with a truthy status, indicating that you cracked the code!

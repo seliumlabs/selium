@@ -1,16 +1,9 @@
 namespace examples.echo;
 
-table EchoRequest {
-  /// Directory entry where the caller has registered a shared response channel.
-  response_channel:uint64;
-  /// Payload to echo back to the caller.
+table EchoMsg {
+  /// The payload.
   msg:string;
 }
 
-table EchoResponse {
-  /// The echoed payload.
-  msg:string;
-}
-
-root_type EchoRequest;
+root_type EchoMsg;
 file_identifier "ECHO";

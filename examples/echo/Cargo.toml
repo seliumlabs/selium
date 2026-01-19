@@ -8,13 +8,14 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-anyhow = { version = "1.0", default-features = false }
-flatbuffers = { version = "25.12", default-features = false }
-futures = { version = "0.3", default-features = false, features = ["std"] }
-selium-switchboard = "0.1.0"
-selium-userland = "1.0.0-alpha.1"
-tracing = { version = "0.1", default-features = false }
+anyhow = { workspace = true }
+flatbuffers = { workspace = true }
+futures = { workspace = true, features = ["std"] }
+selium-atlas = { workspace = true }
+selium-switchboard = { workspace = true }
+selium-userland = { version = "1.0.0-alpha.1" }
+tracing = { workspace = true }
 
 [build-dependencies]
-flatbuffers-build = "0.2.4"
-flatc-fork = "0.5.0"
+flatbuffers-build = { workspace = true }
+flatc-fork = { workspace = true }
