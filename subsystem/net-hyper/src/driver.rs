@@ -164,6 +164,7 @@ pub(crate) struct OutboundState {
 }
 
 pub(crate) struct InboundState {
+    pub(crate) protocol: NetProtocol,
     pub(crate) request: Mutex<VecDeque<u8>>,
     pub(crate) response: Mutex<Vec<u8>>,
     pub(crate) responder: Mutex<Option<oneshot::Sender<Vec<u8>>>>,
@@ -511,6 +512,7 @@ impl NetCapability for HyperDriver {
             .ok_or(HyperError::ListenerClosed)?;
 
             let state = Arc::new(InboundState {
+                protocol: listener.protocol,
                 request: Mutex::new(pending.request_bytes.into()),
                 response: Mutex::new(Vec::new()),
                 responder: Mutex::new(Some(pending.responder)),

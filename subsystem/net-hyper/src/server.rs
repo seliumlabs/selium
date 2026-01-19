@@ -44,6 +44,29 @@ pub(crate) fn read_inbound(
 pub(crate) fn write_inbound(state: &InboundState, bytes: &[u8]) -> Result<(), HyperError> {
     let mut guard = state.response.lock().map_err(|_| HyperError::Lock)?;
     guard.extend_from_slice(bytes);
+    let mut responder_guard = state.responder.lock().map_err(|_| HyperError::Lock)?;
+    let ready = if responder_guard.is_some() {
+        match parse_response(state.protocol, guard.as_slice()) {
+            Ok(_) => true,
+            Err(HyperError::HttpIncomplete) => false,
+            Err(_) => true,
+        }
+    } else {
+        false
+    };
+    if !ready {
+        return Ok(());
+    }
+
+    let response_bytes = std::mem::take(&mut *guard);
+    let responder = responder_guard.take();
+    drop(guard);
+    drop(responder_guard);
+    if let Some(responder) = responder
+        && responder.send(response_bytes).is_err()
+    {
+        tracing::debug!("response receiver dropped before completion");
+    }
     Ok(())
 }
 
