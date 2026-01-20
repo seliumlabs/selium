@@ -15,8 +15,8 @@ cargo run -p selium-runtime generate-certs
 ### 2. Build this example
 
 ```bash
-cargo build -p selium-example-edge-waf --target wasm32-unknown-unknown
-cp target/wasm32-unknown-unknown/debug/selium_example_edge_waf.wasm modules/
+cargo build -p selium-example-waf --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/debug/selium_example_waf.wasm modules/
 ```
 
 ### 3. Build runtime dependencies
@@ -65,39 +65,43 @@ Start the following entrypoints in order (each in a fresh terminal):
 cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
     --cert-dir ../../certs \
-    start selium_example_edge_waf.wasm edge_ingress_stub \
+    start selium_example_waf.wasm edge_ingress_stub \
     --attach \
     --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
 ```
 
 ```bash
+cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
     --cert-dir ../../certs \
-    start selium_example_edge_waf.wasm validate_requests \
+    start selium_example_waf.wasm validate_requests \
     --attach \
     --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
 ```
 
 ```bash
+cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
     --cert-dir ../../certs \
-    start selium_example_edge_waf.wasm result_router \
+    start selium_example_waf.wasm result_router \
     --attach \
     --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
 ```
 
 ```bash
+cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
     --cert-dir ../../certs \
-    start selium_example_edge_waf.wasm alert_sink \
+    start selium_example_waf.wasm alert_sink \
     --attach \
     --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
 ```
 
 ```bash
+cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
     --cert-dir ../../certs \
-    start selium_example_edge_waf.wasm audit_sink \
+    start selium_example_waf.wasm audit_sink \
     --attach \
     --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
 ```

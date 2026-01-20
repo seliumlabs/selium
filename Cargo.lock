@@ -1780,7 +1780,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "selium-example-edge-waf"
+name = "selium-example-rest-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "selium-userland 1.0.0-alpha.2",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "selium-example-waf"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1791,18 +1803,6 @@ dependencies = [
  "selium-atlas",
  "selium-switchboard",
  "selium-userland 1.0.0-alpha.1",
- "tracing",
-]
-
-[[package]]
-name = "selium-example-rest-api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "selium-userland 1.0.0-alpha.2",
- "serde",
- "serde_json",
  "tracing",
 ]
 
