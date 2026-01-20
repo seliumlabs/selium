@@ -1,0 +1,42 @@
+namespace examples.edge_waf;
+
+/// Minimal HTTP request metadata captured at the edge.
+table HttpRequestMeta {
+  /// Request identifier.
+  request_id:ulong;
+  /// HTTP method.
+  method:string;
+  /// Request path.
+  path:string;
+  /// Client IP address.
+  client_ip:string;
+}
+
+/// Verdict produced by edge screening.
+table Verdict {
+  /// Request identifier.
+  request_id:ulong;
+  /// Decision outcome (allow or block).
+  decision:string;
+  /// Decision rationale.
+  reason:string;
+}
+
+/// Alert emitted for suspicious traffic.
+table SecurityAlert {
+  /// Request identifier.
+  request_id:ulong;
+  /// Human-readable summary.
+  summary:string;
+}
+
+/// Audit record emitted for every request.
+table AuditRecord {
+  /// Request identifier.
+  request_id:ulong;
+  /// Verdict summary.
+  verdict:string;
+}
+
+root_type HttpRequestMeta;
+file_identifier "WAFR";

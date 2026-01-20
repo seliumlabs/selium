@@ -4,6 +4,7 @@ members = [
   "examples/echo",
   "examples/echo-no-deps",
   "examples/rest-api",
+  "examples/waf",
   "subsystem/filesystem-store",
   "subsystem/messaging",
   "subsystem/net-hyper",

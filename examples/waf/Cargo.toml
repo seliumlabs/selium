@@ -1,0 +1,21 @@
+[package]
+name = "selium-example-waf"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+flatbuffers = { workspace = true }
+futures = { workspace = true, features = ["std"] }
+selium-atlas = { workspace = true }
+selium-switchboard = { workspace = true }
+selium-userland = { version = "1.0.0-alpha.1" }
+tracing = { workspace = true }
+
+[build-dependencies]
+flatbuffers-build = { workspace = true }
+flatc-fork = { workspace = true }

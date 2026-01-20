@@ -1780,6 +1780,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "selium-example-edge-waf"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flatbuffers",
+ "flatbuffers-build",
+ "flatc-fork",
+ "futures",
+ "selium-atlas",
+ "selium-switchboard",
+ "selium-userland 1.0.0-alpha.1",
+ "tracing",
+]
+
+[[package]]
 name = "selium-example-rest-api"
 version = "0.1.0"
 dependencies = [
