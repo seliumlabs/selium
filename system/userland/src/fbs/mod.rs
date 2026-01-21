@@ -13,6 +13,17 @@ pub mod selium {
     mod span_generated;
     pub use self::span_generated::*;
   }
+  pub mod net {
+    use super::*;
+    mod net_connection_generated;
+    pub use self::net_connection_generated::*;
+    mod net_protocol_generated;
+    pub use self::net_protocol_generated::*;
+    mod net_reader_generated;
+    pub use self::net_reader_generated::*;
+    mod net_writer_generated;
+    pub use self::net_writer_generated::*;
+  }
   pub mod result {
     use super::*;
     mod flat_result_generated;

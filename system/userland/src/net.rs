@@ -24,6 +24,7 @@ use core::{
     task::{Context, Poll},
 };
 use std::{
+    borrow::Cow,
     fmt::{Debug, Formatter},
     task::ready,
 };
@@ -38,6 +39,8 @@ use selium_abi::{
 use crate::{
     FromHandle,
     driver::{DriverError, DriverFuture, RKYV_VEC_OVERHEAD, RkyvDecoder, encode_args},
+    encoding::{FlatMsg, HasSchema, SchemaDescriptor},
+    schema,
 };
 
 /// Network protocol identifiers supported by the userland helpers.
@@ -51,9 +54,13 @@ pub use selium_abi::TlsServerBundle;
 pub type NetError = DriverError;
 /// Raw frame yielded by network readers.
 pub type Frame = IoFrame;
-type AcceptFuture = Pin<Box<dyn Future<Output = Result<NetAcceptReply, NetError>> + 'static>>;
-type FrameReadFuture = Pin<Box<dyn Future<Output = Result<IoFrame, NetError>> + 'static>>;
-type WriteFuture = Pin<Box<dyn Future<Output = Result<GuestUint, NetError>> + 'static>>;
+type AcceptFuture =
+    Pin<Box<dyn Future<Output = Result<NetAcceptReply, NetError>> + Send + 'static>>;
+type FrameReadFuture = Pin<Box<dyn Future<Output = Result<IoFrame, NetError>> + Send + 'static>>;
+type WriteFuture = Pin<Box<dyn Future<Output = Result<GuestUint, NetError>> + Send + 'static>>;
+type ShareFuture =
+    Pin<Box<dyn Future<Output = Result<GuestResourceId, NetError>> + Send + 'static>>;
+type AttachFuture = Pin<Box<dyn Future<Output = Result<GuestUint, NetError>> + Send + 'static>>;
 
 /// Maximum reply size for control-plane hostcalls.
 const NET_REPLY_CAPACITY: usize = 256;
@@ -110,19 +117,68 @@ pub struct Connection {
     remote_addr: String,
 }
 
+enum ReaderInflight {
+    Attach(AttachFuture),
+    Read(FrameReadFuture),
+}
+
+enum WriterInflight {
+    Attach(AttachFuture),
+    Write(WriteFuture),
+}
+
 /// Reader side of a network connection.
 pub struct Reader {
     handle: GuestUint,
     chunk: usize,
     protocol: NetProtocol,
-    inflight: Option<FrameReadFuture>,
+    shared: Option<GuestResourceId>,
+    attached: bool,
+    inflight: Option<ReaderInflight>,
 }
 
 /// Writer side of a network connection.
 pub struct Writer {
     handle: GuestUint,
     protocol: NetProtocol,
-    inflight: Option<WriteFuture>,
+    shared: Option<GuestResourceId>,
+    attached: bool,
+    inflight: Option<WriterInflight>,
+}
+
+#[derive(Clone, Debug)]
+#[schema(
+    path = "schemas/net.fbs",
+    ty = "selium.net.NetReader",
+    binding = "crate::fbs::selium::net::NetReader"
+)]
+struct NetReaderWire {
+    shared_handle: u64,
+    protocol: u8,
+    chunk_size: u32,
+}
+
+#[derive(Clone, Debug)]
+#[schema(
+    path = "schemas/net.fbs",
+    ty = "selium.net.NetWriter",
+    binding = "crate::fbs::selium::net::NetWriter"
+)]
+struct NetWriterWire {
+    shared_handle: u64,
+    protocol: u8,
+}
+
+#[derive(Clone, Debug)]
+#[schema(
+    path = "schemas/net.fbs",
+    ty = "selium.net.NetConnection",
+    binding = "crate::fbs::selium::net::NetConnection"
+)]
+struct NetConnectionWire {
+    reader: Option<NetReaderWire>,
+    writer: Option<NetWriterWire>,
+    remote_addr: String,
 }
 
 struct ConnectionHandles {
@@ -354,6 +410,13 @@ impl Connection {
         (&mut self.reader, &mut self.writer)
     }
 
+    /// Prepare the connection for transfer by sharing its handles.
+    pub async fn prepare_for_transfer(&mut self) -> Result<(), NetError> {
+        self.reader.share().await?;
+        self.writer.share().await?;
+        Ok(())
+    }
+
     /// Receive the next frame from the remote peer.
     pub async fn recv(&mut self) -> Result<Option<Frame>, NetError> {
         self.reader.next().await.transpose()
@@ -395,13 +458,64 @@ impl Reader {
     }
 
     /// Retrieve the raw reader handle.
+    ///
+    /// Deserialised readers attach lazily, so the handle may be zero until first use.
     pub fn handle(&self) -> GuestUint {
         self.handle
+    }
+
+    /// Share the reader handle so it can be transferred to another guest.
+    pub async fn share(&mut self) -> Result<GuestResourceId, NetError> {
+        if self.inflight.is_some() {
+            return Err(NetError::InvalidArgument);
+        }
+        if let Some(shared) = self.shared {
+            return Ok(shared);
+        }
+        if !self.attached {
+            return Err(NetError::InvalidArgument);
+        }
+        let shared = share_handle(self.handle)?.await?;
+        self.shared = Some(shared);
+        Ok(shared)
+    }
+
+    fn poll_attach(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), NetError>> {
+        if self.attached {
+            return Poll::Ready(Ok(()));
+        }
+
+        if self.inflight.is_none() {
+            let shared = self.shared.ok_or(NetError::InvalidArgument)?;
+            let fut = attach_shared_handle(shared)?;
+            self.inflight = Some(ReaderInflight::Attach(fut));
+        }
+
+        match self.inflight.as_mut() {
+            Some(ReaderInflight::Attach(fut)) => match fut.as_mut().poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(result) => {
+                    self.inflight = None;
+                    let handle = result?;
+                    self.handle = handle;
+                    self.attached = true;
+                    Poll::Ready(Ok(()))
+                }
+            },
+            Some(ReaderInflight::Read(_)) => Poll::Ready(Err(NetError::InvalidArgument)),
+            None => Poll::Ready(Err(NetError::InvalidArgument)),
+        }
     }
 
     fn poll_frame(&mut self, len: usize, cx: &mut Context<'_>) -> Poll<Result<Frame, NetError>> {
         if len == 0 {
             return Poll::Ready(Err(NetError::InvalidArgument));
+        }
+
+        match self.poll_attach(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+            Poll::Ready(Ok(())) => {}
         }
 
         if self.inflight.is_none() {
@@ -424,11 +538,12 @@ impl Reader {
                 Ok(fut) => fut,
                 Err(err) => return Poll::Ready(Err(err)),
             };
-            self.inflight = Some(fut);
+            self.inflight = Some(ReaderInflight::Read(fut));
         }
 
         let fut = match self.inflight.as_mut() {
-            Some(fut) => fut,
+            Some(ReaderInflight::Read(fut)) => fut,
+            Some(ReaderInflight::Attach(_)) => return Poll::Pending,
             None => return Poll::Ready(Err(NetError::InvalidArgument)),
         };
 
@@ -463,8 +578,53 @@ impl Stream for Reader {
 
 impl Writer {
     /// Retrieve the raw writer handle.
+    ///
+    /// Deserialised writers attach lazily, so the handle may be zero until first use.
     pub fn handle(&self) -> GuestUint {
         self.handle
+    }
+
+    /// Share the writer handle so it can be transferred to another guest.
+    pub async fn share(&mut self) -> Result<GuestResourceId, NetError> {
+        if self.inflight.is_some() {
+            return Err(NetError::InvalidArgument);
+        }
+        if let Some(shared) = self.shared {
+            return Ok(shared);
+        }
+        if !self.attached {
+            return Err(NetError::InvalidArgument);
+        }
+        let shared = share_handle(self.handle)?.await?;
+        self.shared = Some(shared);
+        Ok(shared)
+    }
+
+    fn poll_attach(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), NetError>> {
+        if self.attached {
+            return Poll::Ready(Ok(()));
+        }
+
+        if self.inflight.is_none() {
+            let shared = self.shared.ok_or(NetError::InvalidArgument)?;
+            let fut = attach_shared_handle(shared)?;
+            self.inflight = Some(WriterInflight::Attach(fut));
+        }
+
+        match self.inflight.as_mut() {
+            Some(WriterInflight::Attach(fut)) => match fut.as_mut().poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(result) => {
+                    self.inflight = None;
+                    let handle = result?;
+                    self.handle = handle;
+                    self.attached = true;
+                    Poll::Ready(Ok(()))
+                }
+            },
+            Some(WriterInflight::Write(_)) => Poll::Ready(Err(NetError::InvalidArgument)),
+            None => Poll::Ready(Err(NetError::InvalidArgument)),
+        }
     }
 }
 
@@ -473,20 +633,27 @@ impl Sink<Vec<u8>> for Writer {
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let this = self.get_mut();
+        match this.poll_attach(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+            Poll::Ready(Ok(())) => {}
+        }
+
         match this.inflight.as_mut() {
-            Some(fut) => match fut.as_mut().poll(cx) {
+            Some(WriterInflight::Write(fut)) => match fut.as_mut().poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(result) => {
                     this.inflight = None;
                     Poll::Ready(result.map(|_| ()))
                 }
             },
+            Some(WriterInflight::Attach(_)) => Poll::Pending,
             None => Poll::Ready(Ok(())),
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, payload: Vec<u8>) -> Result<(), Self::Error> {
-        if self.inflight.is_some() {
+        if !self.attached || self.inflight.is_some() {
             return Err(NetError::InvalidArgument);
         }
 
@@ -502,15 +669,27 @@ impl Sink<Vec<u8>> for Writer {
         let encoded = encode_args(&args)?;
         let fut = write_future(self.protocol, &encoded)?;
 
-        self.inflight = Some(fut);
+        self.inflight = Some(WriterInflight::Write(fut));
 
         Ok(())
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if let Some(fut) = self.as_mut().get_mut().inflight.as_mut() {
-            ready!(fut.as_mut().poll(cx))?;
-            self.as_mut().get_mut().inflight = None;
+        let this = self.as_mut().get_mut();
+        match this.poll_attach(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+            Poll::Ready(Ok(())) => {}
+        }
+
+        if let Some(inflight) = this.inflight.as_mut() {
+            match inflight {
+                WriterInflight::Write(fut) => {
+                    ready!(fut.as_mut().poll(cx))?;
+                    this.inflight = None;
+                }
+                WriterInflight::Attach(_) => return Poll::Pending,
+            }
         }
 
         Poll::Ready(Ok(()))
@@ -518,6 +697,144 @@ impl Sink<Vec<u8>> for Writer {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.poll_flush(cx)
+    }
+}
+
+impl NetReaderWire {
+    fn from_reader(reader: &Reader) -> Result<Self, NetError> {
+        if reader.inflight.is_some() {
+            return Err(NetError::InvalidArgument);
+        }
+        let shared = reader.shared.ok_or(NetError::InvalidArgument)?;
+        let chunk_size = u32::try_from(reader.chunk).map_err(|_| NetError::InvalidArgument)?;
+        Ok(Self {
+            shared_handle: shared,
+            protocol: protocol_to_u8(reader.protocol),
+            chunk_size,
+        })
+    }
+
+    fn into_reader(self) -> Result<Reader, NetError> {
+        let protocol = protocol_from_u8(self.protocol)?;
+        if self.shared_handle == 0 {
+            return Err(NetError::InvalidArgument);
+        }
+        let mut chunk = usize::try_from(self.chunk_size).map_err(|_| NetError::InvalidArgument)?;
+        if chunk == 0 {
+            chunk = 1;
+        }
+        Ok(Reader {
+            handle: 0,
+            chunk,
+            protocol,
+            shared: Some(self.shared_handle),
+            attached: false,
+            inflight: None,
+        })
+    }
+}
+
+impl NetWriterWire {
+    fn from_writer(writer: &Writer) -> Result<Self, NetError> {
+        if writer.inflight.is_some() {
+            return Err(NetError::InvalidArgument);
+        }
+        let shared = writer.shared.ok_or(NetError::InvalidArgument)?;
+        Ok(Self {
+            shared_handle: shared,
+            protocol: protocol_to_u8(writer.protocol),
+        })
+    }
+
+    fn into_writer(self) -> Result<Writer, NetError> {
+        let protocol = protocol_from_u8(self.protocol)?;
+        if self.shared_handle == 0 {
+            return Err(NetError::InvalidArgument);
+        }
+        Ok(Writer {
+            handle: 0,
+            protocol,
+            shared: Some(self.shared_handle),
+            attached: false,
+            inflight: None,
+        })
+    }
+}
+
+impl NetConnectionWire {
+    fn from_connection(conn: &Connection) -> Result<Self, NetError> {
+        Ok(Self {
+            reader: Some(NetReaderWire::from_reader(&conn.reader)?),
+            writer: Some(NetWriterWire::from_writer(&conn.writer)?),
+            remote_addr: conn.remote_addr.clone(),
+        })
+    }
+
+    fn into_connection(self) -> Result<Connection, NetError> {
+        let reader = self.reader.ok_or(NetError::InvalidArgument)?;
+        let writer = self.writer.ok_or(NetError::InvalidArgument)?;
+        Ok(Connection {
+            reader: reader.into_reader()?,
+            writer: writer.into_writer()?,
+            remote_addr: self.remote_addr,
+        })
+    }
+}
+
+impl HasSchema for Reader {
+    const SCHEMA: SchemaDescriptor = NetReaderWireSchema;
+}
+
+impl FlatMsg for Reader {
+    fn encode(value: &Self) -> Vec<u8> {
+        match NetReaderWire::from_reader(value) {
+            Ok(wire) => FlatMsg::encode(&wire),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer> {
+        let wire: NetReaderWire = FlatMsg::decode(bytes)?;
+        wire.into_reader()
+            .map_err(|_| invalid_flatbuffer("net_reader_wire"))
+    }
+}
+
+impl HasSchema for Writer {
+    const SCHEMA: SchemaDescriptor = NetWriterWireSchema;
+}
+
+impl FlatMsg for Writer {
+    fn encode(value: &Self) -> Vec<u8> {
+        match NetWriterWire::from_writer(value) {
+            Ok(wire) => FlatMsg::encode(&wire),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer> {
+        let wire: NetWriterWire = FlatMsg::decode(bytes)?;
+        wire.into_writer()
+            .map_err(|_| invalid_flatbuffer("net_writer_wire"))
+    }
+}
+
+impl HasSchema for Connection {
+    const SCHEMA: SchemaDescriptor = NetConnectionWireSchema;
+}
+
+impl FlatMsg for Connection {
+    fn encode(value: &Self) -> Vec<u8> {
+        match NetConnectionWire::from_connection(value) {
+            Ok(wire) => FlatMsg::encode(&wire),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer> {
+        let wire: NetConnectionWire = FlatMsg::decode(bytes)?;
+        wire.into_connection()
+            .map_err(|_| invalid_flatbuffer("net_connection_wire"))
     }
 }
 
@@ -671,11 +988,15 @@ fn connection_from_reply(
         handle: guest_handle(handles.reader)?,
         chunk,
         protocol,
+        shared: None,
+        attached: true,
         inflight: None,
     };
     let writer = Writer {
         handle: guest_handle(handles.writer)?,
         protocol,
+        shared: None,
+        attached: true,
         inflight: None,
     };
 
@@ -688,6 +1009,46 @@ fn connection_from_reply(
 
 fn guest_handle(handle: GuestResourceId) -> Result<GuestUint, NetError> {
     GuestUint::try_from(handle).map_err(|_| NetError::InvalidArgument)
+}
+
+fn protocol_to_u8(protocol: NetProtocol) -> u8 {
+    protocol as u8
+}
+
+fn protocol_from_u8(value: u8) -> Result<NetProtocol, NetError> {
+    match value {
+        0 => Ok(NetProtocol::Quic),
+        1 => Ok(NetProtocol::Http),
+        2 => Ok(NetProtocol::Https),
+        _ => Err(NetError::InvalidArgument),
+    }
+}
+
+fn share_handle(handle: GuestUint) -> Result<ShareFuture, NetError> {
+    let encoded = encode_args(&handle)?;
+    let fut = DriverFuture::<handle_share::Module, RkyvDecoder<GuestResourceId>>::new(
+        &encoded,
+        8,
+        RkyvDecoder::new(),
+    )?;
+    Ok(Box::pin(fut))
+}
+
+fn attach_shared_handle(handle: GuestResourceId) -> Result<AttachFuture, NetError> {
+    let encoded = encode_args(&handle)?;
+    let fut = DriverFuture::<handle_attach::Module, RkyvDecoder<GuestUint>>::new(
+        &encoded,
+        8,
+        RkyvDecoder::new(),
+    )?;
+    Ok(Box::pin(fut))
+}
+
+fn invalid_flatbuffer(reason: &'static str) -> flatbuffers::InvalidFlatbuffer {
+    flatbuffers::InvalidFlatbuffer::MissingRequiredField {
+        required: Cow::Borrowed(reason),
+        error_trace: Default::default(),
+    }
 }
 
 fn ensure_supported(protocol: NetProtocol) -> Result<(), NetError> {
@@ -766,6 +1127,8 @@ fn accept_future_with_args(
     }
 }
 
+driver_module!(handle_share, CHANNEL_SHARE, "selium::channel::share");
+driver_module!(handle_attach, CHANNEL_ATTACH, "selium::channel::attach");
 driver_module!(net_quic_bind, NET_QUIC_BIND, "selium::net::quic::bind");
 driver_module!(
     net_quic_accept,
@@ -823,6 +1186,8 @@ mod tests {
             handle: 1,
             chunk: 4,
             protocol: NetProtocol::Quic,
+            shared: None,
+            attached: true,
             inflight: None,
         }
         .with_chunk_size(0);

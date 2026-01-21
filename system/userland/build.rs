@@ -3,7 +3,11 @@ use std::{ffi::OsStr, fs, path::Path};
 use flatbuffers_build::BuilderOptions;
 use flatc_fork::flatc;
 
-const SCHEMAS: [&str; 2] = ["schemas/result.fbs", "schemas/logging.fbs"];
+const SCHEMAS: [&str; 3] = [
+    "schemas/result.fbs",
+    "schemas/logging.fbs",
+    "schemas/net.fbs",
+];
 
 fn main() {
     println!("cargo::rerun-if-changed=schemas/");
