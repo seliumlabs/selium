@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "examples/echo",
   "examples/echo-no-deps",
+  "examples/load-balancer",
   "examples/rest-api",
   "examples/waf",
   "subsystem/filesystem-store",
@@ -60,7 +61,7 @@ selium-kernel = { path = "system/kernel", version = "1.0.0-alpha.2" }
 selium-messaging = { path = "subsystem/messaging", version = "1.0.0-alpha.2" }
 selium-net-hyper = { path = "subsystem/net-hyper", version = "1.0.0-alpha.2" }
 selium-net-quinn = { path = "subsystem/net-quinn", version = "1.0.0-alpha.2" }
-selium-switchboard = { version = "0.1.0", default-features = false }
+selium-switchboard = { version = "0.2", default-features = false }
 selium-userland = { path = "system/userland", version = "1.0.0-alpha.2" }
 selium-userland-macros = { path = "system/userland/macros", version = "1.0.0-alpha.2" }
 selium-wasmtime = { path = "subsystem/wasmtime", version = "1.0.0-alpha.2" }

@@ -1,6 +1,6 @@
-# Echo Example
+# Load Balancer Example
 
-A simple echo client/server that demonstrates how to build a typed request/response flow using the Switchboard and Atlas modules.
+A demo load balancer that combines HTTP ingress with fanout messaging.
 
 ## Usage
 
@@ -15,8 +15,8 @@ cargo run -p selium-runtime generate-certs
 ### 2. Build this example
 
 ```bash
-cargo build -p selium-example-echo --target wasm32-unknown-unknown
-cp target/wasm32-unknown-unknown/debug/selium_example_echo.wasm modules/
+cargo build -p selium-example-load-balancer --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/debug/selium_example_load_balancer.wasm modules/
 ```
 
 ### 3. Build runtime dependencies
@@ -30,7 +30,7 @@ cargo build -p selium-remote-client-server --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/debug/selium_remote_client_server.wasm ../../modules/
 ```
 
-Then, to automatically manage channels and provide composable messaging types, we need the `switchboard` module:
+Then, to manage channel wiring, we need the `switchboard` module:
 
 ```bash
 cd ../switchboard
@@ -38,7 +38,7 @@ cargo build -p selium-switchboard-server --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/debug/selium_switchboard_server.wasm ../../modules/
 ```
 
-Finally, to discover the example server, we need the `atlas` module:
+Finally, to register and discover endpoints, we need the `atlas` module:
 
 ```bash
 cd ../atlas
@@ -57,9 +57,7 @@ cargo run -p selium-runtime -- \
     --module 'path=selium_atlas_server.wasm;capabilities=ChannelLifecycle,ChannelReader,ChannelWriter,SingletonRegistry'
 ```
 
-The long `--module` definitions tell the runtime to compile and run the remote client, switchboard, and atlas dependencies with their respective required capabilities. The remote client definition also includes two arguments, indicating that it should bind to localhost:7000.
-
-### 5. Start the example echo server
+### 5. Start the load balancer
 
 In a fresh terminal, run:
 
@@ -67,22 +65,33 @@ In a fresh terminal, run:
 cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
     --cert-dir ../../certs \
-    start selium_example_echo.wasm echo_server \
+    start selium_example_load_balancer.wasm load_balancer \
     --attach \
-    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
+    -a utf8:localhost -a u16:8080 \
+    --capabilities ChannelLifecycle,ChannelWriter,NetQuicAccept,NetQuicBind,SingletonLookup
 ```
 
-`--attach` tells the CLI to subscribe to the example's log channel so we can see what it's doing.
+`--attach` tells the CLI to subscribe to the example's log channel so we can see what it's doing. `-a` identifies an argument to pass; in our case the HTTP address to bind. Finally we grant the example module the capability to create an HTTP socket, accept connections, write to channels, and lookup global singletons.
 
-### 6. Run the example echo client
+### 6. Run the example connection handler
 
-Last but not least, we can run the echo client:
+Now start up one or more connection handlers. Work will be shared evenly between them.
 
 ```bash
 cd ../remote-client
 cargo run -p selium-remote-cli -- \
     --cert-dir ../../certs \
-    start selium_example_echo.wasm echo_client \
+    start selium_example_load_balancer.wasm conn_handler \
     --attach \
     --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
 ```
+
+### 7. Test the load balancer
+
+Last but not least, we can now send requests to the HTTP server:
+
+```bash
+curl localhost:8080 -d 'The internet\'s on computers now?'
+```
+
+You should see `curl` return "OK".

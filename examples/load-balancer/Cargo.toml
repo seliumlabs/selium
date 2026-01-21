@@ -1,5 +1,5 @@
 [package]
-name = "selium-example-waf"
+name = "selium-example-load-balancer"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -9,13 +9,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = { workspace = true }
-flatbuffers = { workspace = true }
 futures = { workspace = true, features = ["std"] }
 selium-atlas = { workspace = true }
 selium-switchboard = { workspace = true }
 selium-userland = { workspace = true }
 tracing = { workspace = true }
-
-[build-dependencies]
-flatbuffers-build = { workspace = true }
-flatc-fork = { workspace = true }

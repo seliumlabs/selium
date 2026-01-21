@@ -1709,9 +1709,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "selium-abi"
-version = "1.0.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fbee64ee3efa531508b1b8c17def01faa1d19b389723ab2a580b443914d1f31"
+version = "1.0.0-alpha.2"
 dependencies = [
  "rkyv",
  "thiserror 2.0.18",
@@ -1720,6 +1718,8 @@ dependencies = [
 [[package]]
 name = "selium-abi"
 version = "1.0.0-alpha.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d8f117b2471c3ecfdf27d2a860bb4b0670a6773121e285309b07bbc73271591"
 dependencies = [
  "rkyv",
  "thiserror 2.0.18",
@@ -1727,22 +1727,22 @@ dependencies = [
 
 [[package]]
 name = "selium-atlas"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e0f11006d43efd1f75422aa1b83762957c8cb79047a758a659e3360da08d52d"
+checksum = "6a8d93f875a7c8dbdeed8524214db573d045eb77a222539aa90e947c29bbe7f1"
 dependencies = [
  "futures",
  "selium-atlas-protocol",
- "selium-userland 1.0.0-alpha.1",
+ "selium-userland 1.0.0-alpha.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "tracing",
 ]
 
 [[package]]
 name = "selium-atlas-protocol"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8812cd871ae8c2f011741b4e6b49aa8ff6edbf99bc24d46a35965231e13c154"
+checksum = "c5a547cf09ac77c9b1d4e04aaf35faa6d26711d51139092e0d41dd245cb6cca8"
 dependencies = [
  "flatbuffers",
  "flatbuffers-build",
@@ -1762,7 +1762,7 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.1",
+ "selium-userland 1.0.0-alpha.2",
  "tracing",
 ]
 
@@ -1775,6 +1775,18 @@ dependencies = [
  "flatbuffers-build",
  "flatc-fork",
  "futures",
+ "selium-userland 1.0.0-alpha.2",
+ "tracing",
+]
+
+[[package]]
+name = "selium-example-load-balancer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "selium-atlas",
+ "selium-switchboard",
  "selium-userland 1.0.0-alpha.2",
  "tracing",
 ]
@@ -1802,7 +1814,7 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.1",
+ "selium-userland 1.0.0-alpha.2",
  "tracing",
 ]
 
@@ -1905,48 +1917,28 @@ dependencies = [
 
 [[package]]
 name = "selium-switchboard"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c20a4f4656cfa88459552b82fc07f96bbe93efa8c7d1a1015ef6657aafd7f898"
+checksum = "a931a1dcce3750a6976c1a1cfdc8c8b60f2ceab4d8b4af9d0ee1e8812dbedc93"
 dependencies = [
  "futures",
  "pin-project",
  "selium-switchboard-protocol",
- "selium-userland 1.0.0-alpha.1",
+ "selium-userland 1.0.0-alpha.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "tracing",
 ]
 
 [[package]]
 name = "selium-switchboard-protocol"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "504d098800b016c6f29d9a49ea0be33b8d5683a28b3dabd19c21ce4f671be468"
+checksum = "5465dd14dc33535b5bbc72089cc305413a6d3db134960c10aaa6e2921b3ca64e"
 dependencies = [
  "flatbuffers",
  "flatbuffers-build",
  "flatc-fork",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "selium-userland"
-version = "1.0.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "949a250fe6522d0622857ccb77982f9b3401c1c492e5104d14f68c0178b39169"
-dependencies = [
- "anyhow",
- "flatbuffers",
- "flatbuffers-build",
- "flatc-fork",
- "futures",
- "rkyv",
- "selium-abi 1.0.0-alpha.1",
- "selium-userland-macros 1.0.0-alpha.1",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1968,15 +1960,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "selium-userland-macros"
-version = "1.0.0-alpha.1"
+name = "selium-userland"
+version = "1.0.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9a42ccd34a3ec01f1d119ae84890086e5d26a669ec603f10d641ce8ba766f53"
+checksum = "c5361573aaab21b9ea3c1e390880e8d882877aacc790906c57bbf19b93411f9d"
 dependencies = [
- "blake3",
- "proc-macro2",
- "quote",
- "syn",
+ "anyhow",
+ "flatbuffers",
+ "flatbuffers-build",
+ "flatc-fork",
+ "futures",
+ "rkyv",
+ "selium-abi 1.0.0-alpha.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland-macros 1.0.0-alpha.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1991,6 +1991,18 @@ dependencies = [
  "selium-userland 1.0.0-alpha.2",
  "syn",
  "trybuild",
+]
+
+[[package]]
+name = "selium-userland-macros"
+version = "1.0.0-alpha.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55baf2686ac3df085c6f032ef8222fc9b19284a3f4b90a6356a353772c10cbd5"
+dependencies = [
+ "blake3",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
