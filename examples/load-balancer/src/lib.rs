@@ -11,7 +11,7 @@ use tracing::{debug, error};
 /// Max number of simultaneous HTTP requests.
 const CONCURRENT_REQUESTS: usize = 50;
 /// Internal URI that HTTP requests are published on.
-const LB_URI: &str = "/example.org/web/prod/api";
+const LB_URI: &str = "sel://example.org/web/prod/api";
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const HTTP_VERSION: &str = "HTTP/1.1";
 const CONTENT_TYPE: &str = "text/plain; charset=utf-8";

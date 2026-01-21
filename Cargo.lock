@@ -1728,6 +1728,8 @@ dependencies = [
 [[package]]
 name = "selium-atlas"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8d93f875a7c8dbdeed8524214db573d045eb77a222539aa90e947c29bbe7f1"
 dependencies = [
  "futures",
  "selium-atlas-protocol",
@@ -1739,6 +1741,8 @@ dependencies = [
 [[package]]
 name = "selium-atlas-protocol"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5a547cf09ac77c9b1d4e04aaf35faa6d26711d51139092e0d41dd245cb6cca8"
 dependencies = [
  "flatbuffers",
  "flatbuffers-build",

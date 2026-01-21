@@ -68,22 +68,22 @@ cargo run -p selium-remote-cli -- \
     start selium_example_load_balancer.wasm load_balancer \
     --attach \
     -a utf8:localhost -a u16:8080 \
-    --capabilities ChannelLifecycle,ChannelWriter,NetQuicAccept,NetQuicBind,SingletonLookup
+    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,NetHttpAccept,NetHttpBind,SingletonLookup
 ```
 
-`--attach` tells the CLI to subscribe to the example's log channel so we can see what it's doing. `-a` identifies an argument to pass; in our case the HTTP address to bind. Finally we grant the example module the capability to create an HTTP socket, accept connections, write to channels, and lookup global singletons.
+`--attach` tells the CLI to subscribe to the example's log channel so we can see what it's doing. `-a` identifies an argument to pass; in our case the HTTP address to bind. Finally we grant the example module the capability to create an HTTP socket, accept connections, read/write channels, and lookup global singletons.
 
 ### 6. Run the example connection handler
 
 Now start up one or more connection handlers. Work will be shared evenly between them.
 
 ```bash
-cd ../remote-client
+cd selium-modules/remote-client
 cargo run -p selium-remote-cli -- \
     --cert-dir ../../certs \
     start selium_example_load_balancer.wasm conn_handler \
     --attach \
-    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
+    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,NetHttpRead,NetHttpWrite,SingletonLookup
 ```
 
 ### 7. Test the load balancer
@@ -91,7 +91,7 @@ cargo run -p selium-remote-cli -- \
 Last but not least, we can now send requests to the HTTP server:
 
 ```bash
-curl localhost:8080 -d 'The internet\'s on computers now?'
+curl localhost:8080 -d "The internet's on computers now?"
 ```
 
 You should see `curl` return "OK".
