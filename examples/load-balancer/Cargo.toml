@@ -12,5 +12,5 @@ anyhow = { workspace = true }
 futures = { workspace = true, features = ["std"] }
 selium-atlas = { workspace = true }
 selium-switchboard = { workspace = true }
-selium-userland = { workspace = true }
+selium-userland = "1.0.0-alpha.2"
 tracing = { workspace = true }

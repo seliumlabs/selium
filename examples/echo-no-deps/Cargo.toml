@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 anyhow = { workspace = true }
 flatbuffers = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-selium-userland = { workspace = true }
+selium-userland = "1.0.0-alpha.2"
 tracing = { workspace = true }
 
 [build-dependencies]

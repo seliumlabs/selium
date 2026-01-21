@@ -55,7 +55,7 @@ rkyv = { version = "0.8", default-features = false }
 rustls = { version = "0.23", default-features = false }
 rustls-pki-types = { version = "1.14", default-features = false }
 selium-abi = { path = "system/abi", version = "1.0.0-alpha.2" }
-selium-atlas = { version = "0.1.0", default-features = false }
+selium-atlas = { version = "0.1", default-features = false }
 selium-filesystem-store = { path = "subsystem/filesystem-store", version = "1.0.0-alpha.2" }
 selium-kernel = { path = "system/kernel", version = "1.0.0-alpha.2" }
 selium-messaging = { path = "subsystem/messaging", version = "1.0.0-alpha.2" }
