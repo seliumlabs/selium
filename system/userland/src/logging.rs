@@ -14,6 +14,7 @@ use std::sync::{Mutex, OnceLock};
 
 use flatbuffers::FlatBufferBuilder;
 use futures::SinkExt;
+use selium_userland_macros::schema;
 use thiserror::Error;
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::{
@@ -33,6 +34,78 @@ use crate::{
 const MAX_RECORD_FIELDS: usize = 32;
 
 static LOGGING: OnceLock<Result<LoggingState, InitError>> = OnceLock::new();
+
+/// Severity levels carried by log records.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[schema(
+    path = "schemas/logging.fbs",
+    ty = "selium.logging.LogLevel",
+    binding = "crate::fbs::selium::logging::LogLevel"
+)]
+pub enum LogLevel {
+    /// Trace-level diagnostics.
+    Trace,
+    /// Debug-level diagnostics.
+    Debug,
+    /// Informational records.
+    Info,
+    /// Warning records.
+    Warn,
+    /// Error records.
+    Error,
+    /// Unknown or future log level values.
+    Unknown(i8),
+}
+
+/// Structured key/value pair included with a log record.
+#[derive(Clone, Debug)]
+#[schema(
+    path = "schemas/logging.fbs",
+    ty = "selium.logging.Field",
+    binding = "crate::fbs::selium::logging::Field"
+)]
+pub struct LogField {
+    /// Field name.
+    pub key: String,
+    /// Field value.
+    pub value: String,
+}
+
+/// Span metadata attached to a log record.
+#[derive(Clone, Debug)]
+#[schema(
+    path = "schemas/logging.fbs",
+    ty = "selium.logging.Span",
+    binding = "crate::fbs::selium::logging::Span"
+)]
+pub struct LogSpan {
+    /// Span name.
+    pub name: String,
+    /// Span fields captured at emission time.
+    pub fields: Vec<LogField>,
+}
+
+/// Log record emitted by Selium guests.
+#[derive(Clone, Debug)]
+#[schema(
+    path = "schemas/logging.fbs",
+    ty = "selium.logging.LogRecord",
+    binding = "crate::fbs::selium::logging::LogRecord"
+)]
+pub struct LogRecord {
+    /// Record severity.
+    pub level: LogLevel,
+    /// Target that emitted the record.
+    pub target: String,
+    /// Human-readable message.
+    pub message: String,
+    /// Structured fields attached to the record.
+    pub fields: Vec<LogField>,
+    /// Active span stack at the time of emission.
+    pub spans: Vec<LogSpan>,
+    /// Unix timestamp in milliseconds.
+    pub timestamp_ms: u64,
+}
 
 /// Drops re-entrant logging events triggered while forwarding an earlier record.
 struct ForwardingGuard;

@@ -34,6 +34,18 @@ pub trait FlatMsg: Sized {
     fn decode(bytes: &[u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer>;
 }
 
+/// Helper for encoding schema fields into Flatbuffers-ready values.
+pub trait FieldEncoder {
+    /// Output type written into Flatbuffers args or vectors.
+    type Output<'bldr>;
+
+    /// Encode the field for Flatbuffers builders.
+    fn encode_field<'bldr, A: flatbuffers::Allocator + 'bldr>(
+        &self,
+        builder: &mut FlatBufferBuilder<'bldr, A>,
+    ) -> Self::Output<'bldr>;
+}
+
 /// Helper for converting Flatbuffer string accessors into owned `String`s.
 pub trait StringFieldValue {
     /// Convert the accessor into an owned `String`.
