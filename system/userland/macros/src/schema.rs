@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Expr, ExprLit, ExprMacro, ItemStruct, Lit, LitStr, Path as SynPath, parse::Parser,
-    parse_macro_input, spanned::Spanned,
+    Expr, ExprLit, ExprMacro, Item, ItemEnum, ItemStruct, Lit, LitStr, Path as SynPath,
+    parse::Parser, parse_macro_input, spanned::Spanned,
 };
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -49,7 +49,22 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     let hash_bytes = &hash.as_bytes()[0..16];
     let hash_lit = syn::LitByteStr::new(hash_bytes, proc_macro2::Span::call_site());
 
-    let st = parse_macro_input!(item as ItemStruct);
+    let item = parse_macro_input!(item as Item);
+    match item {
+        Item::Struct(st) => expand_struct(st, fqname, binding_path, hash_lit),
+        Item::Enum(en) => expand_enum(en, fqname, binding_path, hash_lit),
+        other => syn::Error::new_spanned(other, "#[schema] requires a struct or enum")
+            .to_compile_error()
+            .into(),
+    }
+}
+
+fn expand_struct(
+    st: ItemStruct,
+    fqname: String,
+    binding_path: SynPath,
+    hash_lit: syn::LitByteStr,
+) -> TokenStream {
     let mut st2 = st.clone();
     st2.attrs = st
         .attrs
@@ -113,6 +128,17 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             const SCHEMA: selium_userland::encoding::SchemaDescriptor = #schema_ident;
         }
 
+        impl selium_userland::encoding::FieldEncoder for #struct_ident {
+            type Output<'bldr> = Option<flatbuffers::WIPOffset<#binding_path_ts<'bldr>>>;
+
+            fn encode_field<'bldr, A: flatbuffers::Allocator + 'bldr>(
+                &self,
+                builder: &mut flatbuffers::FlatBufferBuilder<'bldr, A>,
+            ) -> Self::Output<'bldr> {
+                Some(self.write_flatbuffer(builder))
+            }
+        }
+
         impl #struct_ident {
             pub fn new( #( #ctor_params ),* ) -> Self {
                 Self { #( #ctor_inits, )* }
@@ -150,6 +176,138 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     expanded.into()
 }
 
+fn expand_enum(
+    en: ItemEnum,
+    fqname: String,
+    binding_path: SynPath,
+    hash_lit: syn::LitByteStr,
+) -> TokenStream {
+    let mut en2 = en.clone();
+    en2.attrs = en
+        .attrs
+        .iter()
+        .filter(|attr| !attr.path().is_ident("schema"))
+        .cloned()
+        .collect();
+    let enum_ident = en.ident.clone();
+    let schema_ident = syn::Ident::new(
+        &format!("{}Schema", enum_ident),
+        proc_macro2::Span::call_site(),
+    );
+    let fq_lit = fqname.clone();
+    let binding_path_ts = quote! { #binding_path };
+
+    let mut unit_variants = Vec::new();
+    let mut fallback_variant: Option<(syn::Ident, syn::Type)> = None;
+    for variant in en.variants.iter() {
+        match &variant.fields {
+            syn::Fields::Unit => unit_variants.push(variant.ident.clone()),
+            syn::Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+                if fallback_variant.is_some() {
+                    return syn::Error::new_spanned(
+                        variant,
+                        "#[schema] enums may only include a single tuple variant",
+                    )
+                    .to_compile_error()
+                    .into();
+                }
+                let Some(field) = fields.unnamed.first() else {
+                    return syn::Error::new_spanned(
+                        variant,
+                        "#[schema] enums require a single tuple field",
+                    )
+                    .to_compile_error()
+                    .into();
+                };
+                fallback_variant = Some((variant.ident.clone(), field.ty.clone()));
+            }
+            _ => {
+                return syn::Error::new_spanned(
+                    variant,
+                    "#[schema] enums require unit variants and at most one tuple fallback",
+                )
+                .to_compile_error()
+                .into();
+            }
+        }
+    }
+
+    if unit_variants.is_empty() {
+        return syn::Error::new_spanned(
+            en,
+            "#[schema] enums require at least one unit variant",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    let to_flatbuffer_variants = unit_variants.iter().map(|variant| {
+        quote! { Self::#variant => #binding_path_ts::#variant, }
+    });
+    let from_flatbuffer_variants = unit_variants.iter().map(|variant| {
+        quote! { #binding_path_ts::#variant => Self::#variant, }
+    });
+
+    let fallback_to_flatbuffer = fallback_variant.as_ref().map(|(ident, _)| {
+        quote! { Self::#ident(value) => #binding_path_ts(*value), }
+    });
+
+    let default_variant = unit_variants.first().cloned();
+    let fallback_from_flatbuffer = if let Some((ident, _ty)) = fallback_variant {
+        quote! { other => Self::#ident(other.0), }
+    } else if let Some(variant) = default_variant {
+        quote! { _ => Self::#variant, }
+    } else {
+        quote! { _ => unreachable!(), }
+    };
+
+    let expanded = quote! {
+        #en2
+
+        #[allow(non_upper_case_globals)]
+        pub const #schema_ident: selium_userland::encoding::SchemaDescriptor = selium_userland::encoding::SchemaDescriptor {
+            fqname: #fq_lit,
+            hash: *#hash_lit,
+        };
+
+        impl selium_userland::encoding::HasSchema for #enum_ident {
+            const SCHEMA: selium_userland::encoding::SchemaDescriptor = #schema_ident;
+        }
+
+        impl selium_userland::encoding::FieldEncoder for #enum_ident {
+            type Output<'bldr> = #binding_path_ts;
+
+            fn encode_field<'bldr, A: flatbuffers::Allocator + 'bldr>(
+                &self,
+                builder: &mut flatbuffers::FlatBufferBuilder<'bldr, A>,
+            ) -> Self::Output<'bldr> {
+                self.write_flatbuffer(builder)
+            }
+        }
+
+        impl #enum_ident {
+            pub fn write_flatbuffer<'bldr, A: flatbuffers::Allocator + 'bldr>(
+                &self,
+                _builder: &mut flatbuffers::FlatBufferBuilder<'bldr, A>,
+            ) -> #binding_path_ts {
+                match self {
+                    #( #to_flatbuffer_variants )*
+                    #fallback_to_flatbuffer
+                }
+            }
+
+            pub fn from_flatbuffer(value: #binding_path_ts) -> Self {
+                match value {
+                    #( #from_flatbuffer_variants )*
+                    #fallback_from_flatbuffer
+                }
+            }
+        }
+    };
+
+    expanded.into()
+}
+
 fn encode_field(field: &syn::Field) -> proc_macro2::TokenStream {
     let id = field.ident.as_ref().unwrap();
     match &field.ty {
@@ -165,7 +323,12 @@ fn encode_field(field: &syn::Field) -> proc_macro2::TokenStream {
                 } else if is_scalar_ident(ident) {
                     quote! { args.#id = self.#id; }
                 } else {
-                    quote! { args.#id = Some(self.#id.write_flatbuffer(builder)); }
+                    quote! {
+                        args.#id = selium_userland::encoding::FieldEncoder::encode_field(
+                            &self.#id,
+                            builder,
+                        );
+                    }
                 }
             }
         }
@@ -275,6 +438,26 @@ fn encode_vec_field(
                 args.#id = self.#id.as_ref().map(|value| builder.create_vector(value));
             };
         }
+        let offsets_ident =
+            syn::Ident::new(&format!("{}_offsets", id), proc_macro2::Span::call_site());
+        if is_required {
+            return quote! {
+                let #offsets_ident: Vec<_> = self.#id
+                    .iter()
+                    .map(|item| item.write_flatbuffer(builder))
+                    .collect();
+                args.#id = Some(builder.create_vector(&#offsets_ident));
+            };
+        }
+        return quote! {
+            args.#id = self.#id.as_ref().map(|value| {
+                let #offsets_ident: Vec<_> = value
+                    .iter()
+                    .map(|item| item.write_flatbuffer(builder))
+                    .collect();
+                builder.create_vector(&#offsets_ident)
+            });
+        };
     }
 
     quote! { args.#id = self.#id.as_ref().map(|value| value.write_flatbuffer(builder)); }
@@ -314,11 +497,13 @@ fn decode_vec_field(
         }
     }
 
+    let map_expr =
+        quote! { value.iter().map(#inner::from_flatbuffer).collect::<::std::vec::Vec<_>>() };
     if is_required {
-        return quote! { #id: view.#id().map(#inner::from_flatbuffer).unwrap_or_default() };
+        return quote! { #id: view.#id().map(|value| #map_expr).unwrap_or_default() };
     }
 
-    quote! { #id: view.#id().map(#inner::from_flatbuffer) }
+    quote! { #id: view.#id().map(|value| #map_expr) }
 }
 
 fn option_inner(tp: &syn::TypePath) -> Option<&syn::Type> {
