@@ -12,13 +12,14 @@
 //!     rt.block_on(async {
 //!         let signature =
 //!             AbiSignature::new(vec![AbiParam::Scalar(AbiScalarType::I32)], Vec::new());
-//!         let handle = ProcessBuilder::new("selium.examples.echo", "echoer")
+//!         let builder = ProcessBuilder::new("selium.examples.echo", "echoer")
 //!             .capability(Capability::ChannelReader)
 //!             .capability(Capability::ChannelWriter)
 //!             .signature(signature)
-//!             .arg_resource(7u64)
-//!             .start()
-//!             .await?;
+//!             .arg_resource(7u64);
+//!         #[cfg(feature = "atlas")]
+//!         let builder = builder.log_uri("sel://logs/echoer");
+//!         let handle = builder.start().await?;
 //!
 //!         handle.stop().await?;
 //!         Ok::<_, ProcessError>(())
@@ -31,6 +32,8 @@ use selium_abi::{
     AbiScalarValue, AbiSignature, EntrypointArg, EntrypointInvocation, ProcessLogLookup,
     ProcessLogRegistration, ProcessStart, RkyvEncode,
 };
+#[cfg(feature = "atlas")]
+use selium_abi::AbiParam;
 
 use crate::driver::{self, DriverFuture, RkyvDecoder, encode_args};
 use crate::io::SharedChannel;
@@ -48,6 +51,8 @@ pub struct ProcessBuilder {
     capabilities: Vec<Capability>,
     signature: AbiSignature,
     args: Vec<EntrypointArg>,
+    #[cfg(feature = "atlas")]
+    log_uri: Option<String>,
 }
 
 impl ProcessBuilder {
@@ -59,6 +64,8 @@ impl ProcessBuilder {
             capabilities: vec![Capability::ChannelLifecycle, Capability::ChannelWriter],
             signature: AbiSignature::new(Vec::new(), Vec::new()),
             args: Vec::new(),
+            #[cfg(feature = "atlas")]
+            log_uri: None,
         }
     }
 
@@ -71,8 +78,19 @@ impl ProcessBuilder {
     }
 
     /// Specify the entrypoint ABI signature.
+    ///
+    /// When the `atlas` feature is enabled, the log URI buffer is injected ahead of these params.
     pub fn signature(mut self, signature: AbiSignature) -> Self {
         self.signature = signature;
+        self
+    }
+
+    /// Set the Atlas log URI passed to the entrypoint when the `atlas` feature is enabled.
+    ///
+    /// The value must not be empty.
+    #[cfg(feature = "atlas")]
+    pub fn log_uri(mut self, value: impl Into<String>) -> Self {
+        self.log_uri = Some(value.into());
         self
     }
 
@@ -212,7 +230,12 @@ fn build_start_payload(builder: ProcessBuilder) -> Result<ProcessStart, ProcessE
         capabilities,
         signature,
         args,
+        #[cfg(feature = "atlas")]
+        log_uri,
     } = builder;
+
+    #[cfg(feature = "atlas")]
+    let (signature, args) = inject_log_uri(signature, args, log_uri)?;
 
     let entrypoint = EntrypointInvocation::new(signature.clone(), args)
         .map_err(|_| ProcessError::InvalidArgument)?;
@@ -223,6 +246,28 @@ fn build_start_payload(builder: ProcessBuilder) -> Result<ProcessStart, ProcessE
         capabilities,
         entrypoint,
     })
+}
+
+#[cfg(feature = "atlas")]
+fn inject_log_uri(
+    signature: AbiSignature,
+    args: Vec<EntrypointArg>,
+    log_uri: Option<String>,
+) -> Result<(AbiSignature, Vec<EntrypointArg>), ProcessError> {
+    let log_uri = log_uri.ok_or(ProcessError::InvalidArgument)?;
+    if log_uri.is_empty() {
+        return Err(ProcessError::InvalidArgument);
+    }
+    let mut params = Vec::with_capacity(signature.params().len() + 1);
+    params.push(AbiParam::Buffer);
+    params.extend_from_slice(signature.params());
+    let signature = AbiSignature::new(params, signature.results().to_vec());
+
+    let mut args_with_uri = Vec::with_capacity(args.len() + 1);
+    args_with_uri.push(EntrypointArg::Buffer(log_uri.into_bytes()));
+    args_with_uri.extend(args);
+
+    Ok((signature, args_with_uri))
 }
 
 driver_module!(process_start, PROCESS_START, "selium::process::start");
@@ -257,6 +302,8 @@ mod tests {
             .signature(signature.clone())
             .arg_i32(42)
             .arg_buffer([1, 2, 3]);
+        #[cfg(feature = "atlas")]
+        let builder = builder.log_uri("sel://logs/test");
 
         let bytes = encode_start_args(builder).expect("encode");
         let start = decode_rkyv::<ProcessStart>(&bytes).expect("decode");
@@ -270,14 +317,40 @@ mod tests {
                 Capability::ChannelReader
             ]
         );
-        assert_eq!(start.entrypoint.signature, signature);
-        assert_eq!(
-            start.entrypoint.args,
-            vec![
-                EntrypointArg::Scalar(AbiScalarValue::I32(42)),
-                EntrypointArg::Buffer(vec![1, 2, 3])
-            ]
-        );
+        #[cfg(feature = "atlas")]
+        {
+            assert_eq!(start.entrypoint.signature.params()[0], AbiParam::Buffer);
+            assert_eq!(
+                start.entrypoint.signature.params()[1..],
+                signature.params()
+            );
+            assert_eq!(
+                start.entrypoint.signature.results(),
+                signature.results()
+            );
+            assert_eq!(
+                start.entrypoint.args[0],
+                EntrypointArg::Buffer(b"sel://logs/test".to_vec())
+            );
+            assert_eq!(
+                start.entrypoint.args[1..],
+                &[
+                    EntrypointArg::Scalar(AbiScalarValue::I32(42)),
+                    EntrypointArg::Buffer(vec![1, 2, 3])
+                ]
+            );
+        }
+        #[cfg(not(feature = "atlas"))]
+        {
+            assert_eq!(start.entrypoint.signature, signature);
+            assert_eq!(
+                start.entrypoint.args,
+                vec![
+                    EntrypointArg::Scalar(AbiScalarValue::I32(42)),
+                    EntrypointArg::Buffer(vec![1, 2, 3])
+                ]
+            );
+        }
     }
 
     #[test]
@@ -286,10 +359,26 @@ mod tests {
         let builder = ProcessBuilder::new("module", "proc")
             .signature(signature)
             .arg_resource(7u64);
+        #[cfg(feature = "atlas")]
+        let builder = builder.log_uri("sel://logs/test");
 
         let bytes = encode_start_args(builder).expect("encode");
         let start = decode_rkyv::<ProcessStart>(&bytes).expect("decode");
-        assert_eq!(start.entrypoint.args, vec![EntrypointArg::Resource(7)]);
+        #[cfg(feature = "atlas")]
+        {
+            assert_eq!(
+                start.entrypoint.args[0],
+                EntrypointArg::Buffer(b"sel://logs/test".to_vec())
+            );
+            assert_eq!(
+                start.entrypoint.args[1..],
+                &[EntrypointArg::Resource(7)]
+            );
+        }
+        #[cfg(not(feature = "atlas"))]
+        {
+            assert_eq!(start.entrypoint.args, vec![EntrypointArg::Resource(7)]);
+        }
     }
 
     #[test]
@@ -298,10 +387,44 @@ mod tests {
         let builder = ProcessBuilder::new("module", "proc")
             .signature(signature.clone())
             .arg_resource(7u64);
+        #[cfg(feature = "atlas")]
+        let builder = builder.log_uri("sel://logs/test");
 
         let bytes = encode_start_args(builder).expect("encode");
         let start = decode_rkyv::<ProcessStart>(&bytes).expect("decode");
-        assert_eq!(start.entrypoint.signature, signature);
-        assert_eq!(start.entrypoint.args, vec![EntrypointArg::Resource(7)]);
+        #[cfg(feature = "atlas")]
+        {
+            assert_eq!(start.entrypoint.signature.params()[0], AbiParam::Buffer);
+            assert_eq!(
+                start.entrypoint.signature.params()[1..],
+                signature.params()
+            );
+            assert_eq!(
+                start.entrypoint.signature.results(),
+                signature.results()
+            );
+            assert_eq!(
+                start.entrypoint.args[0],
+                EntrypointArg::Buffer(b"sel://logs/test".to_vec())
+            );
+            assert_eq!(
+                start.entrypoint.args[1..],
+                &[EntrypointArg::Resource(7)]
+            );
+        }
+        #[cfg(not(feature = "atlas"))]
+        {
+            assert_eq!(start.entrypoint.signature, signature);
+            assert_eq!(start.entrypoint.args, vec![EntrypointArg::Resource(7)]);
+        }
+    }
+
+    #[cfg(feature = "atlas")]
+    #[test]
+    fn encode_start_args_requires_log_uri() {
+        let signature = AbiSignature::new(Vec::new(), Vec::new());
+        let builder = ProcessBuilder::new("module", "proc").signature(signature);
+        let err = encode_start_args(builder).expect_err("missing log URI");
+        assert!(matches!(err, ProcessError::InvalidArgument));
     }
 }

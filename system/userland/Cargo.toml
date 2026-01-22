@@ -19,6 +19,7 @@ flatbuffers = { workspace = true }
 futures = { workspace = true, features = ["alloc", "std"] }
 rkyv = { workspace = true }
 selium-abi = { workspace = true }
+selium-atlas = { workspace = true, optional = true }
 selium-userland-macros = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
@@ -28,6 +29,9 @@ tracing-subscriber = { workspace = true, default-features = false, features = [
   "registry",
   "std",
 ] }
+
+[features]
+atlas = ["dep:selium-atlas", "selium-userland-macros/atlas"]
 
 [build-dependencies]
 flatbuffers-build = { workspace = true }

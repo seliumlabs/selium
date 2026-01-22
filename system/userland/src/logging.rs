@@ -14,6 +14,8 @@ use std::sync::{Mutex, OnceLock};
 
 use flatbuffers::FlatBufferBuilder;
 use futures::SinkExt;
+#[cfg(feature = "atlas")]
+use selium_atlas::{Atlas, Uri};
 use selium_userland_macros::schema;
 use thiserror::Error;
 use tracing::{Event, Level, Subscriber};
@@ -134,7 +136,7 @@ pub enum InitError {
     /// Creating the logging channel failed.
     #[error("failed to create logging channel: {0}")]
     Channel(String),
-    /// Registering the shared log channel with the process failed.
+    /// Registering the shared log channel failed.
     #[error("failed to register logging channel: {0}")]
     Register(String),
     /// Creating the logging publisher failed.
@@ -211,7 +213,12 @@ thread_local! {
 
 /// Install the tracing layer that forwards events to the logging channel.
 pub fn init() -> Result<(), InitError> {
-    logging_state().map(|_| ())
+    init_with_log_uri(None)
+}
+
+/// Install the tracing layer, optionally registering the log channel with Atlas.
+pub fn init_with_log_uri(log_uri: Option<&str>) -> Result<(), InitError> {
+    logging_state_with_uri(log_uri).map(|_| ())
 }
 
 /// Access the logging channel if initialisation succeeded.
@@ -220,13 +227,17 @@ pub fn channel() -> Option<Channel> {
 }
 
 fn logging_state() -> Result<&'static LoggingState, InitError> {
+    logging_state_with_uri(None)
+}
+
+fn logging_state_with_uri(log_uri: Option<&str>) -> Result<&'static LoggingState, InitError> {
     LOGGING
-        .get_or_init(init_logging)
+        .get_or_init(|| init_logging(log_uri))
         .as_ref()
         .map_err(Clone::clone)
 }
 
-fn init_logging() -> Result<LoggingState, InitError> {
+fn init_logging(log_uri: Option<&str>) -> Result<LoggingState, InitError> {
     let state = r#async::block_on(async {
         let channel = Channel::create(512 * 1024) // 512kb
             .await
@@ -238,6 +249,14 @@ fn init_logging() -> Result<LoggingState, InitError> {
         process::register_log_channel(shared)
             .await
             .map_err(|err| InitError::Register(err.to_string()))?;
+        #[cfg(feature = "atlas")]
+        if let Some(log_uri) = log_uri {
+            register_atlas_log_channel(log_uri, shared).await?;
+        }
+        #[cfg(not(feature = "atlas"))]
+        {
+            let _ = log_uri;
+        }
         let publisher = channel
             .publish()
             .await
@@ -256,6 +275,24 @@ fn init_logging() -> Result<LoggingState, InitError> {
         .map_err(|err| InitError::Subscriber(err.to_string()))?;
 
     Ok(state)
+}
+
+#[cfg(feature = "atlas")]
+async fn register_atlas_log_channel(
+    log_uri: &str,
+    shared: crate::io::SharedChannel,
+) -> Result<(), InitError> {
+    let atlas = crate::Context::current()
+        .singleton::<Atlas>()
+        .await
+        .map_err(|err| InitError::Register(format!("atlas lookup failed: {err}")))?;
+    let uri = Uri::parse(log_uri)
+        .map_err(|err| InitError::Register(format!("atlas log URI invalid: {err}")))?;
+    atlas
+        .insert(uri, shared.raw())
+        .await
+        .map_err(|err| InitError::Register(format!("atlas registration failed: {err}")))?;
+    Ok(())
 }
 
 fn forward_event<S>(event: &Event<'_>, ctx: &Context<'_, S>)

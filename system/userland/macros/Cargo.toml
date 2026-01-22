@@ -16,6 +16,9 @@ ignored-paths = ["tests/**/*.rs"]
 [lib]
 proc-macro = true
 
+[features]
+atlas = []
+
 [dependencies]
 blake3 = { workspace = true }
 proc-macro2 = { workspace = true, features = ["proc-macro"] }

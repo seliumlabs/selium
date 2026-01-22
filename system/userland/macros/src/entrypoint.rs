@@ -80,6 +80,47 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         .collect();
     let user_ident = Ident::new(&format!("__selium_user_{}", orig_ident), Span::call_site());
 
+    #[cfg(feature = "atlas")]
+    let (log_uri_inputs, log_uri_binding, init_logging) = {
+        let log_uri_ptr = Ident::new("__selium_log_uri_ptr", Span::call_site());
+        let log_uri_len = Ident::new("__selium_log_uri_len", Span::call_site());
+        let log_uri_ident = Ident::new("__selium_log_uri", Span::call_site());
+        let log_uri_opt = Ident::new("__selium_log_uri_opt", Span::call_site());
+        let inputs = vec![
+            parse_quote! { #log_uri_ptr: *const u8 },
+            parse_quote! { #log_uri_len: u32 },
+        ];
+        let binding = quote! {
+            let #log_uri_ident: &str = {
+                let #log_uri_opt = if #log_uri_len == 0 {
+                    None
+                } else {
+                    if #log_uri_ptr.is_null() {
+                        panic!("entrypoint log URI provided a null pointer with non-zero length");
+                    }
+                    let len = match usize::try_from(#log_uri_len) {
+                        Ok(len) => len,
+                        Err(_) => panic!("entrypoint log URI length does not fit usize"),
+                    };
+                    let bytes: &[u8] = unsafe { core::slice::from_raw_parts(#log_uri_ptr, len) };
+                    Some(core::str::from_utf8(bytes).unwrap_or_else(|err| {
+                        panic!("failed to decode entrypoint log URI: {}", err);
+                    }))
+                };
+                #log_uri_opt.expect("entrypoint log URI missing")
+            };
+        };
+        let init = quote! { selium_userland::logging::init_with_log_uri(Some(#log_uri_ident)) };
+        (inputs, binding, init)
+    };
+
+    #[cfg(not(feature = "atlas"))]
+    let (log_uri_inputs, log_uri_binding, init_logging) = (
+        Vec::<FnArg>::new(),
+        quote! {},
+        quote! { selium_userland::logging::init() },
+    );
+
     let mut user_sig = f.sig.clone();
     user_sig.ident = user_ident.clone();
     let user_block = f.block.clone();
@@ -107,28 +148,27 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         #vis #user_sig #user_block
     };
 
-    let entrypoint_inputs: Vec<FnArg> = params
-        .iter()
-        .flat_map(|param| match &param.kind {
-            ParamKind::Direct => vec![FnArg::Typed(param.original.clone())],
-            ParamKind::Decode {
-                ptr_ident,
-                len_ident,
-            } => vec![
-                parse_quote! { #ptr_ident: *const u8 },
-                parse_quote! { #len_ident: u32 },
-            ],
-            ParamKind::SplitInt {
-                low_ident,
-                high_ident,
-                ..
-            } => vec![
-                parse_quote! { #low_ident: selium_userland::abi::GuestInt },
-                parse_quote! { #high_ident: selium_userland::abi::GuestInt },
-            ],
-            ParamKind::Context { .. } => Vec::new(),
-        })
-        .collect();
+    let mut entrypoint_inputs = Vec::new();
+    entrypoint_inputs.extend(log_uri_inputs);
+    entrypoint_inputs.extend(params.iter().flat_map(|param| match &param.kind {
+        ParamKind::Direct => vec![FnArg::Typed(param.original.clone())],
+        ParamKind::Decode {
+            ptr_ident,
+            len_ident,
+        } => vec![
+            parse_quote! { #ptr_ident: *const u8 },
+            parse_quote! { #len_ident: u32 },
+        ],
+        ParamKind::SplitInt {
+            low_ident,
+            high_ident,
+            ..
+        } => vec![
+            parse_quote! { #low_ident: selium_userland::abi::GuestInt },
+            parse_quote! { #high_ident: selium_userland::abi::GuestInt },
+        ],
+        ParamKind::Context { .. } => Vec::new(),
+    }));
 
     let decode_bindings: Vec<_> = params
         .iter()
@@ -259,7 +299,8 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     let entrypoint = quote! {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #orig_ident(#(#entrypoint_inputs),*) {
-            if let Err(err) = selium_userland::logging::init() {
+            #log_uri_binding
+            if let Err(err) = #init_logging {
                 panic!("failed to initialise logging bridge: {}", err);
             }
             #(#decode_bindings)*
