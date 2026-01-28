@@ -171,11 +171,12 @@ pub mod logging;
 pub mod net;
 pub mod process;
 pub mod singleton;
+pub mod time;
 
 /// Re-export of the `rkyv` crate used for internal Selium serialisation.
 pub use rkyv;
 
-pub use r#async::{block_on, spawn};
+pub use r#async::{block_on, spawn, yield_now};
 pub use context::{Context, Dependency, DependencyDescriptor};
 /// Re-export of Selium's derive and attribute macros for guest crates.
 pub use selium_userland_macros::*;

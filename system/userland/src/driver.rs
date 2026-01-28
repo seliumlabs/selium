@@ -427,6 +427,7 @@ pub(crate) mod test_driver {
         collections::{HashMap, VecDeque},
         mem, slice,
         sync::{Mutex, OnceLock},
+        time::{Instant, SystemTime, UNIX_EPOCH},
     };
 
     use selium_abi::{
@@ -514,6 +515,18 @@ pub(crate) mod test_driver {
         encode_rkyv(value).map_err(|err| DriverError::Driver(err.to_string()))
     }
 
+    fn unix_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn monotonic_ms() -> u64 {
+        static START: OnceLock<Instant> = OnceLock::new();
+        START.get_or_init(Instant::now).elapsed().as_millis() as u64
+    }
+
     pub fn create(module: &str, args_ptr: GuestInt, args_len: GuestUint) -> GuestUint {
         let mut guard = match state().lock() {
             Ok(guard) => guard,
@@ -521,7 +534,14 @@ pub(crate) mod test_driver {
         };
         match module {
             selium_abi::hostcall_name!(CHANNEL_CREATE) => {
-                let _ = decode_args(args_ptr, args_len);
+                let args = match decode_args(args_ptr, args_len) {
+                    Ok(buf) => buf,
+                    Err(_) => return 0,
+                };
+                let _: selium_abi::ChannelCreate = match decode_rkyv(args) {
+                    Ok(value) => value,
+                    Err(_) => return 0,
+                };
                 let handle = guard.next_channel;
                 guard.next_channel = guard.next_channel.saturating_add(1);
                 guard.channels.insert(
@@ -627,6 +647,16 @@ pub(crate) mod test_driver {
                     Err(_) => return 0,
                 };
                 guard.insert_op(Operation::Read(read))
+            }
+            selium_abi::hostcall_name!(TIME_NOW) => {
+                let now = selium_abi::TimeNow {
+                    unix_ms: unix_ms(),
+                    monotonic_ms: monotonic_ms(),
+                };
+                match encode(&now) {
+                    Ok(bytes) => guard.insert_op(Operation::Return(bytes)),
+                    Err(_) => 0,
+                }
             }
             _ => guard.insert_op(Operation::Return(Vec::new())),
         }

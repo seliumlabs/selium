@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
+use proc_macro_crate::{FoundCrate, crate_name};
 use quote::quote;
 use syn::{
     Error, FnArg, Ident, ItemFn, Pat, PatIdent, PatType, ReturnType, Type, parse_macro_input,
@@ -80,46 +81,68 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         .collect();
     let user_ident = Ident::new(&format!("__selium_user_{}", orig_ident), Span::call_site());
 
-    #[cfg(feature = "atlas")]
     let (log_uri_inputs, log_uri_binding, init_logging) = {
         let log_uri_ptr = Ident::new("__selium_log_uri_ptr", Span::call_site());
         let log_uri_len = Ident::new("__selium_log_uri_len", Span::call_site());
-        let log_uri_ident = Ident::new("__selium_log_uri", Span::call_site());
         let log_uri_opt = Ident::new("__selium_log_uri_opt", Span::call_site());
         let inputs = vec![
             parse_quote! { #log_uri_ptr: *const u8 },
             parse_quote! { #log_uri_len: u32 },
         ];
         let binding = quote! {
-            let #log_uri_ident: &str = {
-                let #log_uri_opt = if #log_uri_len == 0 {
-                    None
-                } else {
-                    if #log_uri_ptr.is_null() {
-                        panic!("entrypoint log URI provided a null pointer with non-zero length");
-                    }
-                    let len = match usize::try_from(#log_uri_len) {
-                        Ok(len) => len,
-                        Err(_) => panic!("entrypoint log URI length does not fit usize"),
-                    };
-                    let bytes: &[u8] = unsafe { core::slice::from_raw_parts(#log_uri_ptr, len) };
-                    Some(core::str::from_utf8(bytes).unwrap_or_else(|err| {
-                        panic!("failed to decode entrypoint log URI: {}", err);
-                    }))
+            let #log_uri_opt: Option<&str> = if #log_uri_len == 0 {
+                None
+            } else {
+                if #log_uri_ptr.is_null() {
+                    panic!("entrypoint log URI provided a null pointer with non-zero length");
+                }
+                let len = match usize::try_from(#log_uri_len) {
+                    Ok(len) => len,
+                    Err(_) => panic!("entrypoint log URI length does not fit usize"),
                 };
-                #log_uri_opt.expect("entrypoint log URI missing")
+                let bytes: &[u8] = unsafe { core::slice::from_raw_parts(#log_uri_ptr, len) };
+                Some(core::str::from_utf8(bytes).unwrap_or_else(|err| {
+                    panic!("failed to decode entrypoint log URI: {}", err);
+                }))
             };
         };
-        let init = quote! { selium_userland::logging::init_with_log_uri(Some(#log_uri_ident)) };
+        let init = quote! { selium_userland::logging::init_with_log_uri(#log_uri_opt) };
         (inputs, binding, init)
     };
 
-    #[cfg(not(feature = "atlas"))]
-    let (log_uri_inputs, log_uri_binding, init_logging) = (
-        Vec::<FnArg>::new(),
-        quote! {},
-        quote! { selium_userland::logging::init() },
-    );
+    let atlas_crate = match crate_name("selium-atlas") {
+        Ok(FoundCrate::Name(name)) => {
+            let ident = Ident::new(&name, Span::call_site());
+            Some(quote!(#ident))
+        }
+        Ok(FoundCrate::Itself) => Some(quote!(crate)),
+        Err(_) => None,
+    };
+
+    let install_log_uri_registrar = atlas_crate
+        .map(|atlas_crate| {
+            quote! {
+                if !selium_userland::logging::log_uri_registrar_installed() {
+                    let atlas_available = selium_userland::block_on(async {
+                        match selium_userland::singleton::lookup(
+                            <#atlas_crate::Atlas as selium_userland::Dependency>::DESCRIPTOR.id,
+                        )
+                        .await
+                        {
+                            Ok(_handle) => true,
+                            Err(_err) => false,
+                        }
+                    });
+
+                    if atlas_available {
+                        if let Err(err) = #atlas_crate::install_log_uri_registrar() {
+                            panic!("failed to install atlas log URI registrar: {}", err);
+                        }
+                    }
+                }
+            }
+        })
+        .unwrap_or_else(|| quote! {});
 
     let mut user_sig = f.sig.clone();
     user_sig.ident = user_ident.clone();
@@ -300,6 +323,7 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn #orig_ident(#(#entrypoint_inputs),*) {
             #log_uri_binding
+            #install_log_uri_registrar
             if let Err(err) = #init_logging {
                 panic!("failed to initialise logging bridge: {}", err);
             }

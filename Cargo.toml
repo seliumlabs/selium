@@ -4,6 +4,7 @@ members = [
   "examples/echo",
   "examples/echo-no-deps",
   "examples/load-balancer",
+  "examples/log-analyser",
   "examples/rest-api",
   "examples/waf",
   "subsystem/filesystem-store",
@@ -20,7 +21,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.0-alpha.2"
+version = "1.0.0-alpha.3"
 edition = "2024"
 description = "Streaming compute fabric"
 readme = "README.md"
@@ -47,6 +48,7 @@ loom = { version = "0.7", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
 path-security = { version = "0.2", default-features = false }
 pin-project = { version = "1.1", default-features = false }
+proc-macro-crate = { version = "3.4", default-features = false }
 proc-macro2 = { version = "1.0", default-features = false }
 quinn = { version = "0.11", default-features = false }
 quote = { version = "1.0", default-features = false }
@@ -76,6 +78,6 @@ tokio-rustls = { version = "0.26", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = { version = "1.0", default-features = false }
-uuid = { version = "1.19", default-features = false }
+uuid = { version = "1.20", default-features = false }
 wasmtime = { version = "41.0", default-features = false }
 webpki-roots = { version = "1.0", default-features = false }

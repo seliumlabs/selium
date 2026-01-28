@@ -13,9 +13,7 @@ use core::{cell::Cell, fmt};
 use std::sync::{Mutex, OnceLock};
 
 use flatbuffers::FlatBufferBuilder;
-use futures::SinkExt;
-#[cfg(feature = "atlas")]
-use selium_atlas::{Atlas, Uri};
+use futures::{SinkExt, future::BoxFuture};
 use selium_userland_macros::schema;
 use thiserror::Error;
 use tracing::{Event, Level, Subscriber};
@@ -26,16 +24,29 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
+#[cfg(target_arch = "wasm32")]
+use crate::time;
 use crate::{
     r#async,
     fbs::selium::logging as fb,
-    io::{Channel, Writer},
+    io::{Channel, ChannelBackpressure, Writer},
     process,
 };
 
 const MAX_RECORD_FIELDS: usize = 32;
 
 static LOGGING: OnceLock<Result<LoggingState, InitError>> = OnceLock::new();
+static LOG_URI_REGISTRAR: OnceLock<Box<dyn LogUriRegistrar + Send + Sync>> = OnceLock::new();
+
+/// Registers log channels with an external service using a URI.
+pub trait LogUriRegistrar: Send + Sync {
+    /// Register a shared log channel against the provided URI.
+    fn register<'a>(
+        &'a self,
+        log_uri: &'a str,
+        shared: crate::io::SharedChannel,
+    ) -> BoxFuture<'a, Result<(), InitError>>;
+}
 
 /// Severity levels carried by log records.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -121,10 +132,16 @@ struct EventVisitor {
     fields: Vec<(String, String)>,
 }
 
+struct PendingLogUri {
+    uri: String,
+    shared: crate::io::SharedChannel,
+}
+
 struct LoggingState {
     channel: Channel,
     publisher: Mutex<Writer>,
     last_error: Mutex<Option<InitError>>,
+    pending_log_uri: Mutex<Option<PendingLogUri>>,
 }
 
 #[derive(Debug, Error, Clone)]
@@ -216,7 +233,7 @@ pub fn init() -> Result<(), InitError> {
     init_with_log_uri(None)
 }
 
-/// Install the tracing layer, optionally registering the log channel with Atlas.
+/// Install the tracing layer, optionally registering the log channel with a URI registrar.
 pub fn init_with_log_uri(log_uri: Option<&str>) -> Result<(), InitError> {
     logging_state_with_uri(log_uri).map(|_| ())
 }
@@ -224,6 +241,30 @@ pub fn init_with_log_uri(log_uri: Option<&str>) -> Result<(), InitError> {
 /// Access the logging channel if initialisation succeeded.
 pub fn channel() -> Option<Channel> {
     logging_state().ok().map(|state| state.channel.clone())
+}
+
+/// Install the registrar that handles log URI registration.
+pub fn set_log_uri_registrar(
+    registrar: Box<dyn LogUriRegistrar + Send + Sync>,
+) -> Result<(), InitError> {
+    LOG_URI_REGISTRAR
+        .set(registrar)
+        .map_err(|_| InitError::Register("log URI registrar already set".to_string()))?;
+    if let Some(state) = LOGGING.get() {
+        if let Ok(state) = state.as_ref() {
+            if let Some(pending) = take_pending_log_uri(state)? {
+                r#async::block_on(async {
+                    register_log_uri(pending.uri.as_str(), pending.shared).await
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Report whether a log URI registrar is already configured.
+pub fn log_uri_registrar_installed() -> bool {
+    LOG_URI_REGISTRAR.get().is_some()
 }
 
 fn logging_state() -> Result<&'static LoggingState, InitError> {
@@ -239,7 +280,7 @@ fn logging_state_with_uri(log_uri: Option<&str>) -> Result<&'static LoggingState
 
 fn init_logging(log_uri: Option<&str>) -> Result<LoggingState, InitError> {
     let state = r#async::block_on(async {
-        let channel = Channel::create(512 * 1024) // 512kb
+        let channel = Channel::create_with_backpressure(512 * 1024, ChannelBackpressure::Drop) // 512kb
             .await
             .map_err(|err| InitError::Channel(err.to_string()))?;
         let shared = channel
@@ -249,16 +290,12 @@ fn init_logging(log_uri: Option<&str>) -> Result<LoggingState, InitError> {
         process::register_log_channel(shared)
             .await
             .map_err(|err| InitError::Register(err.to_string()))?;
-        #[cfg(feature = "atlas")]
-        if let Some(log_uri) = log_uri {
-            register_atlas_log_channel(log_uri, shared).await?;
-        }
-        #[cfg(not(feature = "atlas"))]
-        {
-            let _ = log_uri;
-        }
+        let pending_log_uri = match log_uri {
+            Some(log_uri) => register_log_uri_or_defer(log_uri, shared).await?,
+            None => None,
+        };
         let publisher = channel
-            .publish()
+            .publish_weak()
             .await
             .map_err(|err| InitError::Publisher(err.to_string()))?;
 
@@ -266,6 +303,7 @@ fn init_logging(log_uri: Option<&str>) -> Result<LoggingState, InitError> {
             channel,
             publisher: Mutex::new(publisher),
             last_error: Mutex::new(None),
+            pending_log_uri: Mutex::new(pending_log_uri),
         })
     })?;
 
@@ -277,22 +315,40 @@ fn init_logging(log_uri: Option<&str>) -> Result<LoggingState, InitError> {
     Ok(state)
 }
 
-#[cfg(feature = "atlas")]
-async fn register_atlas_log_channel(
+async fn register_log_uri_or_defer(
+    log_uri: &str,
+    shared: crate::io::SharedChannel,
+) -> Result<Option<PendingLogUri>, InitError> {
+    match LOG_URI_REGISTRAR.get() {
+        Some(registrar) => {
+            registrar.register(log_uri, shared).await?;
+            Ok(None)
+        }
+        None => Ok(Some(PendingLogUri {
+            uri: log_uri.to_string(),
+            shared,
+        })),
+    }
+}
+
+async fn register_log_uri(
     log_uri: &str,
     shared: crate::io::SharedChannel,
 ) -> Result<(), InitError> {
-    let atlas = crate::Context::current()
-        .singleton::<Atlas>()
-        .await
-        .map_err(|err| InitError::Register(format!("atlas lookup failed: {err}")))?;
-    let uri = Uri::parse(log_uri)
-        .map_err(|err| InitError::Register(format!("atlas log URI invalid: {err}")))?;
-    atlas
-        .insert(uri, shared.raw())
-        .await
-        .map_err(|err| InitError::Register(format!("atlas registration failed: {err}")))?;
-    Ok(())
+    let registrar = LOG_URI_REGISTRAR.get().ok_or_else(|| {
+        InitError::Register(
+            "log URI registrar missing; call set_log_uri_registrar before init".to_string(),
+        )
+    })?;
+    registrar.register(log_uri, shared).await
+}
+
+fn take_pending_log_uri(state: &LoggingState) -> Result<Option<PendingLogUri>, InitError> {
+    let mut pending = state
+        .pending_log_uri
+        .lock()
+        .map_err(|_| InitError::Poisoned)?;
+    Ok(pending.take())
 }
 
 fn forward_event<S>(event: &Event<'_>, ctx: &Context<'_, S>)
@@ -444,5 +500,9 @@ fn now_ms() -> u64 {
     use core::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    COUNTER.fetch_add(1, Ordering::Relaxed)
+    // Fallback to a counter if the host time capability is unavailable.
+    match r#async::block_on(time::now()) {
+        Ok(now) => now.unix_ms,
+        Err(_) => COUNTER.fetch_add(1, Ordering::Relaxed),
+    }
 }

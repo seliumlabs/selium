@@ -17,7 +17,7 @@ use selium_kernel::drivers::channel::FrameReadable;
 use tokio::io::{AsyncRead, ReadBuf};
 use tracing::{Span, debug, instrument};
 
-use crate::{Channel, ChannelError};
+use crate::{Backpressure, Channel, ChannelError};
 
 /// Convenience type for implementors to treat both reader types as one.
 #[pin_project(project = ReaderProj)]
@@ -155,11 +155,23 @@ impl StrongReader {
             )));
         }
 
-        let pos = self.pos.load(Ordering::Acquire);
+        let mut pos = self.pos.load(Ordering::Acquire);
 
         let draining = chan.draining.load(Ordering::Acquire);
 
-        let Some(frame) = chan.frame_for(pos) else {
+        let frame = loop {
+            if let Some(frame) = chan.frame_for(pos) {
+                break frame;
+            }
+            if matches!(chan.backpressure, Backpressure::Drop) {
+                if let Some(frame) = chan.frame_from(pos) {
+                    if frame.start > pos {
+                        self.pos.store(frame.start, Ordering::Release);
+                        pos = frame.start;
+                    }
+                    break frame;
+                }
+            }
             if draining {
                 return Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::Interrupted)));
             }
@@ -331,11 +343,15 @@ impl WeakReader {
         let draining = chan.draining.load(Ordering::Acquire);
 
         if let Err(ChannelError::ReaderBehind(pos)) = chan.read(self.pos, &mut []) {
-            self.pos = pos;
+            if let Some(frame) = chan.frame_from(pos) {
+                self.pos = frame.start;
+            } else {
+                self.pos = pos;
+            }
             return Poll::Ready(Err(std::io::Error::other(ChannelError::ReaderBehind(pos))));
         }
 
-        let Some(frame) = chan.frame_for(self.pos) else {
+        let Some(frame) = chan.frame_from(self.pos) else {
             if draining {
                 return Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::Interrupted)));
             }
@@ -343,6 +359,9 @@ impl WeakReader {
             debug!("frame metadata pending");
             return Poll::Pending;
         };
+        if frame.start > self.pos {
+            self.pos = frame.start;
+        }
 
         if frame.len as usize > max_len {
             return Poll::Ready(Err(std::io::Error::new(
@@ -368,7 +387,11 @@ impl WeakReader {
                 Poll::Ready(Ok((frame.writer_id, payload)))
             }
             Err(ChannelError::ReaderBehind(pos)) => {
-                self.pos = pos;
+                if let Some(frame) = chan.frame_from(pos) {
+                    self.pos = frame.start;
+                } else {
+                    self.pos = pos;
+                }
                 Poll::Ready(Err(std::io::Error::other(ChannelError::ReaderBehind(pos))))
             }
             Err(_) => unreachable!(),
@@ -417,7 +440,11 @@ impl AsyncRead for WeakReader {
                 Poll::Pending
             }
             Err(ChannelError::ReaderBehind(pos)) => {
-                self.pos = pos;
+                if let Some(frame) = chan.frame_from(pos) {
+                    self.pos = frame.start;
+                } else {
+                    self.pos = pos;
+                }
                 Poll::Ready(Err(std::io::Error::other(ChannelError::ReaderBehind(pos))))
             }
             Err(_) => unreachable!(),

@@ -29,13 +29,15 @@ use core::{
 };
 
 use futures::{Sink, Stream};
-use selium_abi::{GuestResourceId, GuestUint, IoFrame, IoRead, IoWrite};
+use selium_abi::{ChannelCreate, GuestResourceId, GuestUint, IoFrame, IoRead, IoWrite};
 
 use crate::FromHandle;
 pub use crate::driver::{
     DriverError, DriverFuture, DriverModule, MIN_RESULT_CAPACITY, RKYV_VEC_OVERHEAD, RkyvDecoder,
     encode_args,
 };
+/// Backpressure behaviour for channel writers.
+pub use selium_abi::ChannelBackpressure;
 
 const DEFAULT_CHUNK_SIZE: u32 = 64 * 1024; // 64kb
 
@@ -98,10 +100,26 @@ pub struct Writer {
 impl Channel {
     /// Create a new channel with the requested capacity (in bytes).
     ///
+    /// This uses [`ChannelBackpressure::Park`] for writer backpressure.
+    ///
     /// The channel is powered by the `channel_create` driver and errors are surfaced as
     /// [`DriverError`] values rather than panicking.
     pub async fn create(capacity: GuestUint) -> Result<Self, DriverError> {
-        let args = encode_args(&capacity)?;
+        Self::create_with_backpressure(capacity, ChannelBackpressure::Park).await
+    }
+
+    /// Create a new channel with the requested capacity (in bytes) and backpressure behaviour.
+    ///
+    /// The channel is powered by the `channel_create` driver and errors are surfaced as
+    /// [`DriverError`] values rather than panicking.
+    pub async fn create_with_backpressure(
+        capacity: GuestUint,
+        backpressure: ChannelBackpressure,
+    ) -> Result<Self, DriverError> {
+        let args = encode_args(&ChannelCreate {
+            capacity,
+            backpressure,
+        })?;
         let handle = DriverFuture::<channel_create::Module, RkyvDecoder<GuestUint>>::new(
             &args,
             8,

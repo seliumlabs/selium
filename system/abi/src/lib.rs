@@ -19,6 +19,7 @@ mod net;
 mod process;
 mod session;
 mod singleton;
+mod time;
 mod tls;
 
 // pub use external::*;
@@ -28,6 +29,7 @@ pub use net::*;
 pub use process::*;
 pub use session::*;
 pub use singleton::*;
+pub use time::*;
 pub use tls::*;
 
 /// Guest pointer-sized signed integer.
@@ -129,11 +131,12 @@ pub enum Capability {
     NetTlsClientConfig = 16,
     SingletonRegistry = 17,
     SingletonLookup = 18,
+    TimeRead = 19,
 }
 
 impl Capability {
     /// All capabilities understood by the Selium kernel ABI.
-    pub const ALL: [Capability; 19] = [
+    pub const ALL: [Capability; 20] = [
         Capability::SessionLifecycle,
         Capability::ChannelLifecycle,
         Capability::ChannelReader,
@@ -153,6 +156,7 @@ impl Capability {
         Capability::NetTlsClientConfig,
         Capability::SingletonRegistry,
         Capability::SingletonLookup,
+        Capability::TimeRead,
     ];
 }
 
@@ -313,6 +317,7 @@ impl TryFrom<u8> for Capability {
             16 => Ok(Capability::NetTlsClientConfig),
             17 => Ok(Capability::SingletonRegistry),
             18 => Ok(Capability::SingletonLookup),
+            19 => Ok(Capability::TimeRead),
             _ => Err(CapabilityDecodeError),
         }
     }
@@ -346,6 +351,7 @@ impl Display for Capability {
             Capability::NetTlsServerConfig => write!(f, "NetTlsServerConfig"),
             Capability::SingletonRegistry => write!(f, "SingletonRegistry"),
             Capability::SingletonLookup => write!(f, "SingletonLookup"),
+            Capability::TimeRead => write!(f, "TimeRead"),
         }
     }
 }

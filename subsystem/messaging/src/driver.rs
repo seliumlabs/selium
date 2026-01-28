@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use selium_abi::IoFrame;
+use selium_abi::{ChannelBackpressure, IoFrame};
 use selium_kernel::{
     drivers::{channel::ChannelCapability, io::IoCapability},
     guest_data::{GuestError, GuestUint},
@@ -34,8 +34,16 @@ impl ChannelCapability for ChannelDriver {
     type WeakWriter = WeakWriter;
     type Error = ChannelError;
 
-    fn create(&self, size: GuestUint) -> Result<Self::Channel, Self::Error> {
-        Ok(Channel::new(size as usize))
+    fn create(
+        &self,
+        size: GuestUint,
+        backpressure: ChannelBackpressure,
+    ) -> Result<Self::Channel, Self::Error> {
+        let backpressure = match backpressure {
+            ChannelBackpressure::Park => crate::Backpressure::Park,
+            ChannelBackpressure::Drop => crate::Backpressure::Drop,
+        };
+        Ok(Channel::with_parameters(size as usize, backpressure))
     }
 
     fn delete(&self, channel: Self::Channel) -> Result<(), Self::Error> {
@@ -95,7 +103,17 @@ impl IoCapability for ChannelStrongIoDriver {
     }
 
     async fn write(&self, writer: &mut Self::Writer, bytes: &[u8]) -> Result<(), Self::Error> {
-        writer.write_all(bytes).await?;
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let written = writer.write(&bytes[offset..]).await?;
+            if written == 0 {
+                if offset == 0 {
+                    return Ok(());
+                }
+                return Err(ChannelError::Io("write stalled mid-frame".to_string()));
+            }
+            offset += written;
+        }
         Ok(())
     }
 }
@@ -130,7 +148,17 @@ impl IoCapability for ChannelWeakIoDriver {
     }
 
     async fn write(&self, writer: &mut Self::Writer, bytes: &[u8]) -> Result<(), Self::Error> {
-        writer.write_all(bytes).await?;
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let written = writer.write(&bytes[offset..]).await?;
+            if written == 0 {
+                if offset == 0 {
+                    return Ok(());
+                }
+                return Err(ChannelError::Io("write stalled mid-frame".to_string()));
+            }
+            offset += written;
+        }
         Ok(())
     }
 }

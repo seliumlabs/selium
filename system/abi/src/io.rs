@@ -1,5 +1,26 @@
 use rkyv::{Archive, Deserialize, Serialize};
 
+/// Backpressure behaviour for channel writers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(bytecheck())]
+#[repr(u8)]
+pub enum ChannelBackpressure {
+    /// Writers wait for buffer space when the channel is full.
+    Park = 0,
+    /// Writers drop payloads when the channel is full.
+    Drop = 1,
+}
+
+/// Request to create a new channel.
+#[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[rkyv(bytecheck())]
+pub struct ChannelCreate {
+    /// Channel capacity in bytes.
+    pub capacity: crate::GuestUint,
+    /// Backpressure behaviour for writers.
+    pub backpressure: ChannelBackpressure,
+}
+
 /// Request to read data from a reader.
 #[derive(Debug, Clone, PartialEq, Eq, Archive, Serialize, Deserialize)]
 #[rkyv(bytecheck())]

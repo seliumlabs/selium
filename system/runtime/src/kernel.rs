@@ -113,6 +113,12 @@ pub fn build(work_dir: impl AsRef<Path>) -> Result<(Kernel, Arc<Notify>)> {
         .or_default()
         .push(singleton_ops.1.as_linkable());
 
+    let time_ops = drivers::time::operations();
+    capability_ops
+        .entry(Capability::TimeRead)
+        .or_default()
+        .extend([time_ops.0.as_linkable(), time_ops.1.as_linkable()]);
+
     let tls_ops = tls::operations();
     capability_ops
         .entry(Capability::NetTlsServerConfig)

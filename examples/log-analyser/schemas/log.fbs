@@ -1,0 +1,8 @@
+namespace examples.log_analyser;
+
+table Warning {
+    message:string;
+}
+
+root_type Warning;
+file_identifier "LOGA";

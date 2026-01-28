@@ -16,7 +16,7 @@ use crate::{
     operation::{Contract, Operation},
     registry::{InstanceRegistry, ResourceType},
 };
-use selium_abi::GuestResourceId;
+use selium_abi::{ChannelBackpressure, ChannelCreate, GuestResourceId};
 
 type ChannelLifecycleOps<C> = (
     Arc<Operation<ChannelCreateDriver<C>>>,
@@ -55,8 +55,12 @@ pub trait ChannelCapability: Send + Sync {
     type WeakReader: Send + Unpin;
     type Error: Into<GuestError>;
 
-    /// Create a new channel for transporting bytes
-    fn create(&self, size: GuestUint) -> Result<Self::Channel, Self::Error>;
+    /// Create a new channel for transporting bytes.
+    fn create(
+        &self,
+        size: GuestUint,
+        backpressure: ChannelBackpressure,
+    ) -> Result<Self::Channel, Self::Error>;
 
     /// Delete this channel
     fn delete(&self, channel: Self::Channel) -> Result<(), Self::Error>;
@@ -100,8 +104,12 @@ where
     type WeakReader = T::WeakReader;
     type Error = T::Error;
 
-    fn create(&self, size: GuestUint) -> Result<Self::Channel, Self::Error> {
-        self.as_ref().create(size)
+    fn create(
+        &self,
+        size: GuestUint,
+        backpressure: ChannelBackpressure,
+    ) -> Result<Self::Channel, Self::Error> {
+        self.as_ref().create(size, backpressure)
     }
 
     fn delete(&self, channel: Self::Channel) -> Result<(), Self::Error> {
@@ -135,19 +143,21 @@ impl<Impl> Contract for ChannelCreateDriver<Impl>
 where
     Impl: ChannelCapability + Clone + Send + 'static,
 {
-    type Input = GuestUint;
+    type Input = ChannelCreate;
     type Output = GuestUint;
 
     fn to_future(
         &self,
         caller: &mut Caller<'_, InstanceRegistry>,
-        size: Self::Input,
+        args: Self::Input,
     ) -> impl Future<Output = GuestResult<Self::Output>> + 'static {
         let inner = self.0.clone();
         let registry = caller.data().registry_arc();
 
         let result = (|| -> GuestResult<GuestUint> {
-            let channel = inner.create(size).map_err(Into::into)?;
+            let channel = inner
+                .create(args.capacity, args.backpressure)
+                .map_err(Into::into)?;
             let ptr = inner.ptr(&channel);
             let slot = caller
                 .data_mut()

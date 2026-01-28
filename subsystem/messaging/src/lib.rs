@@ -273,6 +273,25 @@ impl Channel {
             .unwrap_or(self.tail_cache.load(Ordering::Acquire))
     }
 
+    fn reader_start_pos(&self, head: Option<u64>) -> u64 {
+        if let Some(head) = head {
+            return head;
+        }
+
+        let tail = self.get_tail();
+        let floor = tail.saturating_sub(self.buf.size as u64);
+        let frames = self
+            .frames
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+
+        frames
+            .iter()
+            .find(|frame| frame.start >= floor)
+            .map(|frame| frame.start)
+            .unwrap_or(tail)
+    }
+
     fn remove_head(&self, idx: usize) {
         self.heads
             .write()
@@ -312,9 +331,18 @@ impl Channel {
         frames.iter().find(|frame| frame.start == pos).cloned()
     }
 
+    fn frame_from(&self, pos: u64) -> Option<FrameMeta> {
+        let frames = self
+            .frames
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        frames.iter().find(|frame| frame.start >= pos).cloned()
+    }
+
     fn prune_frames(&self) {
-        let Some(head) = self.get_head() else {
-            return;
+        let head = match self.get_head() {
+            Some(head) => head,
+            None => self.get_tail().saturating_sub(self.buf.size as u64),
         };
 
         let mut frames = self
@@ -441,17 +469,6 @@ impl Channel {
     /// Wake any readers that now have data available.
     #[instrument(parent = &self.span, skip(self))]
     fn schedule_readers(&self) {
-        // If nothing to schedule, exit early
-        if self
-            .heads
-            .read()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .is_empty()
-        {
-            return;
-        }
-
-        let head_pos = self.get_head().unwrap_or(0);
         let tail_pos = self.get_tail();
         let mut queue = self
             .queue
@@ -460,12 +477,12 @@ impl Channel {
 
         debug!(
             queued = queue.len(),
-            head_pos, tail_pos, "channel schedule_readers"
+            tail_pos, "channel schedule_readers"
         );
         // Dequeue and wake each Waker in a readable position
         queue
             .extract_if(.., |(pos, _)| {
-                let wake = *pos < tail_pos && *pos >= head_pos;
+                let wake = *pos < tail_pos;
                 if wake {
                     debug!(pos, "channel wake reader");
                 }
@@ -518,10 +535,7 @@ impl Channel {
             .heads
             .write()
             .unwrap_or_else(|poison| poison.into_inner());
-        let pos = Arc::new(AtomicU64::new(
-            self.get_head_locked(&heads)
-                .unwrap_or_else(|| self.get_tail().saturating_sub(self.buf.size as u64)),
-        ));
+        let pos = Arc::new(AtomicU64::new(self.reader_start_pos(self.get_head_locked(&heads))));
         let id = heads.push(pos.clone());
         drop(heads);
 
@@ -532,11 +546,7 @@ impl Channel {
     ///
     /// If you require a reader that cannot lose any data, create a `StrongReader` instead.
     pub fn new_weak_reader(self: &Arc<Channel>) -> WeakReader {
-        WeakReader::new(
-            self.clone(),
-            self.get_head()
-                .unwrap_or_else(|| self.get_tail().saturating_sub(self.buf.size as u64)),
-        )
+        WeakReader::new(self.clone(), self.reader_start_pos(self.get_head()))
     }
 
     /// Reserve a tail position of given length to write to.
@@ -899,7 +909,7 @@ mod tests {
             .push(Arc::new(AtomicU64::new(5)));
         let reader = channel.new_strong_reader();
         assert_eq!(channel.heads.read().unwrap().num_elements(), 1);
-        assert_eq!(reader.pos.load(Ordering::Acquire), 1);
+        assert_eq!(reader.pos.load(Ordering::Acquire), 5);
         drop(reader);
         assert!(channel.heads.read().unwrap().is_empty());
     }
@@ -948,6 +958,7 @@ mod tests {
             dst.copy_from_nonoverlapping((1..=4).collect::<Vec<_>>().as_ptr(), 4);
         }
         let mut reader = pin!(channel.new_strong_reader());
+        reader.pos.store(0, Ordering::Release);
 
         let mut buf = [0; 3];
         let mut rb = ReadBuf::new(&mut buf);
@@ -986,6 +997,7 @@ mod tests {
             dst.copy_from_nonoverlapping((1..=4).collect::<Vec<_>>().as_ptr(), 4);
         }
         let mut reader = pin!(channel.new_weak_reader());
+        reader.pos = 0;
 
         let mut buf = [0; 4];
         let mut rb = ReadBuf::new(&mut buf);

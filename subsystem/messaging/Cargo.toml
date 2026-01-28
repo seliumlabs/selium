@@ -18,7 +18,7 @@ selium-abi = { workspace = true }
 selium-kernel = { workspace = true }
 stable-vec = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 tracing = { workspace = true, features = ["attributes"] }
 
 [features]

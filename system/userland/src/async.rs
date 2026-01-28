@@ -124,6 +124,10 @@ struct BackgroundTask {
     future: Pin<Box<dyn Future<Output = ()>>>,
 }
 
+struct YieldNow {
+    yielded: bool,
+}
+
 impl BackgroundTask {
     fn new<F>(future: F) -> Self
     where
@@ -179,6 +183,20 @@ impl<T> Future for JoinHandle<T> {
     }
 }
 
+impl Future for YieldNow {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.yielded {
+            Poll::Ready(())
+        } else {
+            self.yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+}
+
 #[inline(always)]
 #[cfg(target_arch = "wasm32")]
 unsafe fn cell(offset: usize) -> *mut GuestAtomicUint {
@@ -227,6 +245,11 @@ where
     });
 
     JoinHandle { state }
+}
+
+/// Yield execution to the guest scheduler once.
+pub async fn yield_now() {
+    YieldNow { yielded: false }.await;
 }
 
 /// Block on a future using Selium's guest-side executor.

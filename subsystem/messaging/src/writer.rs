@@ -167,13 +167,13 @@ impl AsyncWrite for StrongWriter {
             // In Drop mode, if no space is available, drop immediately without reserving
             if matches!(chan.backpressure, Backpressure::Drop) {
                 let avail = chan.writable_size(self.pos.load(Ordering::Acquire)) as usize;
-                if avail == 0 {
+                if avail < len {
                     return Poll::Ready(Ok(0));
                 }
-                let reserve = avail.min(len) as u64;
+                let reserve = len as u64;
                 let pos = chan.reserve_slice(reserve);
                 self.pos.store(pos, Ordering::Release);
-                self.rem = reserve as usize;
+                self.rem = len;
                 chan.register_frame(pos, reserve, self.id.get());
                 pos
             } else {

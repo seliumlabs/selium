@@ -46,6 +46,7 @@ struct ModuleSpec {
 struct ModuleSpecBuilder {
     path: Option<String>,
     entrypoint: Option<String>,
+    log_uri: Option<String>,
     capabilities: Option<Vec<Capability>>,
     params: Option<Vec<ParamKind>>,
     args: Option<Vec<Argument>>,
@@ -78,6 +79,7 @@ impl ModuleSpecBuilder {
     fn is_empty(&self) -> bool {
         self.path.is_none()
             && self.entrypoint.is_none()
+            && self.log_uri.is_none()
             && self.capabilities.is_none()
             && self.params.is_none()
             && self.args.is_none()
@@ -151,10 +153,11 @@ macro_rules! emit_guest_log_event {
 /// Read module specifications from CLI strings and start each module with log forwarding.
 ///
 /// Input format per module: a `;`-delimited list of `key=value` entries. Required keys are
-/// `path`, `capabilities`, and `args`. Optional keys are `entrypoint` (defaults to `start`)
-/// and `params`. The `args` value is a comma-separated list of values that may be prefixed
-/// with `TYPE:` to infer parameter kinds. When `params` is omitted, every arg must be typed.
-/// The `path` must be relative to `work_dir`.
+/// `path` and `capabilities`. Optional keys are `entrypoint` (defaults to `start`), `log_uri`,
+/// `params`, and `args`. The runtime always injects the log URI buffer ahead of any user
+/// params; `log_uri` overrides the default empty value. The `args` value is a comma-separated
+/// list of values that may be prefixed with `TYPE:` to infer parameter kinds. When `params`
+/// is omitted, every arg must be typed. The `path` must be relative to `work_dir`.
 ///
 /// Supported argument types: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`,
 /// `f64`, `buffer`, `utf8`, `resource`. Buffer values support a `hex:` prefix to pass raw
@@ -227,6 +230,12 @@ fn parse_module_spec(raw: &str, work_dir: &Path) -> Result<ModuleSpec> {
                 }
                 builder.entrypoint = Some(value.to_string());
             }
+            "log_uri" | "log-uri" => {
+                if builder.log_uri.is_some() {
+                    return Err(anyhow!("entry {line_no}: duplicate log_uri"));
+                }
+                builder.log_uri = Some(value.to_string());
+            }
             "capabilities" => {
                 if builder.capabilities.is_some() {
                     return Err(anyhow!("entry {line_no}: duplicate capabilities"));
@@ -263,11 +272,13 @@ fn build_module_spec(builder: ModuleSpecBuilder, work_dir: &Path) -> Result<Modu
     let entrypoint = builder
         .entrypoint
         .unwrap_or_else(|| DEFAULT_ENTRYPOINT.to_string());
+    let log_uri = builder.log_uri;
     let capabilities = builder.capabilities.unwrap_or_default();
     let args = builder.args.unwrap_or_default();
     let params = builder.params.unwrap_or_default();
     let (params, values) = resolve_arguments(params, args)?;
-    let ModuleArgs { params, args } = build_module_args(params, values)?;
+    let ModuleArgs { params, args } =
+        inject_log_uri(build_module_args(params, values)?, log_uri)?;
 
     if path.trim().is_empty() {
         return Err(anyhow!("module path must not be empty"));
@@ -359,6 +370,7 @@ fn parse_capabilities(raw: &str) -> Result<Vec<Capability>> {
             "singletonlookup" | "singleton_lookup" | "singleton-lookup" => {
                 Capability::SingletonLookup
             }
+            "timeread" | "time_read" | "time-read" => Capability::TimeRead,
             _ => return Err(anyhow!("unknown capability `{item}`")),
         };
 
@@ -493,6 +505,18 @@ fn build_module_args(params: Vec<ParamKind>, values: Vec<String>) -> Result<Modu
         params: abi_params,
         args,
     })
+}
+
+fn inject_log_uri(mut args: ModuleArgs, log_uri: Option<String>) -> Result<ModuleArgs> {
+    let log_uri = match log_uri {
+        Some(value) if value.is_empty() => return Err(anyhow!("log_uri must not be empty")),
+        Some(value) => value,
+        None => String::new(),
+    };
+    args.params.insert(0, AbiParam::Buffer);
+    args.args
+        .insert(0, EntrypointArg::Buffer(log_uri.into_bytes()));
+    Ok(args)
 }
 
 fn map_param(kind: &ParamKind) -> AbiParam {
@@ -722,7 +746,7 @@ fn resolve_channel(registry: &Arc<Registry>, handle: GuestResourceId) -> Option<
 
 #[instrument(skip_all, fields(channel_id = format_args!("{:p}", channel.as_ref() as *const _)))]
 async fn forward_log_stream(channel: Arc<Channel>, module_label: &str) -> Result<()> {
-    let mut reader = channel.new_strong_reader();
+    let mut reader = channel.new_weak_reader();
     let span = Span::current();
 
     loop {

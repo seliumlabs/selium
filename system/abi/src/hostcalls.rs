@@ -9,11 +9,11 @@ use core::marker::PhantomData;
 use std::collections::BTreeMap;
 
 use crate::{
-    Capability, GuestResourceId, GuestUint, IoFrame, IoRead, IoWrite, NetAccept, NetAcceptReply,
-    NetConnect, NetConnectReply, NetCreateListener, NetCreateListenerReply, NetTlsClientConfig,
-    NetTlsConfigReply, NetTlsServerConfig, ProcessLogLookup, ProcessLogRegistration, ProcessStart,
-    RkyvEncode, SessionCreate, SessionEntitlement, SessionRemove, SessionResource, SingletonLookup,
-    SingletonRegister,
+    Capability, ChannelCreate, GuestResourceId, GuestUint, IoFrame, IoRead, IoWrite, NetAccept,
+    NetAcceptReply, NetConnect, NetConnectReply, NetCreateListener, NetCreateListenerReply,
+    NetTlsClientConfig, NetTlsConfigReply, NetTlsServerConfig, ProcessLogLookup,
+    ProcessLogRegistration, ProcessStart, RkyvEncode, SessionCreate, SessionEntitlement,
+    SessionRemove, SessionResource, SingletonLookup, SingletonRegister, TimeNow, TimeSleep,
 };
 
 /// Type-erased metadata describing a hostcall.
@@ -73,7 +73,7 @@ macro_rules! declare_hostcalls {
         $( $ident:ident => {
             name: $name:literal,
             capability: $cap:path,
-            input: $input:path,
+            input: $input:ty,
             output: $output:ty
         }, )+
     ) => {
@@ -158,7 +158,7 @@ declare_hostcalls! {
     CHANNEL_CREATE => {
         name: "selium::channel::create",
         capability: Capability::ChannelLifecycle,
-        input: GuestUint,
+        input: ChannelCreate,
         output: GuestUint
     },
     CHANNEL_DELETE => {
@@ -208,6 +208,18 @@ declare_hostcalls! {
         capability: Capability::SingletonLookup,
         input: SingletonLookup,
         output: GuestResourceId
+    },
+    TIME_NOW => {
+        name: "selium::time::now",
+        capability: Capability::TimeRead,
+        input: (),
+        output: TimeNow
+    },
+    TIME_SLEEP => {
+        name: "selium::time::sleep",
+        capability: Capability::TimeRead,
+        input: TimeSleep,
+        output: ()
     },
     CHANNEL_STRONG_READER_CREATE => {
         name: "selium::channel::strong_reader_create",
