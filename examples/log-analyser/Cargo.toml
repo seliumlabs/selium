@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = { workspace = true }
 flatbuffers = { workspace = true }
-futures = { workspace = true, features = ["std"] }
+futures = { workspace = true, features = ["async-await", "std"] }
 # selium-atlas = { workspace = true }
 selium-atlas = { path = "../../../../selium-modules/main/atlas/client" }
 # selium-switchboard = { workspace = true }
