@@ -1737,37 +1737,14 @@ dependencies = [
 [[package]]
 name = "selium-atlas"
 version = "0.1.1"
-dependencies = [
- "futures",
- "selium-atlas-protocol 0.1.1",
- "selium-switchboard 0.3.0",
- "selium-userland 1.0.0-alpha.3",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "selium-atlas"
-version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8d93f875a7c8dbdeed8524214db573d045eb77a222539aa90e947c29bbe7f1"
 dependencies = [
  "futures",
- "selium-atlas-protocol 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-atlas-protocol",
  "selium-userland 1.0.0-alpha.2",
  "thiserror 2.0.18",
  "tracing",
-]
-
-[[package]]
-name = "selium-atlas-protocol"
-version = "0.1.1"
-dependencies = [
- "flatbuffers",
- "flatbuffers-build",
- "flatc-fork",
- "thiserror 2.0.18",
- "url",
 ]
 
 [[package]]
@@ -1792,8 +1769,8 @@ dependencies = [
  "flatbuffers-build",
  "flatc-fork",
  "futures",
- "selium-atlas 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "selium-switchboard 0.2.0",
+ "selium-atlas",
+ "selium-switchboard",
  "selium-userland 1.0.0-alpha.2",
  "tracing",
 ]
@@ -1817,24 +1794,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
- "selium-atlas 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "selium-switchboard 0.2.0",
+ "selium-atlas",
+ "selium-switchboard",
  "selium-userland 1.0.0-alpha.2",
- "tracing",
-]
-
-[[package]]
-name = "selium-example-log-analyser"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "flatbuffers",
- "flatbuffers-build",
- "flatc-fork",
- "futures",
- "selium-atlas 0.1.1",
- "selium-switchboard 0.3.0",
- "selium-userland 1.0.0-alpha.3",
  "tracing",
 ]
 
@@ -1859,8 +1821,8 @@ dependencies = [
  "flatbuffers-build",
  "flatc-fork",
  "futures",
- "selium-atlas 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "selium-switchboard 0.2.0",
+ "selium-atlas",
+ "selium-switchboard",
  "selium-userland 1.0.0-alpha.2",
  "tracing",
 ]
@@ -1970,20 +1932,8 @@ checksum = "a931a1dcce3750a6976c1a1cfdc8c8b60f2ceab4d8b4af9d0ee1e8812dbedc93"
 dependencies = [
  "futures",
  "pin-project",
- "selium-switchboard-protocol 0.2.0",
+ "selium-switchboard-protocol",
  "selium-userland 1.0.0-alpha.2",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "selium-switchboard"
-version = "0.3.0"
-dependencies = [
- "futures",
- "pin-project",
- "selium-switchboard-protocol 0.3.0",
- "selium-userland 1.0.0-alpha.3",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -1993,16 +1943,6 @@ name = "selium-switchboard-protocol"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5465dd14dc33535b5bbc72089cc305413a6d3db134960c10aaa6e2921b3ca64e"
-dependencies = [
- "flatbuffers",
- "flatbuffers-build",
- "flatc-fork",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "selium-switchboard-protocol"
-version = "0.3.0"
 dependencies = [
  "flatbuffers",
  "flatbuffers-build",
