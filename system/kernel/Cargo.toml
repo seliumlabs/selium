@@ -22,7 +22,8 @@ tokio = { workspace = true, features = [
   "io-util",
   "macros",
   "rt-multi-thread",
-  "sync"
+  "sync",
+  "time"
 ] }
 tracing = { workspace = true, features = ["attributes"] }
 uuid = { workspace = true, features = ["v4"] }
