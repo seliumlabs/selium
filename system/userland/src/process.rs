@@ -360,9 +360,6 @@ mod tests {
         let bytes = encode_start_args(builder).expect("encode");
         let start = decode_rkyv::<ProcessStart>(&bytes).expect("decode");
         assert_eq!(start.entrypoint.signature.params()[0], AbiParam::Buffer);
-        assert_eq!(
-            start.entrypoint.args[0],
-            EntrypointArg::Buffer(Vec::new())
-        );
+        assert_eq!(start.entrypoint.args[0], EntrypointArg::Buffer(Vec::new()));
     }
 }

@@ -475,10 +475,7 @@ impl Channel {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
 
-        debug!(
-            queued = queue.len(),
-            tail_pos, "channel schedule_readers"
-        );
+        debug!(queued = queue.len(), tail_pos, "channel schedule_readers");
         // Dequeue and wake each Waker in a readable position
         queue
             .extract_if(.., |(pos, _)| {
@@ -535,7 +532,9 @@ impl Channel {
             .heads
             .write()
             .unwrap_or_else(|poison| poison.into_inner());
-        let pos = Arc::new(AtomicU64::new(self.reader_start_pos(self.get_head_locked(&heads))));
+        let pos = Arc::new(AtomicU64::new(
+            self.reader_start_pos(self.get_head_locked(&heads)),
+        ));
         let id = heads.push(pos.clone());
         drop(heads);
 

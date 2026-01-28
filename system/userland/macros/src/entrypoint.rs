@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
-use proc_macro2::Span;
 use proc_macro_crate::{FoundCrate, crate_name};
+use proc_macro2::Span;
 use quote::quote;
 use syn::{
     Error, FnArg, Ident, ItemFn, Pat, PatIdent, PatType, ReturnType, Type, parse_macro_input,

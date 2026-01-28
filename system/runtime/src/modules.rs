@@ -277,8 +277,7 @@ fn build_module_spec(builder: ModuleSpecBuilder, work_dir: &Path) -> Result<Modu
     let args = builder.args.unwrap_or_default();
     let params = builder.params.unwrap_or_default();
     let (params, values) = resolve_arguments(params, args)?;
-    let ModuleArgs { params, args } =
-        inject_log_uri(build_module_args(params, values)?, log_uri)?;
+    let ModuleArgs { params, args } = inject_log_uri(build_module_args(params, values)?, log_uri)?;
 
     if path.trim().is_empty() {
         return Err(anyhow!("module path must not be empty"));

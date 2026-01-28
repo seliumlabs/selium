@@ -77,13 +77,7 @@ fn monotonic_ms() -> u64 {
 /// Build hostcall operations for time access.
 pub fn operations() -> TimeOps {
     (
-        Operation::from_hostcall(
-            TimeNowDriver,
-            selium_abi::hostcall_contract!(TIME_NOW),
-        ),
-        Operation::from_hostcall(
-            TimeSleepDriver,
-            selium_abi::hostcall_contract!(TIME_SLEEP),
-        ),
+        Operation::from_hostcall(TimeNowDriver, selium_abi::hostcall_contract!(TIME_NOW)),
+        Operation::from_hostcall(TimeSleepDriver, selium_abi::hostcall_contract!(TIME_SLEEP)),
     )
 }

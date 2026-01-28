@@ -233,12 +233,9 @@ fn expand_enum(
     }
 
     if unit_variants.is_empty() {
-        return syn::Error::new_spanned(
-            en,
-            "#[schema] enums require at least one unit variant",
-        )
-        .to_compile_error()
-        .into();
+        return syn::Error::new_spanned(en, "#[schema] enums require at least one unit variant")
+            .to_compile_error()
+            .into();
     }
 
     let to_flatbuffer_variants = unit_variants.iter().map(|variant| {
