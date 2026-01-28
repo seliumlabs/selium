@@ -1719,6 +1719,8 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "selium-abi"
 version = "1.0.0-alpha.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8af119a43a7987d6efde3a41f274c604e6764b00d1ead88215747eff7f81229"
 dependencies = [
  "rkyv",
  "thiserror 2.0.18",
@@ -1726,9 +1728,7 @@ dependencies = [
 
 [[package]]
 name = "selium-abi"
-version = "1.0.0-alpha.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8af119a43a7987d6efde3a41f274c604e6764b00d1ead88215747eff7f81229"
+version = "1.0.0-alpha.4"
 dependencies = [
  "rkyv",
  "thiserror 2.0.18",
@@ -1742,7 +1742,7 @@ checksum = "30111aee20c93bfb8c97845ef8eadf02dfb45062dae1b13cbc3b276395f94ef1"
 dependencies = [
  "futures",
  "selium-atlas-protocol",
- "selium-userland 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland 1.0.0-alpha.3",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -1771,7 +1771,7 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland 1.0.0-alpha.3",
  "tracing",
 ]
 
@@ -1784,7 +1784,7 @@ dependencies = [
  "flatbuffers-build",
  "flatc-fork",
  "futures",
- "selium-userland 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland 1.0.0-alpha.3",
  "tracing",
 ]
 
@@ -1796,7 +1796,7 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland 1.0.0-alpha.3",
  "tracing",
 ]
 
@@ -1811,7 +1811,7 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland 1.0.0-alpha.3",
  "tracing",
 ]
 
@@ -1821,7 +1821,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
- "selium-userland 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland 1.0.0-alpha.3",
  "serde",
  "serde_json",
  "tracing",
@@ -1838,13 +1838,13 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland 1.0.0-alpha.3",
  "tracing",
 ]
 
 [[package]]
 name = "selium-filesystem-store"
-version = "1.0.0-alpha.3"
+version = "1.0.0-alpha.4"
 dependencies = [
  "path-security",
  "selium-kernel",
@@ -1852,13 +1852,13 @@ dependencies = [
 
 [[package]]
 name = "selium-kernel"
-version = "1.0.0-alpha.3"
+version = "1.0.0-alpha.4"
 dependencies = [
  "futures-util",
  "libc",
  "parking_lot",
  "rkyv",
- "selium-abi 1.0.0-alpha.3",
+ "selium-abi 1.0.0-alpha.4",
  "sharded-slab",
  "thiserror 2.0.18",
  "tokio",
@@ -1869,12 +1869,12 @@ dependencies = [
 
 [[package]]
 name = "selium-messaging"
-version = "1.0.0-alpha.3"
+version = "1.0.0-alpha.4"
 dependencies = [
  "futures",
  "loom",
  "pin-project",
- "selium-abi 1.0.0-alpha.3",
+ "selium-abi 1.0.0-alpha.4",
  "selium-kernel",
  "stable-vec",
  "thiserror 2.0.18",
@@ -1884,7 +1884,7 @@ dependencies = [
 
 [[package]]
 name = "selium-net-hyper"
-version = "1.0.0-alpha.3"
+version = "1.0.0-alpha.4"
 dependencies = [
  "futures-util",
  "http-body-util",
@@ -1892,7 +1892,7 @@ dependencies = [
  "hyper-util",
  "rustls",
  "rustls-pki-types",
- "selium-abi 1.0.0-alpha.3",
+ "selium-abi 1.0.0-alpha.4",
  "selium-kernel",
  "thiserror 2.0.18",
  "tokio",
@@ -1903,13 +1903,13 @@ dependencies = [
 
 [[package]]
 name = "selium-net-quinn"
-version = "1.0.0-alpha.3"
+version = "1.0.0-alpha.4"
 dependencies = [
  "futures-util",
  "parking_lot",
  "quinn",
  "rustls-pki-types",
- "selium-abi 1.0.0-alpha.3",
+ "selium-abi 1.0.0-alpha.4",
  "selium-kernel",
  "thiserror 2.0.18",
  "tracing",
@@ -1918,20 +1918,20 @@ dependencies = [
 
 [[package]]
 name = "selium-runtime"
-version = "1.0.0-alpha.3"
+version = "1.0.0-alpha.4"
 dependencies = [
  "anyhow",
  "clap",
  "rcgen",
  "rustls",
  "rustls-pki-types",
- "selium-abi 1.0.0-alpha.3",
+ "selium-abi 1.0.0-alpha.4",
  "selium-filesystem-store",
  "selium-kernel",
  "selium-messaging",
  "selium-net-hyper",
  "selium-net-quinn",
- "selium-userland 1.0.0-alpha.3",
+ "selium-userland 1.0.0-alpha.4",
  "selium-wasmtime",
  "tokio",
  "tracing",
@@ -1948,7 +1948,7 @@ dependencies = [
  "futures",
  "pin-project",
  "selium-switchboard-protocol",
- "selium-userland 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland 1.0.0-alpha.3",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -1968,6 +1968,8 @@ dependencies = [
 [[package]]
 name = "selium-userland"
 version = "1.0.0-alpha.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaa599930052999606a44e3e11dc8fcf7574371989f80ea09c05458c47dbed43"
 dependencies = [
  "anyhow",
  "flatbuffers",
@@ -1985,9 +1987,7 @@ dependencies = [
 
 [[package]]
 name = "selium-userland"
-version = "1.0.0-alpha.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaa599930052999606a44e3e11dc8fcf7574371989f80ea09c05458c47dbed43"
+version = "1.0.0-alpha.4"
 dependencies = [
  "anyhow",
  "flatbuffers",
@@ -1995,27 +1995,12 @@ dependencies = [
  "flatc-fork",
  "futures",
  "rkyv",
- "selium-abi 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
- "selium-userland-macros 1.0.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-abi 1.0.0-alpha.4",
+ "selium-userland-macros 1.0.0-alpha.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "selium-userland-macros"
-version = "1.0.0-alpha.3"
-dependencies = [
- "anyhow",
- "blake3",
- "flatbuffers",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "selium-userland 1.0.0-alpha.3",
- "syn",
- "trybuild",
 ]
 
 [[package]]
@@ -2032,10 +2017,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "selium-wasmtime"
-version = "1.0.0-alpha.3"
+name = "selium-userland-macros"
+version = "1.0.0-alpha.4"
 dependencies = [
- "selium-abi 1.0.0-alpha.3",
+ "anyhow",
+ "blake3",
+ "flatbuffers",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "selium-userland 1.0.0-alpha.4",
+ "syn",
+ "trybuild",
+]
+
+[[package]]
+name = "selium-wasmtime"
+version = "1.0.0-alpha.4"
+dependencies = [
+ "selium-abi 1.0.0-alpha.4",
  "selium-kernel",
  "thiserror 2.0.18",
  "tokio",
