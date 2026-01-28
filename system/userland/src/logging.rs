@@ -250,14 +250,11 @@ pub fn set_log_uri_registrar(
     LOG_URI_REGISTRAR
         .set(registrar)
         .map_err(|_| InitError::Register("log URI registrar already set".to_string()))?;
-    if let Some(state) = LOGGING.get() {
-        if let Ok(state) = state.as_ref() {
-            if let Some(pending) = take_pending_log_uri(state)? {
-                r#async::block_on(async {
-                    register_log_uri(pending.uri.as_str(), pending.shared).await
-                })?;
-            }
-        }
+    if let Some(state) = LOGGING.get()
+        && let Ok(state) = state.as_ref()
+        && let Some(pending) = take_pending_log_uri(state)?
+    {
+        r#async::block_on(async { register_log_uri(pending.uri.as_str(), pending.shared).await })?;
     }
     Ok(())
 }

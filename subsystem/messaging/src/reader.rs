@@ -159,22 +159,19 @@ impl StrongReader {
 
         let draining = chan.draining.load(Ordering::Acquire);
 
-        let frame = loop {
-            if let Some(frame) = chan.frame_for(pos) {
-                break frame;
+        let frame = if let Some(frame) = chan.frame_for(pos) {
+            frame
+        } else if matches!(chan.backpressure, Backpressure::Drop)
+            && let Some(frame) = chan.frame_from(pos)
+        {
+            if frame.start > pos {
+                self.pos.store(frame.start, Ordering::Release);
+                pos = frame.start;
             }
-            if matches!(chan.backpressure, Backpressure::Drop) {
-                if let Some(frame) = chan.frame_from(pos) {
-                    if frame.start > pos {
-                        self.pos.store(frame.start, Ordering::Release);
-                        pos = frame.start;
-                    }
-                    break frame;
-                }
-            }
-            if draining {
-                return Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::Interrupted)));
-            }
+            frame
+        } else if draining {
+            return Poll::Ready(Err(std::io::Error::from(std::io::ErrorKind::Interrupted)));
+        } else {
             chan.enqueue(pos, cx.waker().to_owned());
             debug!("frame metadata pending");
             return Poll::Pending;
