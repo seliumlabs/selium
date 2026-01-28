@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-selium-userland = "1.0.0-alpha.2"
+selium-userland = "1.0.0-alpha.3"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
 tracing = { workspace = true }

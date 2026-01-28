@@ -11,11 +11,9 @@ crate-type = ["cdylib"]
 anyhow = { workspace = true }
 flatbuffers = { workspace = true }
 futures = { workspace = true, features = ["async-await", "std"] }
-# selium-atlas = { workspace = true }
-selium-atlas = { path = "../../../../selium-modules/main/atlas/client" }
-# selium-switchboard = { workspace = true }
-selium-switchboard = { path = "../../../../selium-modules/main/switchboard/client" }
-selium-userland = { path = "../../system/userland" }
+selium-atlas = { workspace = true }
+selium-switchboard = { workspace = true }
+selium-userland = "1.0.0-alpha.3"
 tracing = { workspace = true }
 
 [build-dependencies]
