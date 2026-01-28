@@ -1,6 +1,6 @@
 # Traffic Analyser Example
 
-An example of how to run out-of-band analysis of network traffic patterns.
+An example of how to run out-of-band analysis of log traffic.
 
 ## Usage
 
@@ -59,20 +59,7 @@ cargo run -p selium-runtime -- \
 
 ### 5. Start the example modules
 
-Start the log analyser app after the log producer is running (the analyser performs a one-time Atlas lookup). It looks for error and warning log floods on `sel://example/app/logs` over a 5 second window.
-
-```bash
-cd selium-modules/remote-client
-cargo run -p selium-remote-cli -- \
-    --cert-dir ../../certs \
-    start selium_example_log_analyser.wasm analyser \
-    -a utf8:sel://example/app/logs -a utf8:sel://example/logs/alerts -a u32:5 \
-    --log-uri sel://example/logs/analyser \
-    --attach \
-    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
-```
-
-Then to simulate a flood of warnings, run the "test_warnings" entrypoint:
+First, simulate a flood of warnings by running the "test_warnings" entrypoint:
 
 ```bash
 cd selium-modules/remote-client
@@ -92,4 +79,17 @@ cargo run -p selium-remote-cli -- \
     start selium_example_log_analyser.wasm test_errors \
     --log-uri sel://example/app/logs \
     --capabilities ChannelReader,SingletonLookup
+```
+
+Then start the log analyser app. It looks for error and warning log floods on `sel://example/app/logs` over a 5 second window.
+
+```bash
+cd selium-modules/remote-client
+cargo run -p selium-remote-cli -- \
+    --cert-dir ../../certs \
+    start selium_example_log_analyser.wasm analyser \
+    -a utf8:sel://example/app/logs -a utf8:sel://example/logs/alerts -a u32:5 \
+    --log-uri sel://example/logs/analyser \
+    --attach \
+    --capabilities ChannelLifecycle,ChannelReader,ChannelWriter,SingletonLookup
 ```
