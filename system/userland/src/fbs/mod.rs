@@ -17,8 +17,6 @@ pub mod selium {
     use super::*;
     mod net_connection_generated;
     pub use self::net_connection_generated::*;
-    mod net_protocol_generated;
-    pub use self::net_protocol_generated::*;
     mod net_reader_generated;
     pub use self::net_reader_generated::*;
     mod net_writer_generated;

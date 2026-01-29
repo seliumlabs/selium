@@ -10,15 +10,18 @@ const SCHEMAS: [&str; 3] = [
 ];
 
 fn main() {
-    println!("cargo::rerun-if-changed=schemas/");
+    // Don't run on docs.rs infrastructure to avoid kersplosions
+    if std::env::var("DOCS_RS").is_err() {
+        println!("cargo::rerun-if-changed=schemas/");
 
-    BuilderOptions::new_with_files(SCHEMAS)
-        .set_output_path("src/fbs/")
-        .set_compiler(flatc().to_str().expect("Non UTF-8 path to flatc binary"))
-        .compile()
-        .expect("flatbuffer compilation failed");
+        BuilderOptions::new_with_files(SCHEMAS)
+            .set_output_path("src/fbs/")
+            .set_compiler(flatc().to_str().expect("Non UTF-8 path to flatc binary"))
+            .compile()
+            .expect("flatbuffer compilation failed");
 
-    rewrite_module_root("src/fbs").expect("failed to rewrite module root file");
+        rewrite_module_root("src/fbs").expect("failed to rewrite module root file");
+    }
 }
 
 fn rewrite_module_root(root: impl AsRef<Path>) -> std::io::Result<()> {

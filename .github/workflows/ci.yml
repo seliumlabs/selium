@@ -62,6 +62,22 @@ jobs:
       - name: cargo test --ignored
         run: cargo test -- --ignored
 
+  docs:
+    name: docs.rs test build
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/install@cargo-docs-rs
+      - uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: cargo docs-rs
+        run: cargo +nightly docs-rs -p selium-userland
+
   loom:
     name: Loom tests
     runs-on: ubuntu-latest
