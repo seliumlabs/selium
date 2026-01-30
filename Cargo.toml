@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
+  "examples/data-pipeline",
   "examples/echo",
   "examples/echo-no-deps",
   "examples/load-balancer",
   "examples/log-analyser",
+  "examples/orchestrator",
   "examples/rest-api",
   "examples/waf",
   "subsystem/filesystem-store",

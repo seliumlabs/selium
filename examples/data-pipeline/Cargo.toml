@@ -1,5 +1,5 @@
 [package]
-name = "selium-example-echo-no-deps"
+name = "selium-example-data-pipeline"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -11,7 +11,9 @@ crate-type = ["cdylib"]
 anyhow = { workspace = true }
 flatbuffers = { workspace = true }
 futures = { workspace = true, features = ["std"] }
-selium-userland = { workspace = true }
+selium-atlas = { workspace = true, features = ["switchboard"] }
+selium-switchboard = { workspace = true }
+selium-userland = "1.0.0-alpha.5"
 tracing = { workspace = true }
 
 [build-dependencies]

@@ -1,0 +1,34 @@
+namespace examples.orchestrator;
+
+/// Configuration updates broadcast to workers.
+table ConfigUpdate {
+  /// Configuration version.
+  version:uint;
+  /// Multiplier applied to each payload.
+  multiplier:uint;
+  /// Human-readable note.
+  note:string;
+}
+
+/// Work item dispatched by the orchestrator.
+table WorkItem {
+  /// Work identifier.
+  id:uint;
+  /// Payload to transform.
+  payload:string;
+}
+
+/// Result emitted by a worker.
+table WorkResult {
+  /// Work identifier.
+  id:uint;
+  /// Worker label.
+  worker:string;
+  /// Config version used.
+  config_version:uint;
+  /// Output payload.
+  output:string;
+}
+
+root_type ConfigUpdate;
+file_identifier "ORCH";

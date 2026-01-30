@@ -13,7 +13,7 @@ flatbuffers = { workspace = true }
 futures = { workspace = true, features = ["async-await", "std"] }
 selium-atlas = { workspace = true }
 selium-switchboard = { workspace = true }
-selium-userland = "1.0.0-alpha.3"
+selium-userland = "1.0.0-alpha.5"
 tracing = { workspace = true }
 
 [build-dependencies]

@@ -206,9 +206,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "clap"
-version = "4.5.55"
+version = "4.5.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e34525d5bbbd55da2bb745d34b36121baac88d07619a9a09cfcf4a6c0832785"
+checksum = "a75ca66430e33a14957acc24c5077b503e7d374151b2b4b3a10c83b4ceb4be0e"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -216,9 +216,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.55"
+version = "4.5.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59a20016a20a3da95bef50ec7238dbd09baeef4311dcdd38ec15aba69812fb61"
+checksum = "793207c7fa6300a0608d1080b858e5fdbe713cdc1c8db9fb17777d8a13e63df0"
 dependencies = [
  "anstyle",
  "clap_lex",
@@ -1718,9 +1718,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "selium-abi"
-version = "1.0.0-alpha.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8af119a43a7987d6efde3a41f274c604e6764b00d1ead88215747eff7f81229"
+version = "1.0.0-alpha.5"
 dependencies = [
  "rkyv",
  "thiserror 2.0.18",
@@ -1729,6 +1727,8 @@ dependencies = [
 [[package]]
 name = "selium-abi"
 version = "1.0.0-alpha.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0565bb6b11a576fdce6c752edb13c77be8c2c23da96c2a5e0264864ca0c6c9fa"
 dependencies = [
  "rkyv",
  "thiserror 2.0.18",
@@ -1742,7 +1742,8 @@ checksum = "30111aee20c93bfb8c97845ef8eadf02dfb45062dae1b13cbc3b276395f94ef1"
 dependencies = [
  "futures",
  "selium-atlas-protocol",
- "selium-userland 1.0.0-alpha.3",
+ "selium-switchboard",
+ "selium-userland 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -1761,6 +1762,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "selium-example-data-pipeline"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flatbuffers",
+ "flatbuffers-build",
+ "flatc-fork",
+ "futures",
+ "selium-atlas",
+ "selium-switchboard",
+ "selium-userland 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
+]
+
+[[package]]
 name = "selium-example-echo"
 version = "0.1.0"
 dependencies = [
@@ -1771,7 +1787,7 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.3",
+ "selium-userland 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing",
 ]
 
@@ -1796,7 +1812,7 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.3",
+ "selium-userland 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing",
 ]
 
@@ -1811,7 +1827,20 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.3",
+ "selium-userland 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
+]
+
+[[package]]
+name = "selium-example-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flatbuffers",
+ "flatbuffers-build",
+ "flatc-fork",
+ "futures",
+ "selium-userland 1.0.0-alpha.5",
  "tracing",
 ]
 
@@ -1838,7 +1867,7 @@ dependencies = [
  "futures",
  "selium-atlas",
  "selium-switchboard",
- "selium-userland 1.0.0-alpha.3",
+ "selium-userland 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "tracing",
 ]
 
@@ -1941,48 +1970,28 @@ dependencies = [
 
 [[package]]
 name = "selium-switchboard"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5cd2c9fad7540741e240f732c6d8962840094453397fa0033ab3ab72baa7965"
+checksum = "0349e8829733d621eaa1740d7cc535a3b1f1bc91d7faeebcb46663bd8ab15a03"
 dependencies = [
  "futures",
  "pin-project",
  "selium-switchboard-protocol",
- "selium-userland 1.0.0-alpha.3",
+ "selium-userland 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.18",
  "tracing",
 ]
 
 [[package]]
 name = "selium-switchboard-protocol"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4f0d73e243de2e306b93a4a7e58a734ebab11e329eeb86efaffc507b5d41991"
+checksum = "7c886e6aff23e723ef5689eb4b9dfb911dd50e404e6610c2a569fe84f0915a3d"
 dependencies = [
  "flatbuffers",
  "flatbuffers-build",
  "flatc-fork",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "selium-userland"
-version = "1.0.0-alpha.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eaa599930052999606a44e3e11dc8fcf7574371989f80ea09c05458c47dbed43"
-dependencies = [
- "anyhow",
- "flatbuffers",
- "flatbuffers-build",
- "flatc-fork",
- "futures",
- "rkyv",
- "selium-abi 1.0.0-alpha.3",
- "selium-userland-macros 1.0.0-alpha.3",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2004,16 +2013,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "selium-userland-macros"
-version = "1.0.0-alpha.3"
+name = "selium-userland"
+version = "1.0.0-alpha.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5362d692e937ffbfe6c0ef8b187fe6e538cd143fed08a5103cf31c63811bd1ab"
+checksum = "243143a653d82a223628b2828d856b38c01b9dfef0a5ccc5226b582b358f08f5"
 dependencies = [
- "blake3",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn",
+ "anyhow",
+ "flatbuffers",
+ "flatbuffers-build",
+ "flatc-fork",
+ "futures",
+ "rkyv",
+ "selium-abi 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "selium-userland-macros 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2029,6 +2045,19 @@ dependencies = [
  "selium-userland 1.0.0-alpha.5",
  "syn",
  "trybuild",
+]
+
+[[package]]
+name = "selium-userland-macros"
+version = "1.0.0-alpha.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "314f28e9963142b4167708fe4111f3c8f44d1f644224f2382e7c0a1be2756b1f"
+dependencies = [
+ "blake3",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -3170,18 +3199,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.35"
+version = "0.8.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fdea86ddd5568519879b8187e1cf04e24fce28f7fe046ceecbce472ff19a2572"
+checksum = "dafd85c832c1b68bbb4ec0c72c7f6f4fc5179627d2bc7c26b30e4c0cc11e76cc"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.35"
+version = "0.8.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c15e1b46eff7c6c91195752e0eeed8ef040e391cdece7c25376957d5f15df22"
+checksum = "7cb7e4e8436d9db52fbd6625dbf2f45243ab84994a72882ec8227b99e72b439a"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -12,6 +12,59 @@ use tracing::{debug, error};
 const CONCURRENT_REQUESTS: usize = 50;
 /// Internal URI that HTTP requests are published on.
 const LB_URI: &str = "sel://example.org/web/prod/api";
+
+#[entrypoint]
+async fn load_balancer(ctx: Context, domain: &str, port: u16) -> Result<()> {
+    let switchboard = ctx.require::<Switchboard>().await;
+    let atlas = ctx.require::<Atlas>().await;
+
+    let lb: Fanout<Connection> = Fanout::create(&switchboard).await?;
+    atlas
+        .insert(Uri::parse(LB_URI).unwrap(), lb.endpoint_id() as u64)
+        .await?;
+
+    let listener = HttpListener::bind(domain, port).await?;
+    listener
+        .incoming()
+        .and_then(|mut conn| async move {
+            conn.prepare_for_transfer().await?;
+            Ok(conn)
+        })
+        .map_err(SwitchboardError::Driver)
+        .forward(lb)
+        .await?;
+
+    Ok(())
+}
+
+#[entrypoint]
+async fn conn_handler(ctx: Context) -> Result<()> {
+    let switchboard = ctx.require::<Switchboard>().await;
+    let atlas = ctx.require::<Atlas>().await;
+
+    let requests: Subscriber<Connection> = Subscriber::create(&switchboard).await?;
+    let lb = atlas
+        .get(&Uri::parse(LB_URI).unwrap())
+        .await?
+        .context("load balancer endpoint not found")?;
+    requests.connect(&switchboard, lb as u32).await?;
+
+    requests
+        .for_each_concurrent(CONCURRENT_REQUESTS, |result| async move {
+            match result {
+                Ok(conn) => handle_connection(conn).await,
+                Err(err) => {
+                    error!(error = ?err, "failed to receive connection");
+                }
+            }
+        })
+        .await;
+
+    Ok(())
+}
+
+// Note: Protocol-level logic is temporary
+
 const HEADER_END: &[u8] = b"\r\n\r\n";
 const HTTP_VERSION: &str = "HTTP/1.1";
 const CONTENT_TYPE: &str = "text/plain; charset=utf-8";
@@ -139,54 +192,4 @@ async fn handle_connection(mut conn: Connection) {
     if let Err(err) = conn.send(response).await {
         error!(error = ?err, "failed to send response");
     }
-}
-
-#[entrypoint]
-async fn load_balancer(ctx: Context, domain: &str, port: u16) -> Result<()> {
-    let switchboard = ctx.require::<Switchboard>().await;
-    let atlas = ctx.require::<Atlas>().await;
-
-    let lb: Fanout<Connection> = Fanout::create(&switchboard).await?;
-    atlas
-        .insert(Uri::parse(LB_URI).unwrap(), lb.endpoint_id() as u64)
-        .await?;
-
-    let listener = HttpListener::bind(domain, port).await?;
-    listener
-        .incoming()
-        .and_then(|mut conn| async move {
-            conn.prepare_for_transfer().await?;
-            Ok(conn)
-        })
-        .map_err(SwitchboardError::Driver)
-        .forward(lb)
-        .await?;
-
-    Ok(())
-}
-
-#[entrypoint]
-async fn conn_handler(ctx: Context) -> Result<()> {
-    let switchboard = ctx.require::<Switchboard>().await;
-    let atlas = ctx.require::<Atlas>().await;
-
-    let requests: Subscriber<Connection> = Subscriber::create(&switchboard).await?;
-    let lb = atlas
-        .get(&Uri::parse(LB_URI).unwrap())
-        .await?
-        .context("load balancer endpoint not found")?;
-    requests.connect(&switchboard, lb as u32).await?;
-
-    requests
-        .for_each_concurrent(CONCURRENT_REQUESTS, |result| async move {
-            match result {
-                Ok(conn) => handle_connection(conn).await,
-                Err(err) => {
-                    error!(error = ?err, "failed to receive connection");
-                }
-            }
-        })
-        .await;
-
-    Ok(())
 }
