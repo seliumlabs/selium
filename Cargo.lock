@@ -1728,7 +1728,7 @@ dependencies = [
 
 [[package]]
 name = "selium-abi"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "rkyv",
  "thiserror 2.0.18",
@@ -1784,7 +1784,7 @@ dependencies = [
  "flatbuffers-build",
  "flatc-fork",
  "futures",
- "selium-userland 1.0.0-alpha.3",
+ "selium-userland 1.0.0-alpha.5",
  "tracing",
 ]
 
@@ -1821,7 +1821,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures",
- "selium-userland 1.0.0-alpha.3",
+ "selium-userland 1.0.0-alpha.5",
  "serde",
  "serde_json",
  "tracing",
@@ -1844,7 +1844,7 @@ dependencies = [
 
 [[package]]
 name = "selium-filesystem-store"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "path-security",
  "selium-kernel",
@@ -1852,13 +1852,13 @@ dependencies = [
 
 [[package]]
 name = "selium-kernel"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "futures-util",
  "libc",
  "parking_lot",
  "rkyv",
- "selium-abi 1.0.0-alpha.4",
+ "selium-abi 1.0.0-alpha.5",
  "sharded-slab",
  "thiserror 2.0.18",
  "tokio",
@@ -1869,12 +1869,12 @@ dependencies = [
 
 [[package]]
 name = "selium-messaging"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "futures",
  "loom",
  "pin-project",
- "selium-abi 1.0.0-alpha.4",
+ "selium-abi 1.0.0-alpha.5",
  "selium-kernel",
  "stable-vec",
  "thiserror 2.0.18",
@@ -1884,7 +1884,7 @@ dependencies = [
 
 [[package]]
 name = "selium-net-hyper"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "futures-util",
  "http-body-util",
@@ -1892,7 +1892,7 @@ dependencies = [
  "hyper-util",
  "rustls",
  "rustls-pki-types",
- "selium-abi 1.0.0-alpha.4",
+ "selium-abi 1.0.0-alpha.5",
  "selium-kernel",
  "thiserror 2.0.18",
  "tokio",
@@ -1903,13 +1903,13 @@ dependencies = [
 
 [[package]]
 name = "selium-net-quinn"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "futures-util",
  "parking_lot",
  "quinn",
  "rustls-pki-types",
- "selium-abi 1.0.0-alpha.4",
+ "selium-abi 1.0.0-alpha.5",
  "selium-kernel",
  "thiserror 2.0.18",
  "tracing",
@@ -1918,20 +1918,20 @@ dependencies = [
 
 [[package]]
 name = "selium-runtime"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "anyhow",
  "clap",
  "rcgen",
  "rustls",
  "rustls-pki-types",
- "selium-abi 1.0.0-alpha.4",
+ "selium-abi 1.0.0-alpha.5",
  "selium-filesystem-store",
  "selium-kernel",
  "selium-messaging",
  "selium-net-hyper",
  "selium-net-quinn",
- "selium-userland 1.0.0-alpha.4",
+ "selium-userland 1.0.0-alpha.5",
  "selium-wasmtime",
  "tokio",
  "tracing",
@@ -1987,7 +1987,7 @@ dependencies = [
 
 [[package]]
 name = "selium-userland"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "anyhow",
  "flatbuffers",
@@ -1995,8 +1995,8 @@ dependencies = [
  "flatc-fork",
  "futures",
  "rkyv",
- "selium-abi 1.0.0-alpha.4",
- "selium-userland-macros 1.0.0-alpha.4",
+ "selium-abi 1.0.0-alpha.5",
+ "selium-userland-macros 1.0.0-alpha.5",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2018,7 +2018,7 @@ dependencies = [
 
 [[package]]
 name = "selium-userland-macros"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2026,16 +2026,16 @@ dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "selium-userland 1.0.0-alpha.4",
+ "selium-userland 1.0.0-alpha.5",
  "syn",
  "trybuild",
 ]
 
 [[package]]
 name = "selium-wasmtime"
-version = "1.0.0-alpha.4"
+version = "1.0.0-alpha.5"
 dependencies = [
- "selium-abi 1.0.0-alpha.4",
+ "selium-abi 1.0.0-alpha.5",
  "selium-kernel",
  "thiserror 2.0.18",
  "tokio",

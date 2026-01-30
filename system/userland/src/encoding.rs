@@ -97,6 +97,48 @@ impl HasSchema for () {
     };
 }
 
+impl FlatMsg for u32 {
+    fn encode(value: &Self) -> Vec<u8> {
+        value.to_le_bytes().into()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, InvalidFlatbuffer> {
+        Ok(u32::from_le_bytes(
+            bytes
+                .try_into()
+                .map_err(|_| InvalidFlatbuffer::ApparentSizeTooLarge)?,
+        ))
+    }
+}
+
+impl HasSchema for u32 {
+    const SCHEMA: SchemaDescriptor = SchemaDescriptor {
+        fqname: "unsigned_thirty_two_bit_int",
+        hash: [0, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3],
+    };
+}
+
+impl FlatMsg for i32 {
+    fn encode(value: &Self) -> Vec<u8> {
+        value.to_le_bytes().into()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, InvalidFlatbuffer> {
+        Ok(i32::from_le_bytes(
+            bytes
+                .try_into()
+                .map_err(|_| InvalidFlatbuffer::ApparentSizeTooLarge)?,
+        ))
+    }
+}
+
+impl HasSchema for i32 {
+    const SCHEMA: SchemaDescriptor = SchemaDescriptor {
+        fqname: "signed_thirty_two_bit_int",
+        hash: [1, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3],
+    };
+}
+
 impl FlatMsg for String {
     fn encode(value: &Self) -> Vec<u8> {
         value.as_bytes().to_owned()
