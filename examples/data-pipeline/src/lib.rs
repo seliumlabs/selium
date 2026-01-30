@@ -27,7 +27,7 @@ async fn generator(ctx: Context) -> Result<()> {
     let mut state: i32 = -1;
     loop {
         state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-        publisher.send(state as i32).await?;
+        publisher.send(state).await?;
         time::sleep(Duration::from_millis(500)).await?;
     }
 }
