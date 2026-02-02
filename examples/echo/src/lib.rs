@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
-use selium_atlas::{Atlas, Uri};
+use selium_atlas::{Atlas, SubscriberAtlasExt, Uri};
 use selium_switchboard::{Client, Server, Switchboard};
 use selium_userland::{entrypoint, schema};
 use tracing::info;
@@ -26,17 +26,13 @@ async fn echo_client(ctx: selium_userland::Context) -> Result<()> {
     let switchboard = ctx.require::<Switchboard>().await;
     let atlas = ctx.require::<Atlas>().await;
 
-    let server_endpoint = atlas
-        .get(&Uri::parse("sel://moo/cow").unwrap())
-        .await?
-        .unwrap() as u32;
-
     let mut client = Client::create(&switchboard).await?;
-    client.connect(&switchboard, server_endpoint).await?;
+    SubscriberAtlasExt::connect(&client, &atlas, &switchboard, "sel://moo/cow").await?;
 
-    let request = EchoMsg::new("Hello, world!".to_string());
-    info!("sending message");
-    let response: EchoMsg = client.request(request).await.context("send request")?;
+    let response: EchoMsg = client
+        .request(EchoMsg::new("Hello, world!".to_string()))
+        .await
+        .context("send request")?;
     info!(reply = response.msg, "received echo");
 
     Ok(())
