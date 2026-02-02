@@ -1817,6 +1817,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "selium-example-load-balancer-https"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "selium-atlas",
+ "selium-switchboard",
+ "selium-userland 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tracing",
+]
+
+[[package]]
 name = "selium-example-log-analyser"
 version = "0.1.0"
 dependencies = [

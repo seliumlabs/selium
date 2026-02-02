@@ -5,6 +5,7 @@ Examples in this workspace:
 - [echo](echo): Echo client and server using standard runtime extensions.
 - [echo-no-deps](echo-no-deps): Echo client and server with no runtime extensions for minimal footprint.
 - [load-balancer](load-balancer): A demo load balancer that combines HTTP ingress with fanout messaging.
+- [load-balancer-https](load-balancer-https): The HTTPS/TLS variant of the load balancer example.
 - [log-analyser](log-analyser): Analyses application logs for warning and error floods.
 - [orchestrator](orchestrator): Spawns and wires processes, streams configuration updates, and collects results.
 - [rest-api](rest-api): Basic request-reply over HTTP.

@@ -5,6 +5,7 @@ members = [
   "examples/echo",
   "examples/echo-no-deps",
   "examples/load-balancer",
+  "examples/load-balancer-https",
   "examples/log-analyser",
   "examples/orchestrator",
   "examples/rest-api",
