@@ -61,7 +61,6 @@ impl WasmRuntime {
         guest_async: Arc<GuestAsync>,
     ) -> Result<Self, Error> {
         let mut config = Config::new();
-        config.async_support(true);
         config.memory_may_move(false);
 
         Ok(Self {
