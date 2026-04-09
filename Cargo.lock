@@ -559,6 +559,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "flatc-fork"
+version = "0.6.0+25.12.19-2026-02-06-03fffb2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f995c44278ee64981366ec17e6847f0756184a92ad0d3a1b6f7170f91e1eb129"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1775,7 +1784,7 @@ checksum = "8ad15553bb0148d802986f4d90d0faf31b687cc264a1d9f0899ccb7c7a41e7de"
 dependencies = [
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.5.0+25.12.19",
  "thiserror 2.0.18",
  "url",
 ]
@@ -1787,7 +1796,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.6.0+25.12.19-2026-02-06-03fffb2",
  "futures",
  "selium-atlas",
  "selium-switchboard",
@@ -1802,7 +1811,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.6.0+25.12.19-2026-02-06-03fffb2",
  "futures",
  "selium-atlas",
  "selium-switchboard",
@@ -1817,7 +1826,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.6.0+25.12.19-2026-02-06-03fffb2",
  "futures",
  "selium-userland 1.0.0-alpha.5",
  "tracing",
@@ -1854,7 +1863,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.6.0+25.12.19-2026-02-06-03fffb2",
  "futures",
  "selium-atlas",
  "selium-switchboard",
@@ -1869,7 +1878,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.6.0+25.12.19-2026-02-06-03fffb2",
  "futures",
  "selium-userland 1.0.0-alpha.5",
  "tracing",
@@ -1894,7 +1903,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.6.0+25.12.19-2026-02-06-03fffb2",
  "futures",
  "selium-atlas",
  "selium-switchboard",
@@ -2021,7 +2030,7 @@ checksum = "978dd36581aff5327db6bc16f7cfed4c142bd8c772f494dec3be7aba24ae321d"
 dependencies = [
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.5.0+25.12.19",
  "thiserror 2.0.18",
 ]
 
@@ -2032,7 +2041,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.6.0+25.12.19-2026-02-06-03fffb2",
  "futures",
  "rkyv",
  "selium-abi 1.0.0-alpha.5",
@@ -2052,7 +2061,7 @@ dependencies = [
  "anyhow",
  "flatbuffers",
  "flatbuffers-build",
- "flatc-fork",
+ "flatc-fork 0.5.0+25.12.19",
  "futures",
  "rkyv",
  "selium-abi 1.0.0-alpha.5 (registry+https://github.com/rust-lang/crates.io-index)",
