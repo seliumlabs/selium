@@ -17,7 +17,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -50,7 +50,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
