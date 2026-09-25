@@ -12,6 +12,7 @@ use quinn::{
         version::TLS13,
     },
 };
+use rustls_pki_types::pem::PemObject;
 
 use crate::error::{Error, Result};
 
@@ -87,9 +88,8 @@ pub fn build_client_config(options: &ConnectOptions) -> Result<quinn::ClientConf
 
 /// Parses a PEM certificate chain into DER certificates.
 pub fn certificates_from_pem(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>> {
-    let mut reader = std::io::BufReader::new(pem);
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
-        .collect::<std::io::Result<_>>()
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(pem)
+        .collect::<std::result::Result<_, _>>()
         .map_err(|e| Error::Tls(format!("invalid certificate PEM: {e}")))?;
     if certs.is_empty() {
         return Err(Error::Tls(
@@ -101,22 +101,6 @@ pub fn certificates_from_pem(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>>
 
 /// Parses a PEM private key (PKCS#1, PKCS#8, or SEC1) into DER.
 pub fn private_key_from_pem(pem: &[u8]) -> Result<PrivateKeyDer<'static>> {
-    let mut reader = std::io::BufReader::new(pem);
-    loop {
-        match rustls_pemfile::read_one(&mut reader)
-            .map_err(|e| Error::Tls(format!("invalid key PEM: {e}")))?
-        {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
-                return Ok(PrivateKeyDer::Pkcs1(key));
-            }
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                return Ok(PrivateKeyDer::Pkcs8(key));
-            }
-            Some(rustls_pemfile::Item::Sec1Key(key)) => {
-                return Ok(PrivateKeyDer::Sec1(key));
-            }
-            None => return Err(Error::Tls("key PEM contains no private key".into())),
-            _ => continue,
-        }
-    }
+    PrivateKeyDer::from_pem_slice(pem)
+        .map_err(|e| Error::Tls(format!("invalid key PEM: {e}")))
 }

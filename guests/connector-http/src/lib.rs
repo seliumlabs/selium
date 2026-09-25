@@ -16,8 +16,7 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use rustls_pemfile as pemfile;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use selium_guest::{
     Context, TcpListener, TcpStream, debug, entrypoint, error, info, mark_ready, spawn, warn,
 };
@@ -247,8 +246,7 @@ fn load_tls_config() -> Result<Arc<rustls::ServerConfig>, TlsError> {
         })?;
 
     // Parse certificates.
-    let mut cert_reader = std::io::BufReader::new(cert_pem.as_slice());
-    let certs: Vec<CertificateDer<'static>> = pemfile::certs(&mut cert_reader)
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(cert_pem.as_slice())
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| {
             error!("http-connector: invalid cert PEM: {e}");
@@ -261,22 +259,10 @@ fn load_tls_config() -> Result<Arc<rustls::ServerConfig>, TlsError> {
     }
 
     // Parse private key.
-    let mut key_reader = std::io::BufReader::new(key_pem.as_slice());
-    let key = loop {
-        match pemfile::read_one(&mut key_reader).map_err(|e| {
-            error!("http-connector: invalid key PEM: {e}");
-            TlsError::InvalidKey
-        })? {
-            Some(pemfile::Item::Pkcs1Key(k)) => break PrivateKeyDer::Pkcs1(k),
-            Some(pemfile::Item::Pkcs8Key(k)) => break PrivateKeyDer::Pkcs8(k),
-            Some(pemfile::Item::Sec1Key(k)) => break PrivateKeyDer::Sec1(k),
-            None => {
-                error!("http-connector: no private key found in key PEM");
-                return Err(TlsError::InvalidKey);
-            }
-            _ => continue,
-        }
-    };
+    let key = PrivateKeyDer::from_pem_slice(key_pem.as_slice()).map_err(|e| {
+        error!("http-connector: invalid key PEM: {e}");
+        TlsError::InvalidKey
+    })?;
 
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()

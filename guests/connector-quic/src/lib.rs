@@ -35,8 +35,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Context as _;
 use quinn::ServerConfig;
-use rustls_pemfile as pemfile;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use selium_guest::{
     Context, Instant, ResourceSender, UdpSocket, entrypoint, error, info, mark_ready, spawn, warn,
 };
@@ -601,8 +600,7 @@ fn load_server_identity() -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer
             TlsError::MissingKey
         })?;
 
-    let mut cert_reader = std::io::BufReader::new(cert_pem.as_slice());
-    let certs: Vec<CertificateDer<'static>> = pemfile::certs(&mut cert_reader)
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(cert_pem.as_slice())
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| {
             error!("quic-connector: invalid cert PEM: {e}");
@@ -614,22 +612,10 @@ fn load_server_identity() -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer
         return Err(TlsError::InvalidCertificate);
     }
 
-    let mut key_reader = std::io::BufReader::new(key_pem.as_slice());
-    let key = loop {
-        match pemfile::read_one(&mut key_reader).map_err(|e| {
-            error!("quic-connector: invalid key PEM: {e}");
-            TlsError::InvalidKey
-        })? {
-            Some(pemfile::Item::Pkcs1Key(k)) => break PrivateKeyDer::Pkcs1(k),
-            Some(pemfile::Item::Pkcs8Key(k)) => break PrivateKeyDer::Pkcs8(k),
-            Some(pemfile::Item::Sec1Key(k)) => break PrivateKeyDer::Sec1(k),
-            None => {
-                error!("quic-connector: no private key found in key PEM");
-                return Err(TlsError::InvalidKey);
-            }
-            _ => continue,
-        }
-    };
+    let key = PrivateKeyDer::from_pem_slice(key_pem.as_slice()).map_err(|e| {
+        error!("quic-connector: invalid key PEM: {e}");
+        TlsError::InvalidKey
+    })?;
 
     Ok((certs, key))
 }

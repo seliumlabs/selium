@@ -63,7 +63,6 @@ rcgen = { version = "0.14", default-features = false }
 ring = { version = "0.17", default-features = false }
 rkyv = { version = "0.8", default-features = false }
 rustls = { version = "0.23", default-features = false }
-rustls-pemfile = { version = "2", default-features = false }
 rustls-pki-types = { version = "1", default-features = false }
 selium-abi = { path = "crates/abi", default-features = false }
 selium-client = { path = "crates/client", default-features = false }
@@ -86,8 +85,8 @@ tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = { version = "1.0", default-features = false }
-wasmtiny = { version = "0.1", default-features = false, features = ["aot"] }
-wasmtiny-aotc = { path = "../../wasmtiny/crates/aotc", default-features = false }
+wasmtiny = { version = "0.1", default-features = false }
+wasmtiny-aotc = { version = "0.1", default-features = false }
 wat = { version = "1.259", default-features = false }
 web-time = "1.1"
 x509-parser = { version = "0.18", default-features = false }
@@ -135,5 +134,8 @@ unwrap_used = "warn"
 getrandom = { git = "https://github.com/seliumlabs/getrandom", rev = "1cd6d1f288be4a8dfe2f72aac02add4b8c3e0ac5" }
 # Drop this entry once ring releases a 0.17.x built on getrandom 0.4.
 ring = { git = "https://github.com/briansmith/ring", rev = "840167e18e4fa837eb48de46500454a616a15a6e" }
-wasmtiny = { path = "../../wasmtiny/crates/core" }
+# wasmtiny = { path = "../../wasmtiny/crates/core" }
+# wasmtiny-aotc = { path = "../../wasmtiny/crates/aotc" }
+wasmtiny = { git = "https://github.com/seliumlabs/wasmtiny", rev = "99e0c537c08aac877e7db733bc346e0b213983dc" }
+wasmtiny-aotc = { git = "https://github.com/seliumlabs/wasmtiny", rev = "99e0c537c08aac877e7db733bc346e0b213983dc" }
 web-time = { path = "vendor/web-time" }

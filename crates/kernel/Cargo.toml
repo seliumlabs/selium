@@ -19,7 +19,7 @@ selium-memory.workspace = true
 selium-shm.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-wasmtiny.workspace = true
+wasmtiny = { workspace = true, features = ["aot"] }
 
 [features]
 # Stage 2 (per-OS wait-words) opt-in. Forwards to the engine's

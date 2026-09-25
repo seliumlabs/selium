@@ -19,8 +19,7 @@ anyhow = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["std"] }
 getrandom.workspace = true
 rustls = { workspace = true, features = ["ring", "std"] }
-rustls-pemfile = { workspace = true, features = ["std"] }
-rustls-pki-types = { workspace = true, features = ["web"] }
+rustls-pki-types = { workspace = true, features = ["alloc", "web"] }
 selium-abi.workspace = true
 selium-guest.workspace = true
 selium-proto-http.workspace = true

@@ -13,7 +13,7 @@ categories.workspace = true
 [dependencies]
 futures = { workspace = true, features = ["std"] }
 quinn = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
-rustls-pemfile = { workspace = true, features = ["std"] }
+rustls-pki-types = { workspace = true, features = ["std"] }
 selium-service.workspace = true
 selium-wire.workspace = true
 thiserror.workspace = true
