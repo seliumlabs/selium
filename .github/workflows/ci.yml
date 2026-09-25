@@ -31,7 +31,7 @@ jobs:
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
           components: clippy, rustfmt
@@ -63,7 +63,7 @@ jobs:
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
@@ -86,7 +86,7 @@ jobs:
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
@@ -131,7 +131,7 @@ jobs:
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: nightly
           components: rust-src
@@ -195,7 +195,7 @@ jobs:
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
