@@ -101,6 +101,5 @@ pub fn certificates_from_pem(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>>
 
 /// Parses a PEM private key (PKCS#1, PKCS#8, or SEC1) into DER.
 pub fn private_key_from_pem(pem: &[u8]) -> Result<PrivateKeyDer<'static>> {
-    PrivateKeyDer::from_pem_slice(pem)
-        .map_err(|e| Error::Tls(format!("invalid key PEM: {e}")))
+    PrivateKeyDer::from_pem_slice(pem).map_err(|e| Error::Tls(format!("invalid key PEM: {e}")))
 }
