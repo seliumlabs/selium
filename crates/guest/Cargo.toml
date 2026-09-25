@@ -1,0 +1,52 @@
+[package]
+name = "selium-guest"
+version.workspace = true
+edition.workspace = true
+description = "Selium guest SDK"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata.cargo-shear]
+ignored-paths = ["macros/tests/ui/*.rs", "macros/tests/ui-pass/*.rs"]
+
+[dependencies]
+selium-abi.workspace = true
+selium-guest-macros = { path = "macros" }
+selium-memory.workspace = true
+selium-proto-dns.workspace = true
+selium-proto-http.workspace = true
+selium-service.workspace = true
+selium-shm.workspace = true
+selium-wire.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["registry"] }
+
+[dev-dependencies]
+selium-memory.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[features]
+# default = ["multithreaded"]
+# Opt-in to multithreaded execution: emits the `__selium_guest_worker`
+# worker-entry export (together with the atomics target) so the runtime
+# provisions a dedicated worker pool for this guest. Guests without this
+# feature keep the cooperative single-worker reactor.
+multithreaded = []
+# Guest-side fast-path opt-in: forwards to `selium-memory` (and
+# `selium-shm`) so the ring write path emits a genuine
+# `memory.atomic.notify` on the generation word instead of the honest no-op.
+# Requires a nightly toolchain with `stdarch_wasm_atomic_wait` and a
+# `+atomics`/shared-memory target.
+nightly-wasm-atomics = [
+  "selium-memory/nightly-wasm-atomics",
+  "selium-shm/nightly-wasm-atomics",
+]
+
+[lints]
+workspace = true

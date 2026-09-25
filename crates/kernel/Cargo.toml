@@ -1,0 +1,40 @@
+[package]
+name = "selium-kernel"
+version.workspace = true
+edition.workspace = true
+description = "Selium host primitives"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+libc = "0.2"
+mio = { version = "1", features = ["net", "os-poll"] }
+parking_lot.workspace = true
+selium-abi.workspace = true
+selium-memory.workspace = true
+selium-shm.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+wasmtiny.workspace = true
+
+[features]
+# Stage 2 (per-OS wait-words) opt-in. Forwards to the engine's
+# `platform-wake-emission` feature so a guest `memory.atomic.notify`
+# additionally emits the host platform wake primitive (Linux futex,
+# Windows WakeByAddress, FreeBSD _umtx_op) on the region's host mapping.
+# Self-gating per OS: on platforms without a wired wait-word (notably
+# macOS, whose kernel rejects wait-words on MAP_SHARED memory) the engine
+# compiles emission to a no-op and `stage2_active()` stays false, so this
+# feature is safe to enable on any platform. Off by default: enable it
+# only where the notify/wait race conformance test
+# (`stage2_notify_wait_race_conformance`) has passed — CI runs it on
+# Linux. With the feature off, everything uses Stage 1 (the unified
+# registry) with identical semantics.
+stage2-wait-words = ["wasmtiny/platform-wake-emission"]
+
+[lints]
+workspace = true

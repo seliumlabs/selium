@@ -1,0 +1,35 @@
+[package]
+name = "selium-shm"
+version.workspace = true
+edition.workspace = true
+description = "Selium shared-memory ring channels and transport"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+selium-abi.workspace = true
+selium-service.workspace = true
+selium-memory.workspace = true
+selium-wire.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+
+[features]
+# Forwards the guest-side fast-path opt-in: the ring write path's
+# `atomic_notify` on the generation word becomes a genuine
+# `memory.atomic.notify` (via selium-memory) instead of the honest no-op.
+# Requires a nightly toolchain with `stdarch_wasm_atomic_wait` and a
+# `+atomics`/shared-memory target; see `selium-memory`'s feature docs.
+nightly-wasm-atomics = ["selium-memory/nightly-wasm-atomics"]
+
+[dev-dependencies]
+flatbuffers.workspace = true
+futures = { workspace = true, features = ["std"] }
+selium-memory = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

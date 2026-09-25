@@ -1,0 +1,101 @@
+// Flatbuffers schema for discovery service messages.
+namespace selium.discovery;
+
+/// Interface metadata for a discovered resource.
+table InterfaceMetadata {
+    /// Interface name.
+    name: string;
+    /// Method names exposed by the interface.
+    methods: [string];
+}
+
+/// A classification key/value label pair.
+table Label {
+    /// Label key.
+    key: string;
+    /// Label value.
+    value: string;
+}
+
+/// Target resource returned by discovery resolution.
+table ResourceTarget {
+    /// URI of the resource.
+    uri: string;
+    /// Host id where the resource resides.
+    host_id: string;
+    /// Resource identifier.
+    resource_id: ulong;
+    /// Optional interface metadata.
+    interface: InterfaceMetadata;
+    /// Optional tenant identifier for multi-tenant isolation.
+    tenant: string;
+    /// Resource class segment (`proc`, `region`, `queue`, …).
+    class: string;
+    /// Classification label pairs.
+    labels: [Label];
+}
+
+/// A single advisory domain-to-tenant mapping.
+table DomainEntry {
+    /// Domain (e.g. `example.com`).
+    domain: string;
+    /// Tenant the domain maps to (e.g. `acme`).
+    tenant: string;
+}
+
+/// Discovery request message.
+///
+/// Variant tag values:
+///   0 = Resolve(uri)
+///   1 = ResolvePrefix(uri)
+///   2 = ResolveLabels { key, value }
+///   3 = Register { uri, target, owner, root_service }
+///   4 = Revoke { uri }
+///   5 = RevokeByOwner { process_id }
+///   6 = SeedDomain { domain, tenant }
+///   7 = ListDomains
+table DiscoveryRequest {
+    /// Variant discriminator.
+    variant: ubyte;
+    /// URI to resolve or register (used by Resolve, ResolvePrefix, Register, Revoke variants).
+    uri: string;
+    /// Label key (used by the ResolveLabels variant).
+    key: string;
+    /// Label value (used by the ResolveLabels variant).
+    value: string;
+    /// Target resource for registration (used by Register variant).
+    target: ResourceTarget;
+    /// Marks the registration as the tenant's root service (Register variant).
+    root_service: bool;
+    /// Owning process for a Tier-1 registration (Register variant); 0 = None.
+    owner: ulong;
+    /// Process whose owner-keyed registrations are revoked (RevokeByOwner variant).
+    process_id: ulong;
+    /// Domain to seed (SeedDomain variant).
+    domain: string;
+    /// Tenant the domain maps to (SeedDomain variant).
+    tenant: string;
+}
+
+/// Discovery response message.
+///
+/// Variant tag values:
+///   0 = Found(target)
+///   1 = Resolved(targets)
+///   2 = NotFound
+///   3 = Registered
+///   4 = Revoked
+///   5 = Forbidden
+///   6 = Domains(domains)
+table DiscoveryResponse {
+    /// Variant discriminator.
+    variant: ubyte;
+    /// The discovered resource (used by Found variant).
+    target: ResourceTarget;
+    /// The matched resources (used by Resolved variant).
+    targets: [ResourceTarget];
+    /// The provisioned domain table (used by the Domains variant).
+    domains: [DomainEntry];
+}
+
+root_type DiscoveryResponse;

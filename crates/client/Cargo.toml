@@ -1,0 +1,27 @@
+[package]
+name = "selium-client"
+version.workspace = true
+edition.workspace = true
+description = "Native Selium client SDK: QUIC + TLS + mTLS + wire framing behind typed channel handles"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+futures = { workspace = true, features = ["std"] }
+quinn = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
+rustls-pemfile = { workspace = true, features = ["std"] }
+selium-service.workspace = true
+selium-wire.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+
+[dev-dependencies]
+selium-wire.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

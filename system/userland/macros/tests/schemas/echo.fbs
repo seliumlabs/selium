@@ -1,7 +1,0 @@
-namespace selium.examples;
-
-table Echo {
-  msg:string;
-}
-
-root_type Echo;

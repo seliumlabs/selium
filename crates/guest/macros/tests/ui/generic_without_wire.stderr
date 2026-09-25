@@ -1,0 +1,5 @@
+error: struct has generic type parameters; add wire = WireTypeName to #[schema] to generate a wire type
+ --> tests/ui/generic_without_wire.rs:9:15
+  |
+9 | pub struct Msg<K, V> {
+  |               ^^^^^^

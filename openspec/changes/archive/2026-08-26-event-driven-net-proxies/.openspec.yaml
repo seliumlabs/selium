@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-05
+goal: Replace proxy spin loops with mio polling + condvar waits + guest wake linkage

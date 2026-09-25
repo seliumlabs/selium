@@ -1,0 +1,26 @@
+[package]
+name = "selium-connector-dns"
+version.workspace = true
+edition.workspace = true
+description = "DNS egress connector system guest"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+parking_lot.workspace = true
+selium-guest.workspace = true
+selium-proto-dns.workspace = true
+selium-shm.workspace = true
+tokio = { workspace = true, features = ["macros", "sync"] }
+
+[lints]
+workspace = true

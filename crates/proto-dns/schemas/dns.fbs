@@ -1,0 +1,38 @@
+// FlatBuffers schema for DNS protocol wire types.
+// Used by the DNS connector and resolving guests.
+
+namespace selium.dns;
+
+// DNS resource record types carried by typed queries and responses.
+// Values follow the IANA DNS RR TYPE registry.
+enum DnsRecordType: ubyte {
+    A = 1,
+    Cname = 5,
+    Aaaa = 28,
+}
+
+// Honest resolution outcomes. The connector never fabricates answers and
+// distinguishes upstream failure modes from authoritative (typed) results.
+enum DnsOutcome: ubyte {
+    Ok = 0,
+    NxDomain = 1,
+    Timeout = 2,
+    Truncated = 3,
+    ServFail = 4,
+    Refused = 5,
+    Upstream = 6,
+}
+
+// A typed name-resolution query.
+table DnsQuery {
+    name: string;
+    record_type: DnsRecordType = A;
+}
+
+// A typed name-resolution response carrying resolved IP literals.
+table DnsResponse {
+    outcome: DnsOutcome = Ok;
+    addresses: [string];
+}
+
+root_type DnsQuery;

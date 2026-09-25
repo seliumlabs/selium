@@ -1,0 +1,24 @@
+[package]
+name = "selium-cli"
+version.workspace = true
+edition.workspace = true
+description = "Selium control-plane CLI: the `sel` command-line client over the typed control surface"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "sel"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive", "help", "std"] }
+selium-client.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "selium-mt-demo"
+version.workspace = true
+edition.workspace = true
+description = "Multithreaded demo guest used by the guest-worker-pool runtime tests"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+selium-guest = { workspace = true, features = ["multithreaded"] }
+
+[lints]
+workspace = true

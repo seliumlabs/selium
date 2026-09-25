@@ -1,0 +1,59 @@
+// FlatBuffers schema for identity service messages.
+//
+// The identity guest serves the platform's mint authority over typed
+// request/reply: an operator tier (tenant create/rotate/revoke) and a tenant
+// tier (issue user certificates, manage that tenant's principals). The tier
+// itself is derived by the identity guest from the caller's process tenant —
+// not from a field in this message.
+//
+// Non-Abi payloads are byte vectors: `spki_der` is a DER SubjectPublicKeyInfo,
+// `fingerprint` is the 32-byte SHA-256 leaf SPKI fingerprint, and `grants` is a
+// rkyv-encoded `Vec<CapabilityGrant>` baseline grant set.
+namespace selium.identity;
+
+// Identity request message.
+//
+// Variant tag values:
+//   0 = MintTenantCa { tenant }
+//   1 = RotateTenantCa { tenant }
+//   2 = RevokeTenant { tenant }
+//   3 = IssueUserCert { tenant, spki_der }
+//   4 = SetPrincipalGrants { tenant, fingerprint, grants }
+//   5 = RemovePrincipal { tenant, fingerprint }
+table IdentityRequest {
+    variant: ubyte;
+    // Tenant the request targets (all data variants).
+    tenant: string;
+    // Client leaf SubjectPublicKeyInfo, DER-encoded (IssueUserCert).
+    spki_der: [ubyte];
+    // Principal fingerprint (SetPrincipalGrants, RemovePrincipal).
+    fingerprint: [ubyte];
+    // rkyv-encoded baseline grants (SetPrincipalGrants).
+    grants: [ubyte];
+}
+
+// Identity response message.
+//
+// Variant tag values:
+//   0 = TenantRecorded { tenant }
+//   1 = Rotated { tenant }
+//   2 = Revoked { tenant }
+//   3 = UserCertIssued { certificate_der }
+//   4 = PrincipalRecorded { fingerprint }
+//   5 = PrincipalRemoved { fingerprint }
+//   6 = Error { step, context }
+table IdentityResponse {
+    variant: ubyte;
+    // Tenant (TenantRecorded, Rotated, Revoked).
+    tenant: string;
+    // Issued leaf certificate, DER-encoded (UserCertIssued).
+    certificate_der: [ubyte];
+    // Principal fingerprint (PrincipalRecorded, PrincipalRemoved).
+    fingerprint: [ubyte];
+    // Failed step name (Error).
+    step: string;
+    // Error context (Error).
+    context: string;
+}
+
+root_type IdentityRequest;

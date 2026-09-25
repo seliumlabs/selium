@@ -7,10 +7,12 @@ on:
   push:
     branches:
       - main
+      - spine
 
   pull_request:
     branches:
       - main
+      - spine
 
 jobs:
   check:
@@ -20,7 +22,15 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
     steps:
+      # The workspace pins wasmtiny via a path dependency at ../../wasmtiny,
+      # so the repos are checked out side-by-side to preserve that layout.
       - uses: actions/checkout@v6
+        with:
+          path: proto/arch3
+      - uses: actions/checkout@v6
+        with:
+          repository: itpetey/wasmtiny
+          path: wasmtiny
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
         with:
           toolchain: stable
@@ -29,12 +39,15 @@ jobs:
 
       - name: cargo check
         run: cargo check --workspace --all-targets
+        working-directory: proto/arch3
 
       - name: cargo fmt
         run: cargo fmt --all --check
+        working-directory: proto/arch3
 
       - name: cargo clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: proto/arch3
 
   test:
     name: Cargo tests
@@ -44,6 +57,12 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: proto/arch3
+      - uses: actions/checkout@v6
+        with:
+          repository: itpetey/wasmtiny
+          path: wasmtiny
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
         with:
           toolchain: stable
@@ -51,56 +70,150 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace --all-targets
+        working-directory: proto/arch3
 
-  ignored:
-    name: Cargo ignored tests
+  spine:
+    name: Golden-path spine (WASM guest)
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: proto/arch3
+      - uses: actions/checkout@v6
+        with:
+          repository: itpetey/wasmtiny
+          path: wasmtiny
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
-      - name: cargo test --ignored
-        run: cargo test -- --ignored
+      # Every system guest must compile to wasm32; regressions here are
+      # invisible to the native test suite.
+      - name: build guests for wasm32
+        run: cargo build --target wasm32-unknown-unknown -p selium-spine-demo -p selium-discovery -p selium-discovery-probe -p selium-guest -p selium-connector-http -p selium-connector-dns -p selium-dns-demo
+        working-directory: proto/arch3
 
-  docs:
-    name: docs.rs test build
+      - name: golden-path spine test
+        run: cargo test -p selium-runtime --test spine -- --ignored
+        working-directory: proto/arch3
+
+      - name: discovery bootstrap test
+        run: cargo test -p selium-runtime --test discovery -- --ignored
+        working-directory: proto/arch3
+
+      - name: dns resolution spine test
+        run: cargo test -p selium-runtime --test dns_spine -- --ignored
+        working-directory: proto/arch3
+
+  shared-page-fastpath-guest:
+    name: Shared-page fast path (atomics guest)
     runs-on: ubuntu-latest
     env:
-      RUSTDOCFLAGS: -Dwarnings
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
+      # Stage 1+2 toolchain wiring: nightly + stdarch_wasm_atomic_wait +
+      # +atomics/+shared-memory. Building std with the atomics feature is what
+      # makes wasm-ld accept --shared-memory (the prebuilt std was compiled
+      # without it), and --shared-memory/--max-memory is what declares memory 0
+      # shared with a maximum — the wasmtiny validator requirement.
+      RUSTFLAGS: >-
+        -C target-feature=+atomics,+bulk-memory,+mutable-globals
+        -C link-arg=--shared-memory
+        -C link-arg=--max-memory=1073741824
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: proto/arch3
+      - uses: actions/checkout@v6
+        with:
+          repository: itpetey/wasmtiny
+          path: wasmtiny
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
         with:
           toolchain: nightly
-      - uses: dtolnay/install@97c306b4fb754e1dbe18619415cf4a90ae0aa6a2
-        with:
-          crate: cargo-docs-rs
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+          components: rust-src
+          targets: wasm32-unknown-unknown
 
-      - name: cargo docs-rs
-        run: cargo +nightly docs-rs -p selium-userland
+      # Cargo can only emit selium_net_demo.wasm for a crate named
+      # selium-net-demo, but the fastpath_wake test resolves the atomics
+      # module at selium_net_demo_atomics.wasm (see net_demo_wasm_path in
+      # crates/runtime/tests/fastpath_wake.rs — the plain and atomics
+      # flavours cannot share one output path). Copy it aside, mirroring
+      # build_atomics_guest in scripts/build-all.sh.
+      - name: build atomics guest
+        run: |
+          cargo build -Zbuild-std=std,panic_abort \
+            --target wasm32-unknown-unknown \
+            -p selium-spine-demo -p selium-discovery -p selium-net-demo \
+            --features selium-guest/nightly-wasm-atomics
+          cp target/wasm32-unknown-unknown/debug/selium_net_demo.wasm \
+             target/wasm32-unknown-unknown/debug/selium_net_demo_atomics.wasm
+        working-directory: proto/arch3
 
-  loom:
-    name: Loom tests
+      # Task 5.1 of the shared-page-fastpath change: deploy the real
+      # atomics net-demo guest and assert its memory.atomic.notify wakes
+      # the host drainer directly, with zero transition kicks after
+      # detection. RUSTFLAGS must be cleared for the host build — the
+      # wasm-only link flags poison a native compile.
+      - name: fast-path end-to-end (no runtime kick)
+        run: cargo test -p selium-runtime --test fastpath_wake -- --ignored
+        working-directory: proto/arch3
+        env:
+          RUSTFLAGS: ""
+
+      # RUSTFLAGS must be cleared here too: wasm-tools is compiled for the
+      # host target, and the job-level wasm flags (+atomics,
+      # --shared-memory) poison a native link just as they do for the test
+      # step above.
+      - name: install wasm-tools
+        run: cargo install wasm-tools --locked --no-default-features --features print
+        env:
+          RUSTFLAGS: ""
+
+      # The guest module must declare memory 0 shared with a maximum, or the
+      # wasmtiny validator rejects atomic instructions and the fast path can
+      # never activate.
+      - name: verify shared-memory declaration
+        run: >-
+          wasm-tools print proto/arch3/target/wasm32-unknown-unknown/debug/selium_spine_demo.wasm
+          | grep -E '\(memory .*shared'
+
+  shared-page-fastpath-stage2:
+    name: Shared-page fast path Stage 2 (per-OS wait-words)
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v6
+        with:
+          path: proto/arch3
+      - uses: actions/checkout@v6
+        with:
+          repository: itpetey/wasmtiny
+          path: wasmtiny
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
         with:
           toolchain: stable
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
-      - name: selium-messaging loom tests
-        run: cargo test -p selium-messaging --features loom --tests
+      # Task 4.2/4.3 of the shared-page-fastpath change: Stage 2 may only be
+      # enabled where the notify/wait race conformance test passes. This job
+      # is the per-platform evidence on Linux (futex); macOS is permanently
+      # Stage 1 (Darwin rejects wait-word primitives), and Windows/FreeBSD
+      # enablement awaits the same evidence there.
+      - name: stage 2 conformance (Linux futex)
+        run: cargo test -p selium-kernel --features stage2-wait-words --test wait_notify
+        working-directory: proto/arch3
+
+      # The whole kernel and runtime suites must also hold with Stage 2
+      # active, since every engine-backed wait then parks on the OS
+      # wait-word instead of the registry.
+      - name: kernel + runtime suites with stage 2 enabled
+        run: >-
+          cargo test -p selium-kernel -p selium-runtime
+          --features selium-runtime/stage2-wait-words
+        working-directory: proto/arch3

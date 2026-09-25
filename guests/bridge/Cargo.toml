@@ -1,0 +1,31 @@
+[package]
+name = "selium-bridge"
+version.workspace = true
+edition.workspace = true
+description = "Per-tenant bridge server system guest (authenticates clients, spawns bridge-channels)"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+selium-abi.workspace = true
+selium-guest.workspace = true
+selium-service.workspace = true
+selium-shm.workspace = true
+selium-wire.workspace = true
+
+[dev-dependencies]
+selium-memory.workspace = true
+selium-shm.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

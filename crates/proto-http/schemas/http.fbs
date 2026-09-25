@@ -1,0 +1,46 @@
+// FlatBuffers schema for HTTP protocol wire types.
+// Used by the HTTP connector and http-served app guests.
+
+namespace selium.http;
+
+table HttpHeader {
+    name: string;
+    value: string;
+}
+
+table HttpRequest {
+    method: string;
+    uri: string;
+    headers: [HttpHeader];
+    body: [ubyte];          // inline body bytes (empty for streamed bodies)
+}
+
+table HttpResponse {
+    status: ushort;
+    headers: [HttpHeader];
+    body: [ubyte];          // inline body bytes (empty for streamed bodies)
+}
+
+table HttpBodyChunk {
+    data: [ubyte];          // a chunk of body data for streaming
+}
+
+table HttpTrailer {
+    name: string;
+    value: string;
+}
+
+// One item of a streamed HTTP response carried over server-streaming RPC.
+// The first item of a stream is a head (status + headers, empty body),
+// followed by body chunks, optional trailers, and end-of-stream signalled
+// by the stream lifecycle (not by this message).
+table HttpStreamItem {
+    kind: ubyte;            // 1 = head, 2 = chunk, 3 = trailer
+    status: ushort;         // kind = head
+    headers: [HttpHeader];  // kind = head
+    data: [ubyte];          // kind = chunk
+    name: string;           // kind = trailer
+    value: string;          // kind = trailer
+}
+
+root_type HttpRequest;

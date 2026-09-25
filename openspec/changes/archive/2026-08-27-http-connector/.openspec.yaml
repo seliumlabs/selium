@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-08-05
+goal: "First connector: edge-terminated HTTP/1.1+TLS to typed RpcConnection handles"

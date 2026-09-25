@@ -1,9 +1,0 @@
-namespace examples.echo;
-
-table EchoMsg {
-  /// The payload.
-  msg:string;
-}
-
-root_type EchoMsg;
-file_identifier "ECHO";

@@ -1,0 +1,9 @@
+# Enable getrandom's `custom` backend on wasm32.
+#
+# The guest runtime hosts randomness via the `RandomBytes` hostcall, which the
+# connector guests wire in through `__getrandom_v03_custom`.
+# Because getrandom 0.4 selects its backend through the `getrandom_backend` cfg
+# (rather than a cargo feature), we set it here for the wasm32 target so the
+# custom implementation is used instead of the browser-only `wasm_js` backend.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="custom"']

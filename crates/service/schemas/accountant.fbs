@@ -1,0 +1,83 @@
+// FlatBuffers schema for accounting guest messages.
+//
+// The accounting guest runs a resource-driven revenue control loop. Its wire
+// messages are:
+//
+// - `MeteringBucket`: the bookkeeper's per-second, per-tenant reduced metering
+//   bucket, published to a shared-memory topic and merged by the accountant.
+//   Counter dimensions (cpu, bandwidth) carry the sampling interval's delta;
+//   gauge dimensions (memory, storage) carry the current reading.
+// - `AccountantControl`: the operator/billing control surface, served over the
+//   accountant's RPC listener. `SetPlan` authors the paid plan (soft ceiling);
+//   `SetOverage` authors the opt-in overage budget (hard ceiling = plan +
+//   overage); `MarkDelinquent`/`MarkRestored` drive the rare billing-state
+//   transitions.
+// - `TenantPlan`: per-dimension ceilings (`cpu_instructions` is the
+//   enforceable per-minute CPU ceiling; `memory_bytes`, `storage_bytes`, and
+//   `bandwidth_bytes` are the other enforceable dimensions).
+namespace selium.accountant;
+
+// A per-tenant metering bucket for one sampling interval.
+table MeteringBucket {
+    // Tenant whose usage the bucket aggregates.
+    tenant: string;
+    // CPU instruction delta (executed WebAssembly instructions) for the interval.
+    cpu_instructions: ulong;
+    // Current memory usage in bytes.
+    memory_bytes: ulong;
+    // Current storage usage in bytes.
+    storage_bytes: ulong;
+    // Bandwidth delta in bytes.
+    bandwidth_bytes: ulong;
+    // Wall-clock publish time in unix seconds, stamped by the bookkeeper:
+    // the accountant buckets the bucket into its billing window by this
+    // stamp, not by its own receive-time clock.
+    published_unix_s: ulong;
+}
+
+// Per-dimension ceiling values for a tenant's plan or overage budget.
+table TenantPlan {
+    // CPU ceiling in instructions per minute.
+    cpu_instructions: ulong;
+    // Memory ceiling in bytes.
+    memory_bytes: ulong;
+    // Storage ceiling in bytes.
+    storage_bytes: ulong;
+    // Bandwidth ceiling in bytes per minute.
+    bandwidth_bytes: ulong;
+}
+
+// Operator/billing control request to the accountant.
+//
+// Variant tag values:
+//   0 = SetPlan { tenant, plan }
+//   1 = SetOverage { tenant, overage }
+//   2 = MarkDelinquent { tenant }
+//   3 = MarkRestored { tenant }
+//   4 = SetProcessQuota { tenant, processes }
+table AccountantControl {
+    variant: ubyte;
+    // Tenant the control targets (all data variants).
+    tenant: string;
+    // Paid-plan ceilings (SetPlan).
+    plan: selium.accountant.TenantPlan;
+    // Opt-in overage budget ceilings (SetOverage).
+    overage: selium.accountant.TenantPlan;
+    // Per-tenant process-count ceiling (SetProcessQuota).
+    processes: ulong;
+}
+
+// Operator/billing control response from the accountant.
+//
+// Variant tag values:
+//   0 = Updated { tenant }
+//   1 = Error { context }
+table AccountantControlResponse {
+    variant: ubyte;
+    // Tenant that was updated (Updated).
+    tenant: string;
+    // Failure context (Error).
+    context: string;
+}
+
+root_type MeteringBucket;

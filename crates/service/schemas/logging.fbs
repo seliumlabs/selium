@@ -1,0 +1,45 @@
+// Flatbuffers schema for structured log records transported over guest channels.
+namespace selium.logging;
+
+/// Log severity level.
+enum LogLevel : ubyte {
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
+}
+
+/// A single key-value field attached to a log record.
+table Field {
+    /// Field key.
+    key: string;
+    /// Field value (stringified).
+    value: string;
+}
+
+/// A span in the tracing span stack at the time the event was emitted.
+table Span {
+    /// Span name.
+    name: string;
+    /// Fields attached to the span.
+    fields: [Field];
+}
+
+/// A structured log record published to the guest log channel.
+table LogRecord {
+    /// Severity level.
+    level: LogLevel;
+    /// Tracing target (typically the module path).
+    target: string;
+    /// Log message.
+    message: string;
+    /// Key-value fields attached to the event.
+    fields: [Field];
+    /// Span stack at the time of the event.
+    spans: [Span];
+    /// Timestamp in milliseconds since UNIX epoch.
+    timestamp_ms: ulong;
+}
+
+root_type LogRecord;

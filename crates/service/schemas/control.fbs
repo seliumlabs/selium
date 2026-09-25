@@ -1,0 +1,113 @@
+// FlatBuffers schema for control-plane service messages.
+//
+// The control plane serves typed request/reply over the bridge; this schema
+// is shared by the control-plane guest and external clients, mirroring the
+// discovery schema's variant-discriminated table shape.
+namespace selium.control;
+
+// A target returned by a resolve request. Carried inline so the control
+// schema does not depend on the discovery schema's ResourceTarget.
+table ResolvedTarget {
+    uri: string;
+    host_id: string;
+    resource_id: ulong;
+}
+
+// A deployment's desired state (workload identifier, replicas, module).
+table Deployment {
+    workload_id: string;
+    replicas: uint;
+    module: string;
+}
+
+// The outcome of a single delegated interaction (e.g. scheduler placement).
+table DelegationStatus {
+    step: string;
+    applied: bool;
+    context: string;
+}
+
+// Control-plane request message.
+//
+// Variant tag values:
+//   0 = Deploy { workload_id, replicas, module }
+//   1 = Scale { workload_id, replicas }
+//   2 = Stop { workload_id }
+//   3 = Resolve { uri }
+//   4 = Upload { manifest, bytes }
+//   5 = Status { workload_id }
+table ControlRequest {
+    variant: ubyte;
+    // Workload identifier (Deploy, Scale, Stop, Status variants).
+    workload_id: string;
+    // Replica count (Deploy, Scale variants).
+    replicas: uint;
+    // Module reference: blob manifest name or blob identity (Deploy variant).
+    module: string;
+    // URI to resolve (Resolve variant).
+    uri: string;
+    // Manifest name for an uploaded module (Upload variant).
+    manifest: string;
+    // Uploaded module bytes (Upload variant).
+    bytes: [ubyte];
+}
+
+// Control-plane response message.
+//
+// Variant tag values:
+//   0 = Uploaded { manifest }
+//   1 = Accepted { workload_id, replicas, module, delegated }
+//   2 = Status { deployment }
+//   3 = Resolved { target }
+//   4 = Error { step, context }
+table ControlResponse {
+    variant: ubyte;
+    // Manifest name for an uploaded module (Uploaded variant).
+    manifest: string;
+    // Workload identifier (Accepted variant).
+    workload_id: string;
+    // Recorded replica count (Accepted variant).
+    replicas: uint;
+    // Recorded module reference (Accepted variant).
+    module: string;
+    // Delegation outcome (Accepted variant).
+    delegated: DelegationStatus;
+    // Deployment desired state (Status variant).
+    deployment: Deployment;
+    // Step name (Error variant).
+    step: string;
+    // Error context (Error variant).
+    context: string;
+    // Resolved target (Resolved variant).
+    target: ResolvedTarget;
+}
+
+// A pipeline binding between workload endpoints, recorded as desired state.
+table PipelineBinding {
+    name: string;
+    from: string;
+    to: string;
+}
+
+// A control-plane desired-state record appended to the durable log.
+//
+// Variant tag values:
+//   0 = Deployment(deployment)
+//   1 = PipelineBinding(binding)
+//   2 = Stop { workload_id }
+//
+// Every record carries the tenant it belongs to, so replay can rebuild a
+// tenant-partitioned read model from the single platform-scoped log.
+table DesiredStateRecord {
+    variant: ubyte;
+    // Deployment desired state (Deployment variant).
+    deployment: Deployment;
+    // Pipeline binding (PipelineBinding variant).
+    pipeline: PipelineBinding;
+    // Workload identifier (Stop variant).
+    workload_id: string;
+    // Tenant the record belongs to (all variants).
+    tenant: string;
+}
+
+root_type ControlRequest;

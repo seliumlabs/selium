@@ -1,0 +1,30 @@
+// FlatBuffers schema for scheduler service messages.
+//
+// The control plane delegates placement/scale/stop to the scheduler through
+// these typed messages (moved out of the superseded external-api stub).
+namespace selium.scheduler;
+
+// Scheduler request message.
+//
+// Variant tag values:
+//   0 = Place { workload_id, replicas }
+//   1 = Scale { workload_id, replicas }
+//   2 = Stop { workload_id }
+table SchedulerRequest {
+    variant: ubyte;
+    workload_id: string;
+    replicas: uint;
+}
+
+// Scheduler response message.
+//
+// Variant tag values:
+//   0 = Applied
+//   1 = Deferred { reason }
+//   2 = Rejected { reason }
+table SchedulerResponse {
+    variant: ubyte;
+    reason: string;
+}
+
+root_type SchedulerRequest;

@@ -1,0 +1,48 @@
+[package]
+name = "selium-connector-http"
+version.workspace = true
+edition.workspace = true
+description = "HTTP/1.1 edge connector system guest"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+futures = { workspace = true, features = ["std"] }
+getrandom.workspace = true
+rustls = { workspace = true, features = ["ring", "std"] }
+rustls-pemfile = { workspace = true, features = ["std"] }
+rustls-pki-types = { workspace = true, features = ["web"] }
+selium-abi.workspace = true
+selium-guest.workspace = true
+selium-proto-http.workspace = true
+selium-service.workspace = true
+selium-shm.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "sync"] }
+tokio-rustls.workspace = true
+tracing.workspace = true
+web-time.workspace = true
+
+# ring gates `SystemRandom`'s `SecureRandom` impl on wasm32-unknown-unknown
+# behind its `wasm32_unknown_unknown_js` feature. The feature exists only to
+# satisfy ring's cfg: the getrandom backend actually used is `custom` (see
+# `.cargo/config.toml`), which routes to the host `RandomBytes` hostcall. The
+# dep is wasm-gated so getrandom's `wasm_js` feature (and its wasm-bindgen/js
+# dependencies) is never enabled for native builds.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ring = { workspace = true, features = ["wasm32_unknown_unknown_js"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+
+[lints]
+workspace = true

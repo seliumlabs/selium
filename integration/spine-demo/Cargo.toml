@@ -1,0 +1,24 @@
+[package]
+name = "selium-spine-demo"
+version.workspace = true
+edition.workspace = true
+description = "Golden-path demo guest used by the spine integration test"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+selium-guest.workspace = true
+selium-shm.workspace = true
+selium-wire.workspace = true
+
+[lints]
+workspace = true

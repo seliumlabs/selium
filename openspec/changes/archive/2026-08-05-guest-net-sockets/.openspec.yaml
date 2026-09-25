@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-05
+goal: Guest TCP/UDP socket SDK over existing kernel proxies; literals-only
+  connect; binary datagram frames

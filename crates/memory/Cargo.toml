@@ -1,0 +1,25 @@
+[package]
+name = "selium-memory"
+version.workspace = true
+edition.workspace = true
+description = "Selium shared-memory primitives and region provider abstraction"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+selium-abi.workspace = true
+thiserror.workspace = true
+
+[features]
+# Enables the genuine `memory.atomic.wait32` / `memory.atomic.notify` WASM
+# intrinsics. Requires a nightly toolchain (`#![feature(stdarch_wasm_atomic_wait)]`)
+# and a `+atomics`/shared-everything-threads target. Stable builds compile
+# without this feature; see the cfg gates in `src/lib.rs`.
+nightly-wasm-atomics = []
+
+[lints]
+workspace = true

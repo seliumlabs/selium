@@ -1,0 +1,23 @@
+// FlatBuffers schema for per-stream pipe-control frames.
+//
+// The deterministic client↔bridge handshake: the external client writes one
+// control frame before data relay begins; the bridge channel replies with
+// exactly one control frame (Accepted or Terminate).
+namespace selium.pipe;
+
+/// Per-stream pipe-control message.
+///
+/// Variant tag values:
+///   0 = Handshake { uri }
+///   1 = Accepted
+///   2 = Terminate { code }
+table PipeControl {
+    /// Variant discriminator.
+    variant: ubyte;
+    /// Discovery URI of the fabric channel to bridge (Handshake variant).
+    uri: string;
+    /// Machine-readable termination code (Terminate variant).
+    code: uint;
+}
+
+root_type PipeControl;

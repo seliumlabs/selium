@@ -1,32 +1,45 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
-  "examples/data-pipeline",
-  "examples/echo",
-  "examples/echo-no-deps",
-  "examples/load-balancer",
-  "examples/load-balancer-https",
-  "examples/log-analyser",
-  "examples/orchestrator",
-  "examples/rest-api",
-  "examples/waf",
-  "subsystem/filesystem-store",
-  "subsystem/messaging",
-  "subsystem/net-hyper",
-  "subsystem/net-quinn",
-  "subsystem/wasmtime",
-  "system/abi",
-  "system/kernel",
-  "system/runtime",
-  "system/userland",
-  "system/userland/macros"
-  # "tests/request-reply"
+  "crates/abi",
+  "crates/cli",
+  "crates/client",
+  "crates/guest",
+  "crates/guest/macros",
+  "crates/kernel",
+  "crates/memory",
+  "crates/proto-dns",
+  "crates/proto-http",
+  "crates/runtime",
+  "crates/service",
+  "crates/shm",
+  "crates/wire",
+  "guests/accountant",
+  "guests/bridge",
+  "guests/bridge-channel",
+  "guests/connector-dns",
+  "guests/connector-http",
+  "guests/connector-quic",
+  "guests/control-plane",
+  "guests/discovery",
+  "guests/identity",
+  "integration/discovery-probe",
+  "integration/dns-demo",
+  "integration/identity-onboard",
+  "integration/mt-demo",
+  "integration/net-demo",
+  "integration/quic-demo",
+  "integration/spine-demo",
 ]
+exclude = ["vendor"]
+# Frozen during the spine rebuild (kept in-tree for later increments):
+#   "guests/cluster"
+#   "guests/scheduler"
+#   "guests/supervisor"
 
 [workspace.package]
-version = "1.0.0-alpha.6"
+version = "1.0.0-alpha.7"
 edition = "2024"
-description = "Streaming compute fabric"
 readme = "README.md"
 homepage = "https://selium.com"
 repository = "https://github.com/seliumlabs/selium"
@@ -37,50 +50,90 @@ categories = ["development-tools", "virtualization", "wasm"]
 [workspace.dependencies]
 anyhow = { version = "1.0", default-features = false }
 blake3 = { version = "1.8", default-features = false }
+bytes = { version = "1.12", default-features = false }
 clap = { version = "4.6", default-features = false }
 flatbuffers = { version = "25.12", default-features = false }
-flatbuffers-build = { version = "0.2", default-features = false }
-flatc-fork = { version = "0.6.0", default-features = false }
 futures = { version = "0.3", default-features = false }
-futures-util = { version = "0.3", default-features = false }
-http-body-util = { version = "0.1", default-features = false }
-hyper = { version = "1.9", default-features = false }
-hyper-util = { version = "0.1", default-features = false }
-libc = { version = "0.2", default-features = false }
-loom = { version = "0.7", default-features = false }
+getrandom = { version = "0.4", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
-path-security = { version = "0.2", default-features = false }
-pin-project = { version = "1.1", default-features = false }
-proc-macro-crate = { version = "3.5", default-features = false }
 proc-macro2 = { version = "1.0", default-features = false }
 quinn = { version = "0.11", default-features = false }
 quote = { version = "1.0", default-features = false }
 rcgen = { version = "0.14", default-features = false }
+ring = { version = "0.17", default-features = false }
 rkyv = { version = "0.8", default-features = false }
 rustls = { version = "0.23", default-features = false }
-rustls-pki-types = { version = "1.14", default-features = false }
-selium-abi = { path = "system/abi", version = "1.0.0-alpha.6" }
-selium-atlas = { version = "0.2", default-features = false }
-selium-filesystem-store = { path = "subsystem/filesystem-store", version = "1.0.0-alpha.6" }
-selium-kernel = { path = "system/kernel", version = "1.0.0-alpha.6" }
-selium-messaging = { path = "subsystem/messaging", version = "1.0.0-alpha.6" }
-selium-net-hyper = { path = "subsystem/net-hyper", version = "1.0.0-alpha.6" }
-selium-net-quinn = { path = "subsystem/net-quinn", version = "1.0.0-alpha.6" }
-selium-switchboard = { version = "0.4", default-features = false }
-selium-userland = { path = "system/userland", version = "1.0.0-alpha.6" }
-selium-userland-macros = { path = "system/userland/macros", version = "1.0.0-alpha.6" }
-selium-wasmtime = { path = "subsystem/wasmtime", version = "1.0.0-alpha.6" }
-serde = { version = "1.0", default-features = false }
-serde_json = { version = "1.0", default-features = false }
-sharded-slab = { version = "0.1", default-features = false }
-stable-vec = { version = "0.4", default-features = false }
-syn = { version = "2.0", default-features = false }
+rustls-pemfile = { version = "2", default-features = false }
+rustls-pki-types = { version = "1", default-features = false }
+selium-abi = { path = "crates/abi", default-features = false }
+selium-client = { path = "crates/client", default-features = false }
+selium-guest = { path = "crates/guest", default-features = false }
+selium-guest-macros = { path = "crates/guest/macros", default-features = false }
+selium-kernel = { path = "crates/kernel", default-features = false }
+selium-memory = { path = "crates/memory", default-features = false }
+selium-proto-dns = { path = "crates/proto-dns", default-features = false }
+selium-proto-http = { path = "crates/proto-http", default-features = false }
+selium-service = { path = "crates/service", default-features = false }
+selium-shm = { path = "crates/shm", default-features = false }
+selium-wire = { path = "crates/wire", default-features = false }
+sha2 = { version = "0.11", default-features = false }
+syn = { version = "3.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
-tokio = { version = "1.52", default-features = false }
+time = { version = "0.3", default-features = false }
+tokio = { version = "1.53", default-features = false }
 tokio-rustls = { version = "0.26", default-features = false }
+tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = { version = "1.0", default-features = false }
-uuid = { version = "1.23", default-features = false }
-wasmtime = { version = "43.0", default-features = false }
-webpki-roots = { version = "1.0", default-features = false }
+wasmtiny = { version = "0.1", default-features = false, features = ["aot"] }
+wasmtiny-aotc = { path = "../../wasmtiny/crates/aotc", default-features = false }
+wat = { version = "1.259", default-features = false }
+web-time = "1.1"
+x509-parser = { version = "0.18", default-features = false }
+
+[workspace.lints.clippy]
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+assertions_on_result_states = "warn"
+await_holding_lock = "warn"
+await_holding_refcell_ref = "warn"
+cast_sign_loss = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+expl_impl_clone_on_copy = "warn"
+float_cmp = "warn"
+float_cmp_const = "warn"
+get_unwrap = "warn"
+indexing_slicing = "warn"
+infallible_try_from = "warn"
+invalid_upcast_comparisons = "warn"
+iter_not_returning_iterator = "warn"
+large_futures = "warn"
+let_underscore_future = "warn"
+let_underscore_must_use = "warn"
+lossy_float_literal = "warn"
+map_err_ignore = "warn"
+mem_forget = "warn"
+multiple_unsafe_ops_per_block = "warn"
+panic = "warn"
+panic_in_result_fn = "warn"
+rc_mutex = "warn"
+string_slice = "warn"
+todo = "warn"
+unchecked_time_subtraction = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unreachable = "warn"
+unused_result_ok = "warn"
+unwrap_in_result = "warn"
+unwrap_used = "warn"
+
+[patch.crates-io]
+getrandom = { git = "https://github.com/seliumlabs/getrandom", rev = "1cd6d1f288be4a8dfe2f72aac02add4b8c3e0ac5" }
+# Drop this entry once ring releases a 0.17.x built on getrandom 0.4.
+ring = { git = "https://github.com/briansmith/ring", rev = "840167e18e4fa837eb48de46500454a616a15a6e" }
+wasmtiny = { path = "../../wasmtiny/crates/core" }
+web-time = { path = "vendor/web-time" }

@@ -1,0 +1,30 @@
+[package]
+name = "selium-control-plane"
+version.workspace = true
+edition.workspace = true
+description = "Selium control-plane system guest (typed RPC control surface and desired-state ownership)"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+selium-abi.workspace = true
+selium-service.workspace = true
+selium-guest.workspace = true
+selium-shm.workspace = true
+selium-wire.workspace = true
+
+[dev-dependencies]
+selium-memory.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true

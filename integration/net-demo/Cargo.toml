@@ -1,0 +1,23 @@
+[package]
+name = "selium-net-demo"
+version.workspace = true
+edition.workspace = true
+description = "Network demo guest used by the net integration tests"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+selium-guest.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

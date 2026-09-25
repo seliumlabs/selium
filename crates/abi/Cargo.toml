@@ -1,0 +1,18 @@
+[package]
+name = "selium-abi"
+version.workspace = true
+edition.workspace = true
+description = "Selium host and guest ABI contracts"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+rkyv = { workspace = true, features = ["bytecheck", "std"] }
+thiserror.workspace = true
+
+[lints]
+workspace = true

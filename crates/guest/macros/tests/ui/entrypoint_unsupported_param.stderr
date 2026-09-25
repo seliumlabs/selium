@@ -1,0 +1,5 @@
+error: unsupported entrypoint parameter; expected `Context` (leading), an integer (u8/u16/u32/u64/usize/i8/i16/i32/i64/isize), or a `(u64, u64)` pointer argument
+ --> tests/ui/entrypoint_unsupported_param.rs:6:45
+  |
+6 | async fn unsupported_param_entrypoint(name: String) {}
+  |                                             ^^^^^^

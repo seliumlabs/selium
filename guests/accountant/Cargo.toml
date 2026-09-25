@@ -1,0 +1,27 @@
+[package]
+name = "selium-accountant"
+version.workspace = true
+edition.workspace = true
+description = "Selium accounting system guest (resource-driven revenue control: bookkeeper metering reduction and accountant billing, quota, narrowing, and rate-limit authoring)"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+rkyv = { workspace = true, features = ["alloc", "bytecheck"] }
+selium-abi.workspace = true
+selium-guest.workspace = true
+selium-service.workspace = true
+selium-shm.workspace = true
+selium-wire.workspace = true
+
+[lints]
+workspace = true

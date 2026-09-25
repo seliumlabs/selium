@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-05
+goal: Optional per-OS wait/wake fast path on host-shared pages
+  (futex/ulock/WaitOnAddress)

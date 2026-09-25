@@ -1,0 +1,32 @@
+[package]
+name = "selium-wire"
+version.workspace = true
+edition.workspace = true
+description = "Selium transport-agnostic wire framing and messaging patterns"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["flatbuffers"]
+
+[dependencies]
+bytes.workspace = true
+flatbuffers.workspace = true
+futures = { workspace = true, features = ["std"] }
+selium-abi.workspace = true
+selium-service.workspace = true
+selium-guest-macros.workspace = true
+selium-memory.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tokio-util = { workspace = true, features = ["codec"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

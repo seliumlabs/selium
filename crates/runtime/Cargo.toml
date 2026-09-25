@@ -1,0 +1,53 @@
+[package]
+name = "selium-runtime"
+version.workspace = true
+edition.workspace = true
+description = "Selium Wasmtiny-backed runtime"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive", "help", "std"] }
+parking_lot.workspace = true
+rcgen = { workspace = true, features = ["crypto", "pem", "ring", "x509-parser"] }
+rustls-pki-types.workspace = true
+selium-abi.workspace = true
+selium-kernel.workspace = true
+selium-memory.workspace = true
+selium-service.workspace = true
+selium-shm.workspace = true
+selium-wire.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tracing.workspace = true
+wasmtiny.workspace = true
+wasmtiny-aotc.workspace = true
+
+[dev-dependencies]
+quinn = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
+rcgen.workspace = true
+selium-accountant = { path = "../../guests/accountant" }
+selium-client.workspace = true
+selium-identity = { path = "../../guests/identity" }
+selium-identity-onboard = { path = "../../integration/identity-onboard" }
+selium-proto-dns.workspace = true
+selium-service.workspace = true
+wat.workspace = true
+x509-parser.workspace = true
+
+[features]
+# Forwards the Stage 2 (per-OS wait-words) opt-in to the kernel, which in
+# turn enables the engine's platform wake emission. Embedders building the
+# full runtime stack enable it here. Off by default; see
+# `selium-kernel`'s feature docs and the shared-page-fastpath spec for the
+# detection/fallback rules.
+stage2-wait-words = ["selium-kernel/stage2-wait-words"]
+
+[lints]
+workspace = true

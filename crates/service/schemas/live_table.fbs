@@ -1,0 +1,20 @@
+// Flatbuffers schema for live table mutations.
+namespace selium.live_table;
+
+/// A table mutation published over a pub/sub topic.
+///
+/// Every `set` or `delete` publishes one of these messages. All processes
+/// attached to the same topic replay the stream to build their local
+/// materialised view.
+table LiveTableMessage {
+  /// Topic-wide mutation id used to acknowledge writes in stream order.
+  mutation_id:ulong;
+  /// The entry key encoded as bytes via FlatMsg.
+  key_bytes:[ubyte];
+  /// The entry value encoded as bytes via FlatMsg (empty for tombstones).
+  value_bytes:[ubyte];
+  /// Optional version that must be current for this mutation to apply (0 = none).
+  expected_version:ulong;
+}
+
+root_type LiveTableMessage;

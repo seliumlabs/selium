@@ -1,0 +1,21 @@
+[package]
+name = "selium-service"
+version.workspace = true
+edition.workspace = true
+description = "Selium fabric service message types and FlatBuffers codecs"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+flatbuffers.workspace = true
+selium-abi.workspace = true
+selium-guest-macros = { path = "../guest/macros" }
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
