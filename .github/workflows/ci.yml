@@ -24,10 +24,10 @@ jobs:
     steps:
       # The workspace pins wasmtiny via a path dependency at ../../wasmtiny,
       # so the repos are checked out side-by-side to preserve that layout.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: proto/arch3
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
@@ -56,10 +56,10 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: proto/arch3
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
@@ -79,10 +79,10 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: proto/arch3
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
@@ -124,10 +124,10 @@ jobs:
         -C link-arg=--shared-memory
         -C link-arg=--max-memory=1073741824
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: proto/arch3
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
@@ -188,10 +188,10 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           path: proto/arch3
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: itpetey/wasmtiny
           path: wasmtiny
