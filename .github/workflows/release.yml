@@ -14,6 +14,6 @@ jobs:
       pull-requests: read
     steps:
       - uses: actions/checkout@v7
-      - uses: itpetey/breezy@bb65a07f3ed4778279c6908d32cc72dbef642b34 # v0.4.0
+      - uses: itpetey/breezy@3bf8cebc2034f18908a2086b81e15f06026d6957 # v0.4.1
         with:
           language: rust
