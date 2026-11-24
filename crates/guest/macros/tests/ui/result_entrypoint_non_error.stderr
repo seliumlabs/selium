@@ -13,7 +13,6 @@ note: required by a bound in `run_entrypoint_with_result`
  --> $WORKSPACE/crates/guest/src/async_runtime.rs
   |
   | pub fn run_entrypoint_with_result<F, E>(future: F) -> Result<(), E>
-  |        -------------------------- required by a bound in this function
 ...
   |     E: core::fmt::Display + Send + 'static,
   |        ^^^^^^^^^^^^^^^^^^ required by this bound in `run_entrypoint_with_result`
