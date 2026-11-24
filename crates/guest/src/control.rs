@@ -1,12 +1,9 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 use selium_service::{ControlRequest, ControlResponse};
 use selium_shm::rpc::{self, OwnedRpcClient};
 
-use crate::{GuestError, Result, async_runtime::yield_now};
+use crate::{GuestError, Result, client_session::SessionState};
 
 /// The root-namespace route the control-plane service serves on.
 pub const CONTROL_ROUTE: &str = "sel:///control";
@@ -27,10 +24,10 @@ pub struct ControlClient {
 }
 
 struct ControlClientInner {
-    /// Cooperative gate: the session is taken out for the duration of a
-    /// request, so concurrent callers cannot interleave frames on one session.
-    gate: AtomicBool,
-    session: Mutex<Option<OwnedRpcClient<ControlRequest, ControlResponse>>>,
+    /// Cancellation-safe checkout: one request owns the session for its
+    /// duration, and dropping the request future closes or restores it before
+    /// reopening the gate.
+    session: SessionState<OwnedRpcClient<ControlRequest, ControlResponse>>,
 }
 
 impl ControlClient {
@@ -38,8 +35,7 @@ impl ControlClient {
     pub fn from_session(session: OwnedRpcClient<ControlRequest, ControlResponse>) -> Self {
         Self {
             inner: Arc::new(ControlClientInner {
-                gate: AtomicBool::new(false),
-                session: Mutex::new(Some(session)),
+                session: SessionState::new(session),
             }),
         }
     }
@@ -47,41 +43,30 @@ impl ControlClient {
     /// Sends one request and awaits its reply.
     ///
     /// A control-plane-reported failure is returned as a [`GuestError`]; the
-    /// session survives a `ControlResponse::Error`.
+    /// session survives a `ControlResponse::Error`. Cancelling the future
+    /// closes the torn session and reopens the gate so later requests are
+    /// admitted and fail clearly rather than spinning.
     pub async fn request(&self, request: ControlRequest) -> Result<ControlResponse> {
-        self.acquire().await;
-        let session = self
-            .inner
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        let Some(mut session) = session else {
-            self.inner.gate.store(false, Ordering::Release);
+        let mut guard = self.inner.session.acquire().await;
+        let Some(session) = guard.session() else {
             return Err(GuestError::Host(
                 "control-plane session unavailable".to_string(),
             ));
         };
         let reply = session.request(request).await;
-        // Restore the session before opening the gate again.
-        *self
-            .inner
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session);
-        self.inner.gate.store(false, Ordering::Release);
-
-        match reply.map_err(|error| GuestError::Host(format!("control request: {error}")))? {
-            ControlResponse::Error { step, context } => {
-                Err(GuestError::Host(format!("{step}: {context}")))
+        match reply {
+            Ok(reply) => {
+                // Restore before reopening the gate: the transport is intact
+                // and the session survives an application-level error.
+                guard.restore();
+                match reply {
+                    ControlResponse::Error { step, context } => {
+                        Err(GuestError::Host(format!("{step}: {context}")))
+                    }
+                    other => Ok(other),
+                }
             }
-            other => Ok(other),
-        }
-    }
-
-    async fn acquire(&self) {
-        while self.inner.gate.swap(true, Ordering::AcqRel) {
-            yield_now().await;
+            Err(error) => Err(GuestError::from(error).context("control request")),
         }
     }
 }
@@ -95,6 +80,45 @@ where
 {
     let session = rpc::connect(rendezvous, RPC_REQ_CAPACITY, RPC_REP_CAPACITY)
         .await
-        .map_err(|error| GuestError::Host(format!("control connect: {error}")))?;
+        .map_err(|error| GuestError::from(error).context("control connect"))?;
     Ok(ControlClient::from_session(session))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending_once<F: std::future::Future>(future: std::pin::Pin<&mut F>) -> bool {
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        future.poll(&mut context).is_pending()
+    }
+
+    #[tokio::test]
+    async fn cancelled_control_request_does_not_strand_the_client() {
+        let (session, server) =
+            crate::client_session::test_session_pair::<ControlRequest, ControlResponse>().await;
+        let client = ControlClient::from_session(session);
+
+        let mut request = Box::pin(client.request(ControlRequest::Status {
+            workload_id: "cancelled".to_string(),
+        }));
+        assert!(
+            pending_once(request.as_mut()),
+            "the request should park awaiting the control plane's reply"
+        );
+        drop(request);
+
+        let error = client
+            .request(ControlRequest::Status {
+                workload_id: "after-cancel".to_string(),
+            })
+            .await
+            .expect_err("the cancelled session is closed");
+        assert!(
+            matches!(&error, GuestError::Host(message) if message.contains("unavailable")),
+            "a cancelled session must fail clearly, not hang: {error:?}"
+        );
+        server.abort();
+    }
 }

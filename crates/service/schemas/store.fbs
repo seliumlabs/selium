@@ -33,6 +33,7 @@ table LogRecord {
 //   7 = SetManifest { store, manifest, blob_id }
 //   8 = GetManifest { store, manifest }
 //   9 = ResolveSlice { store, manifest, blob_id }
+//  10 = Sync { log }
 table StoreRequest {
     variant: ubyte;
     // Durable log name (log variants).

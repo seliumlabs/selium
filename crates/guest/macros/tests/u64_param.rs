@@ -1,5 +1,6 @@
 use selium_guest::{Capability, CapabilityGrant, LocalityScope, ResourceSelector, entrypoint};
 use selium_runtime::{Runtime, RuntimeConfig, SystemGuestArg, SystemGuestDescriptor};
+// scenario: selium-guest-macros/context-aware-entrypoint-parameter/macro-forwards-raw-u64-argument-into-entrypoint
 
 #[test]
 fn entrypoint_with_u64_param_receives_argument() {

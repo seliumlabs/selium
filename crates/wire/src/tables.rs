@@ -1,4 +1,14 @@
 //! Transport-agnostic live table projected from a pub/sub stream.
+//!
+//! # Single-writer authority
+//!
+//! A [`LiveTable`] is a writer and must be constructed with an explicit
+//! [`TableWriterAuthority`] claim over a transport-provided shared arbiter.
+//! The claim is bound to the actual channel during construction: competing
+//! attachments fail with [`Error::TableAuthorityConflict`], including claims
+//! using different labels for one channel. Transports without an arbiter reject
+//! writable table construction rather than pretending local CAS is shared.
+//! Readers use [`LiveTableView`], which has no mutation or CAS surface.
 
 use std::{collections::HashMap, hash::Hash, sync::RwLock};
 
@@ -56,6 +66,78 @@ pub struct LiveTable<K, V, M> {
     publisher: RwLock<Publisher<LiveTableMessage<K, V>, M>>,
     subscriber: RwLock<Subscriber<LiveTableMessage<K, V>, M>>,
     local: RwLock<HashMap<K, LiveTableRecord<V>>>,
+    /// This table's exclusive write authority. Holding it is what makes
+    /// version assignment and compare-and-set meaningful; constructing a
+    /// second writer for the same topic fails loudly.
+    _authority: TableWriterAuthority,
+}
+
+/// Shared single-writer arbitration supplied by a channel transport.
+///
+/// This is deliberately a claim, not consensus: exactly one attachment holds
+/// the channel's writer registration until its table is dropped.
+pub trait TableWriterArbiter: Send + Sync {
+    /// Attempts to acquire the writer registration.
+    fn claim_table_writer(&self, claim: u64) -> Result<bool>;
+    /// Releases a previously acquired writer registration.
+    fn release_table_writer(&self, claim: u64) -> Result<()>;
+}
+
+/// Exclusive write authority bound to one live table's shared channel.
+///
+/// [`claim`](Self::claim) records the caller's diagnostic topic label. The
+/// enforceable claim is acquired by [`LiveTable::new`] from the publisher's
+/// transport, so aliases and cross-guest attachments contend on channel state,
+/// never on this process-local string. The claim is released on drop.
+pub struct TableWriterAuthority {
+    topic: String,
+    arbiter: Option<(std::sync::Arc<dyn TableWriterArbiter>, u64)>,
+}
+
+impl std::fmt::Debug for TableWriterAuthority {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TableWriterAuthority")
+            .field("topic", &self.topic)
+            .field("bound", &self.arbiter.is_some())
+            .finish()
+    }
+}
+
+static NEXT_TABLE_CLAIM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+impl TableWriterAuthority {
+    /// Creates an unbound authority request for `topic`.
+    pub fn claim(topic: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            topic: topic.into(),
+            arbiter: None,
+        })
+    }
+
+    /// Returns the diagnostic topic label for this authority.
+    pub fn topic(&self) -> &str {
+        &self.topic
+    }
+
+    fn bind(mut self, arbiter: std::sync::Arc<dyn TableWriterArbiter>) -> Result<Self> {
+        let claim = NEXT_TABLE_CLAIM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !arbiter.claim_table_writer(claim)? {
+            return Err(Error::TableAuthorityConflict {
+                topic: self.topic.clone(),
+            });
+        }
+        self.arbiter = Some((arbiter, claim));
+        Ok(self)
+    }
+}
+
+impl Drop for TableWriterAuthority {
+    fn drop(&mut self) {
+        if let Some((arbiter, claim)) = self.arbiter.take() {
+            drop(arbiter.release_table_writer(claim));
+        }
+    }
 }
 
 /// A read-only, materialised view of a live table projected from its pub/sub
@@ -76,15 +158,29 @@ where
     V: FlatMsg + Clone,
     M: MessageTransport,
 {
-    /// Creates a live table from an existing publisher/subscriber pair.
+    /// Creates a writable live table with explicit single-writer authority.
+    ///
+    /// The authority is claimed by the caller ([`TableWriterAuthority::claim`]),
+    /// making competing writers fail loudly instead of producing two divergent
+    /// local projections for one topic.
     pub fn new(
+        authority: TableWriterAuthority,
         publisher: Publisher<LiveTableMessage<K, V>, M>,
         subscriber: Subscriber<LiveTableMessage<K, V>, M>,
     ) -> Result<Self> {
+        let arbiter = publisher
+            .writer()
+            .inner()
+            .table_writer_arbiter()
+            .ok_or_else(|| Error::TableAuthorityUnavailable {
+                topic: authority.topic().to_string(),
+            })?;
+        let authority = authority.bind(arbiter)?;
         let table = Self {
             publisher: RwLock::new(publisher),
             subscriber: RwLock::new(subscriber),
             local: RwLock::new(HashMap::new()),
+            _authority: authority,
         };
         table.sync()?;
         Ok(table)
@@ -862,6 +958,24 @@ mod tests {
     }
 
     #[test]
+    fn writable_table_without_a_shared_arbiter_is_rejected() {
+        let (publisher, subscriber) = table_ends();
+        let result = LiveTable::new(
+            TableWriterAuthority::claim("un arbitrated").expect("claim"),
+            publisher,
+            subscriber,
+        );
+        assert!(matches!(
+            result,
+            Err(Error::TableAuthorityUnavailable { .. })
+        ));
+    }
+
+    // scenario: route-watch/reactive-route-watch/watch-seeds-from-the-current-state
+    // scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/generic-field-becomes-bytes-in-wire-type
+    // scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/optional-generic-field-becomes-bytes-in-wire-type
+    // scenario: schema-wire-generation/flatmsg-bridge-impl-generation/encode-round-trips-through-generated-bridge
+    #[test]
     fn view_materialises_already_published_state() {
         // A consumer attaching after the publisher has already written (e.g.
         // the connector attaching to an identity table that carries
@@ -882,6 +996,7 @@ mod tests {
         assert_eq!(scan.len(), 1, "only live records are scanned");
     }
 
+    // scenario: route-watch/reactive-route-watch/provider-is-replaced
     #[test]
     fn view_sync_picks_up_remote_writes() {
         let (mut publisher, subscriber) = table_ends();
@@ -922,6 +1037,9 @@ mod tests {
         );
     }
 
+    // scenario: route-watch/reactive-route-watch/provider-appears-after-the-watch-starts
+    // scenario: route-watch/reactive-route-watch/watch-converges-on-the-write
+    // scenario: route-watch/convergence-without-a-readiness-gate/consumer-starts-before-its-provider
     #[tokio::test]
     async fn view_sync_async_parks_until_the_next_remote_write() {
         let (publisher, subscriber) = table_ends();
@@ -945,16 +1063,3 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `route-watch` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: route-watch/reactive-route-watch/watch-seeds-from-the-current-state
-// scenario: route-watch/reactive-route-watch/provider-appears-after-the-watch-starts
-// scenario: route-watch/reactive-route-watch/provider-is-replaced
-// scenario: route-watch/reactive-route-watch/provider-is-revoked
-// scenario: route-watch/reactive-route-watch/watch-converges-on-the-write
-// scenario: route-watch/registration-leases/lapsed-lease-expires-the-registration
-// scenario: route-watch/registration-leases/renewal-keeps-the-registration-live
-// scenario: route-watch/registration-leases/lease-expiry-fires-on-the-timer-schedule
-// scenario: route-watch/route-change-generations/replacement-advances-the-generation
-// scenario: route-watch/convergence-without-a-readiness-gate/consumer-starts-before-its-provider
-// scenario: route-watch/convergence-without-a-readiness-gate/provider-restarts-mid-life
-// scenario: route-watch/health-is-published-state/guest-reports-health-as-state
-// scenario: route-watch/health-is-published-state/missing-health-is-not-a-boot-failure

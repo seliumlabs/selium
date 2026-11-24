@@ -16,8 +16,9 @@
 #   scripts/test.sh -p selium-kernel --features stage2-wait-words --test wait_notify
 #
 # Environment overrides:
-#   RUST_IMAGE       Docker image tag (default: rust:1.98, CI's current stable series)
-#   TOOLCHAIN        Pin a rustup toolchain inside the container (e.g. 1.98.1)
+#   RUST_IMAGE       Docker image tag (default: rust:1.99.1, CI's pinned stable)
+#   TOOLCHAIN        Override the stable toolchain (default: rust-toolchain.toml)
+#   SELIUM_NIGHTLY_TOOLCHAIN  Dated nightly for ignored atomics fixtures
 #   DOCKER_PLATFORM  Emulate a platform (e.g. linux/amd64 to bit-match CI's x86_64
 #                    runners; slow under qemu — arm64 Linux is usually enough,
 #                    but wait-word/futex behaviour can differ per architecture)
@@ -61,7 +62,8 @@ fi
 # ---------------------------------------------------------------------------
 # Assemble the run.
 # ---------------------------------------------------------------------------
-RUST_IMAGE="${RUST_IMAGE:-rust:latest}"
+RUST_IMAGE="${RUST_IMAGE:-rust:1.99.1}"
+NIGHTLY_TOOLCHAIN="${SELIUM_NIGHTLY_TOOLCHAIN:-nightly-2026-10-25}"
 
 PLATFORM_ARGS=()
 if [ -n "${DOCKER_PLATFORM:-}" ]; then
@@ -93,7 +95,7 @@ fi
 IGNORED_SETUP=":"
 for _arg in "$@"; do
   if [[ "$_arg" == "--ignored" || "$_arg" == "--include-ignored" ]]; then
-    IGNORED_SETUP="rustup target add wasm32-unknown-unknown >/dev/null; apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq clang >/dev/null 2>&1; rustup toolchain install nightly --component rust-src --target wasm32-unknown-unknown >/dev/null; scripts/build-all.sh --atomics-only"
+    IGNORED_SETUP="rustup target add wasm32-unknown-unknown >/dev/null; apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq clang >/dev/null 2>&1; rustup toolchain install '$NIGHTLY_TOOLCHAIN' --component rust-src --target wasm32-unknown-unknown >/dev/null; scripts/build-all.sh --atomics-only"
     break
   fi
 done
@@ -113,6 +115,7 @@ docker run --rm \
   -v selium-test-target:/target \
   -e WS="$CONTAINER_WS" \
   -e CARGO_INCREMENTAL=0 \
+  -e SELIUM_NIGHTLY_TOOLCHAIN="$NIGHTLY_TOOLCHAIN" \
   -e CARGO_TARGET_DIR=/target \
   -e CARGO_TERM_COLOR=always \
   "$RUST_IMAGE" \

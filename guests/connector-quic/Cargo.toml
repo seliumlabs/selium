@@ -21,6 +21,7 @@ parking_lot.workspace = true
 quinn = { workspace = true, features = ["rustls-ring"] }
 rustls-pki-types = { workspace = true, features = ["alloc", "web"] }
 selium-abi.workspace = true
+selium-connector-resolve.workspace = true
 selium-guest.workspace = true
 selium-memory.workspace = true
 selium-service.workspace = true

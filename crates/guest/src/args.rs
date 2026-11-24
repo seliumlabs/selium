@@ -29,6 +29,7 @@ pub unsafe fn str(ptr: u64, len: u64) -> Option<&'static str> {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    // scenario: selium-guest/entrypoint-argument-reader/read-pointer-argument-as-bytes
     #[test]
     fn bytes_reconstructs_a_slice() {
         let payload = b"udp://127.0.0.1:53";
@@ -38,6 +39,7 @@ mod tests {
         assert_eq!(slice, payload);
     }
 
+    // scenario: selium-guest/entrypoint-argument-reader/read-pointer-argument-as-utf-8
     #[test]
     fn str_decodes_utf8() {
         let payload = "udp://127.0.0.1:53";

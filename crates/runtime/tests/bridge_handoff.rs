@@ -150,6 +150,10 @@ fn bridge_listener_and_connector_queue(
     (server_listener.local_id, connector_queue.local_id)
 }
 
+// scenario: guest-bridge/identity-to-grant-resolution/known-identity-resolves-grants-and-spawns
+// scenario: guest-bridge/bridge-is-deployable-guest-code/bridge-deployed-via-normal-guest-lifecycle
+// scenario: guest-bridge/per-tenant-bridge-server/bridge-server-holds-no-data-plane
+// scenario: selium-guest/raw-discovery-handle-accessor/guest-forwards-discovery-handle-to-a-spawned-child
 #[test]
 fn bridge_server_delegates_and_child_attaches_stream_region() {
     // Bootstrap the connector (registered Tier-1 handler for `sel-quic`) and
@@ -387,6 +391,9 @@ fn owner_declares_and_records_resolve(
 /// Task 7.2: exceeding a tenant's process ceiling is denied by the quota and
 /// surfaced to the client as a clean stream close — the bridge keeps no spawn
 /// counter, so the bound is the accountant-authored quota, released on exit.
+// scenario: selium-runtime/process-spawn-quota/spawn-over-the-process-ceiling-denied
+// scenario: guest-bridge/bounded-spawn/spawn-bound-exceeded
+// scenario: guest-bridge/bounded-spawn/denied-spawn-needs-no-guest-local-bookkeeping
 #[test]
 fn process_ceiling_denies_bridge_channel_spawn() {
     let (runtime, _connector, bridge_server) = bootstrap_connector_and_bridge();
@@ -478,6 +485,9 @@ fn recv_handoff(
 /// bridge-server; each spawns a bridge-channel scoped to its own identity's
 /// tenant; each child attaches only its own handed-off region, and a
 /// cross-tenant attach is denied by the runtime's tenant fence.
+// scenario: guest-bridge/per-tenant-bridge-server/bridge-traffic-routed-to-the-tenant-s-bridge-server
+// scenario: guest-bridge/identity-to-grant-resolution/cross-tenant-identity-refused
+// scenario: guest-bridge/per-stream-bridge-channel-process/one-bridge-channel-per-stream
 #[test]
 fn single_instance_bridge_serves_two_tenants_without_leak() {
     let (runtime, connector, bridge_server) = bootstrap_connector_and_bridge();
@@ -655,27 +665,3 @@ fn try_attach_region(
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `guest-bridge` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: guest-bridge/transparent-frame-proxy/rpc-correlation-preserved-through-bridge
-// scenario: guest-bridge/bridge-enforces-capability-grants/bridge-attempts-to-attach-to-unauthorised-channel
-// scenario: guest-bridge/bridge-failure-isolation/bridge-crashes
-// scenario: guest-bridge/bridge-is-deployable-guest-code/bridge-deployed-via-normal-guest-lifecycle
-// scenario: guest-bridge/per-tenant-bridge-server/bridge-traffic-routed-to-the-tenant-s-bridge-server
-// scenario: guest-bridge/per-tenant-bridge-server/bridge-server-holds-no-data-plane
-// scenario: guest-bridge/per-stream-bridge-channel-process/one-bridge-channel-per-stream
-// scenario: guest-bridge/identity-to-grant-resolution/known-identity-resolves-grants-and-spawns
-// scenario: guest-bridge/identity-to-grant-resolution/unknown-identity-refused
-// scenario: guest-bridge/identity-to-grant-resolution/cross-tenant-identity-refused
-// scenario: guest-bridge/pinned-connector-handoffs/forged-handoff-refused
-// scenario: guest-bridge/typed-pipe-handshake/client-opens-a-pipe
-// scenario: guest-bridge/typed-pipe-handshake/pipe-instantiation-fails
-// scenario: guest-bridge/discovery-resolved-channel-binding/uri-resolves-to-a-channel-within-the-tenant
-// scenario: guest-bridge/discovery-resolved-channel-binding/uri-resolves-to-a-served-host-queue
-// scenario: guest-bridge/self-cleaning-pipe-teardown/client-disconnects
-// scenario: guest-bridge/self-cleaning-pipe-teardown/fabric-channel-closes
-// scenario: guest-bridge/bounded-spawn/spawn-bound-exceeded
-// scenario: guest-bridge/bounded-spawn/denied-spawn-needs-no-guest-local-bookkeeping
-// scenario: guest-bridge/host-queue-rpc-rendezvous/external-rpc-client-reaches-a-served-host-queue
-// scenario: guest-bridge/host-queue-rpc-rendezvous/session-ends-with-the-client
-// scenario: guest-bridge/accountant-narrowing-at-conferral/baseline-narrowed-before-conferral
-// scenario: guest-bridge/accountant-narrowing-at-conferral/no-narrowing-is-a-no-op
-// scenario: guest-bridge/accountant-narrowing-at-conferral/narrowing-table-unreachable-fails-open

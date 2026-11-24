@@ -18,6 +18,10 @@ mod failure_common;
 /// for `sel:///handler/<scheme>`.
 const SCHEME: &str = "sel-fixture";
 
+// scenario: selium-runtime/protocol-handler-route-claims/guests-cannot-forge-a-handler
+// scenario: route-claims/host-issued-route-claims/process-without-a-claim-is-refused
+// scenario: guest-context/context-register-convenience-method/registration-rejected-forbidden
+// scenario: verification-gate/failure-injection-coverage/a-forged-claim-is-refused
 #[test]
 #[ignore = "requires the discovery and discovery-probe guests built for wasm32-unknown-unknown"]
 fn a_forged_or_second_claim_is_refused() {

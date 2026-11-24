@@ -1,6 +1,5 @@
 use std::{
     pin::Pin,
-    sync::atomic::{Ordering, fence},
     task::{Context, Poll},
 };
 
@@ -20,6 +19,7 @@ pub struct Writer {
     region: ChannelRegion,
     writer_id: u32,
     backpressure: ChannelBackpressure,
+    closed: bool,
 }
 
 /// Blocking byte-stream writer tracked in the channel metadata, preventing
@@ -43,6 +43,8 @@ pub struct BlockingWriter {
     writer_slot: u32,
     backpressure: ChannelBackpressure,
     closed: bool,
+    writer_count_released: bool,
+    writer_slot_released: bool,
 }
 
 impl Writer {
@@ -55,6 +57,7 @@ impl Writer {
             region,
             writer_id,
             backpressure,
+            closed: false,
         }
     }
 
@@ -105,6 +108,8 @@ impl Writer {
             writer_slot,
             backpressure: self.backpressure,
             closed: false,
+            writer_count_released: false,
+            writer_slot_released: false,
         })
     }
 }
@@ -115,6 +120,12 @@ impl AsyncWrite for Writer {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        if self.closed {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "writer has been shut down",
+            )));
+        }
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
         }
@@ -158,6 +169,16 @@ impl AsyncWrite for Writer {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if !this.closed {
+            // A plain writer holds no writer count/slot, but readers parked on
+            // the generation word must still observe the close. Do not mark
+            // the writer closed until that wake has actually succeeded.
+            if let Err(error) = this.region.bump_generation() {
+                return Poll::Ready(Err(std::io::Error::other(error)));
+            }
+            this.closed = true;
+        }
         Poll::Ready(Ok(()))
     }
 }
@@ -197,6 +218,8 @@ impl BlockingWriter {
             writer_slot,
             backpressure,
             closed: false,
+            writer_count_released: false,
+            writer_slot_released: false,
         })
     }
 
@@ -225,11 +248,12 @@ impl BlockingWriter {
     /// for the lost Drop decrement.
     pub fn downgrade(mut self) -> Writer {
         self.closed = true;
-        self.release_writer_registration();
+        drop(self.release_writer_registration());
         Writer {
             region: self.region.clone(),
             writer_id: self.writer_id,
             backpressure: self.backpressure,
+            closed: false,
         }
     }
 
@@ -245,10 +269,38 @@ impl BlockingWriter {
     /// poller's socket-EOF path and reaches every waiter kind: same-guest
     /// wakers, cross-guest `WaitRegister` tasks (via the `GenerationAdvance`
     /// hostcall), and host drainers parked on the generation word.
-    fn release_writer_registration(&self) {
-        drop(self.region.decrement_writer_count());
-        drop(self.region.release_writer_slot(self.writer_slot));
-        drop(self.region.bump_generation());
+    fn release_writer_registration(&mut self) -> Result<()> {
+        if !self.writer_count_released {
+            self.region.decrement_writer_count()?;
+            self.writer_count_released = true;
+        }
+        if !self.writer_slot_released {
+            self.region.release_writer_slot(self.writer_slot)?;
+            self.writer_slot_released = true;
+        }
+        self.region.bump_generation()?;
+        Ok(())
+    }
+}
+
+impl BlockingWriter {
+    /// Returns whether one encoded frame of `payload_len` bytes fits in the
+    /// ring without overwriting an active reader.
+    ///
+    /// Host proxies use this before consuming a socket datagram: peeking first
+    /// lets a full ring leave the datagram in the kernel receive buffer instead
+    /// of reading and dropping it.
+    pub fn has_capacity_for_frame(&self, payload_len: u64) -> Result<bool> {
+        let frame_len = FrameHeader::ENCODED_SIZE as u64 + payload_len;
+        if frame_len > self.region.capacity() {
+            return Ok(false);
+        }
+        let next_tail = self.region.read_next_tail()?;
+        let Some(min_reader) = self.region.minimum_reader_position()? else {
+            return Ok(true);
+        };
+        let used = next_tail.saturating_sub(min_reader);
+        Ok(self.region.capacity().saturating_sub(used) >= frame_len)
     }
 }
 
@@ -258,6 +310,12 @@ impl AsyncWrite for BlockingWriter {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        if self.closed {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "writer has been shut down",
+            )));
+        }
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
         }
@@ -320,6 +378,17 @@ impl AsyncWrite for BlockingWriter {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if !this.closed {
+            // Release writer registration and bump the generation: readers
+            // parked on an empty ring wake, drain committed bytes, and observe
+            // EOF (writer_count == 0). Each completed release step is recorded
+            // so a failed shutdown can be retried without a double decrement.
+            if let Err(error) = this.release_writer_registration() {
+                return Poll::Ready(Err(std::io::Error::other(error)));
+            }
+            this.closed = true;
+        }
         Poll::Ready(Ok(()))
     }
 }
@@ -330,7 +399,7 @@ impl Drop for BlockingWriter {
             return;
         }
         self.closed = true;
-        self.release_writer_registration();
+        drop(self.release_writer_registration());
     }
 }
 
@@ -343,73 +412,16 @@ impl Drop for BlockingWriter {
 /// header before the completed payload. Finally bumps the generation counter
 /// to notify waiters.
 fn write_frame_bytes(region: &ChannelRegion, pos: u64, buf: &[u8]) -> Result<()> {
-    let mask = region.capacity() - 1;
-
-    let header_size = FrameHeader::ENCODED_SIZE as u64;
-    let payload = buf.get(FrameHeader::ENCODED_SIZE..).unwrap_or_default();
-
-    // The pre-encoded header carried by `buf`; decode validates its checksum.
-    let frame_header =
-        FrameHeader::decode(buf.get(..FrameHeader::ENCODED_SIZE).unwrap_or_default())
-            .map_err(|e| Error::InvalidFrame(e.to_string()))?;
-
-    // Step 1: Placeholder header (checksum-valid, not READY).
-    let mut not_ready = frame_header;
-    not_ready.flags &= !FrameHeader::FLAG_READY;
-    write_raw(region, pos, &not_ready.encode(), mask)?;
-
-    // Step 2: Write payload at pos + ENCODED_SIZE.
-    let payload_pos = pos
-        .checked_add(header_size)
-        .ok_or_else(|| Error::InvalidFrame("payload position overflow".to_string()))?;
-    write_raw(region, payload_pos, payload, mask)?;
-
-    // Step 3: Release fence ensures payload is visible before the header.
-    fence(Ordering::Release);
-
-    // Step 4: Write header at pos with FLAG_READY set. Readers gate on
-    // `is_ready()`; committing without it makes the frame permanently
-    // invisible to them (matches the canonical layout::write_frame).
-    let mut ready_header = frame_header;
-    ready_header.flags |= FrameHeader::FLAG_READY;
-    write_raw(region, pos, &ready_header.encode(), mask)?;
-
-    // Step 5: Bump generation counter and notify waiters.
-    region.bump_generation()?;
-
-    Ok(())
-}
-
-fn write_raw(region: &ChannelRegion, pos: u64, data: &[u8], mask: u64) -> Result<()> {
-    if data.len() as u64 > region.capacity() {
-        return Err(Error::BufferFull);
-    }
-    let raw_start = (pos & mask) as usize;
-    let tail = data.len().min(region.capacity() as usize - raw_start);
-    let head = data.len() - tail;
-
-    if tail > 0 {
-        let offset = region.data_offset() + raw_start as u64;
-        region
-            .mapping()
-            .write(offset, data.get(..tail).unwrap_or_default())?;
-    }
-    if head > 0 {
-        let offset = region.data_offset();
-        region
-            .mapping()
-            .write(offset, data.get(tail..).unwrap_or_default())?;
-    }
-    Ok(())
+    region.write_encoded_frame(pos, buf)
 }
 
 #[cfg(test)]
 mod tests {
     use selium_memory::FrameHeader;
+    use tokio::io::AsyncRead as _;
 
     use super::*;
     use crate::ChannelRegion;
-    use crate::channels::reader::read_raw;
 
     #[test]
     fn two_phase_write_produces_ready_frame() {
@@ -434,8 +446,14 @@ mod tests {
 
         // Read back the header and verify READY flag.
         let mask = region.capacity() - 1;
-        let header_bytes =
-            read_raw(&region, pos, FrameHeader::ENCODED_SIZE as u64, mask).expect("read header");
+        let header_bytes = crate::layout::read_at(
+            region.mapping().backend(),
+            pos,
+            FrameHeader::ENCODED_SIZE as u64,
+            mask,
+            region.capacity(),
+        )
+        .expect("read header");
         let decoded = FrameHeader::decode(&header_bytes).expect("decode");
         assert!(decoded.is_ready());
         assert_eq!(decoded.len, 5);
@@ -443,7 +461,161 @@ mod tests {
 
         // Read back the payload.
         let payload_pos = pos + FrameHeader::ENCODED_SIZE as u64;
-        let payload = read_raw(&region, payload_pos, 5, mask).expect("read payload");
+        let payload = crate::layout::read_at(
+            region.mapping().backend(),
+            payload_pos,
+            5,
+            mask,
+            region.capacity(),
+        )
+        .expect("read payload");
         assert_eq!(payload, b"hello");
+    }
+
+    // scenario: selium-shm/reader-writer-wait-semantics/disconnect-is-observable
+    // scenario: selium-guest/strong-writer-backpressure-via-asyncwrite/writer-sends-bytes
+    // scenario: guest-networking/async-shutdown-closes-the-writer/shutdown-wakes-peer-with-eof
+    // scenario: guest-networking/async-shutdown-closes-the-writer/write-after-shutdown
+    #[tokio::test]
+    async fn shutdown_releases_registration_signals_eof_and_rejects_writes() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let channel =
+            crate::Channel::create(4096, crate::ChannelBackpressure::Park).expect("create channel");
+        let mut writer = channel.blocking_writer().expect("writer");
+        let mut reader = channel.blocking_reader_from(0).expect("reader");
+
+        // Write one committed frame, then shut the writer down.
+        let header = FrameHeader {
+            len: 5,
+            tag: 0,
+            flags: 0,
+        };
+        let mut encoded = header.encode().to_vec();
+        encoded.extend_from_slice(b"hello");
+        writer.write_all(&encoded).await.expect("write");
+        writer.shutdown().await.expect("shutdown");
+
+        assert_eq!(
+            writer.region().load_writer_count().expect("writer count"),
+            0,
+            "shutdown releases the writer registration"
+        );
+        assert!(
+            writer.write_all(&encoded).await.is_err(),
+            "writes after shutdown must be rejected"
+        );
+
+        let mut received = vec![0u8; FrameHeader::ENCODED_SIZE + 5];
+        reader.read_exact(&mut received).await.expect("read frame");
+        assert_eq!(&received[FrameHeader::ENCODED_SIZE..], b"hello");
+
+        let mut eof = [0u8; 8];
+        assert_eq!(
+            reader.read(&mut eof).await.expect("eof read"),
+            0,
+            "the peer observes EOF after the writer shuts down"
+        );
+    }
+
+    #[test]
+    fn shutdown_propagates_each_release_failure_and_can_be_retried() {
+        for stage in [
+            crate::region::RegionFailure::DecrementWriter,
+            crate::region::RegionFailure::ReleaseWriterSlot,
+            crate::region::RegionFailure::Generation,
+            crate::region::RegionFailure::Notify,
+        ] {
+            let channel =
+                crate::Channel::create(4096, crate::ChannelBackpressure::Park).expect("channel");
+            let mut writer = channel.blocking_writer().expect("writer");
+            crate::region::REGION_FAILURE.with(|failure| failure.set(Some(stage)));
+            let waker = std::task::Waker::noop();
+            let mut cx = Context::from_waker(waker);
+            assert!(
+                matches!(
+                    Pin::new(&mut writer).poll_shutdown(&mut cx),
+                    Poll::Ready(Err(_))
+                ),
+                "shutdown must surface {stage:?}"
+            );
+            assert!(
+                !writer.closed,
+                "failed shutdown must not mark the writer closed"
+            );
+            assert!(matches!(
+                Pin::new(&mut writer).poll_shutdown(&mut cx),
+                Poll::Ready(Ok(()))
+            ));
+            assert!(writer.closed);
+            assert_eq!(writer.region().load_writer_count().expect("count"), 0);
+            assert_eq!(
+                writer
+                    .region()
+                    .load_writer_slot(writer.writer_slot)
+                    .expect("slot"),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn plain_writer_shutdown_also_propagates_wake_failure() {
+        let channel =
+            crate::Channel::create(4096, crate::ChannelBackpressure::Park).expect("channel");
+        let mut writer = channel.writer().expect("writer");
+        crate::region::REGION_FAILURE
+            .with(|failure| failure.set(Some(crate::region::RegionFailure::Generation)));
+        let waker = std::task::Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        assert!(matches!(
+            Pin::new(&mut writer).poll_shutdown(&mut cx),
+            Poll::Ready(Err(_))
+        ));
+        assert!(!writer.closed);
+        assert!(matches!(
+            Pin::new(&mut writer).poll_shutdown(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+    }
+
+    struct WakeFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl std::task::Wake for WakeFlag {
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.store(true, std::sync::atomic::Ordering::Release);
+        }
+
+        fn wake_by_ref(self: &std::sync::Arc<Self>) {
+            self.0.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn shutdown_wakes_a_peer_that_was_already_parked() {
+        let channel =
+            crate::Channel::create(4096, crate::ChannelBackpressure::Park).expect("channel");
+        let mut writer = channel.blocking_writer().expect("writer");
+        let mut reader = channel.blocking_reader_from(0).expect("reader");
+        let woken = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let waker = std::task::Waker::from(std::sync::Arc::new(WakeFlag(woken.clone())));
+        let mut cx = Context::from_waker(&waker);
+        let mut bytes = [0u8; 8];
+        let mut buffer = tokio::io::ReadBuf::new(&mut bytes);
+        assert!(
+            Pin::new(&mut reader)
+                .poll_read(&mut cx, &mut buffer)
+                .is_pending()
+        );
+        assert!(matches!(
+            Pin::new(&mut writer).poll_shutdown(&mut cx),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(woken.load(std::sync::atomic::Ordering::Acquire));
+        assert!(matches!(
+            Pin::new(&mut reader).poll_read(&mut cx, &mut buffer),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(buffer.filled().is_empty());
     }
 }

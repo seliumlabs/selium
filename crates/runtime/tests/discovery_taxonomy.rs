@@ -27,6 +27,11 @@ struct FeedEvents {
 /// A resource minted under a serving tenant is attributed to that tenant by
 /// the authority and released under it when the owner exits — the case the
 /// tenant side maps used to miss.
+// scenario: selium-runtime/resource-revocation-by-identity/minted-resource-revokes-under-its-tenant
+// scenario: selium-runtime/resource-revocation-by-identity/teardown-needs-no-side-map
+// scenario: selium-runtime/resource-authority-record-on-allocation/mint-records-the-principal-tenant
+// scenario: selium-runtime/resource-authority-record-on-allocation/authority-answers-before-the-owner-publishes
+// scenario: selium-runtime/no-host-registration-publication/allocation-publishes-nothing
 #[test]
 fn a_cross_tenant_mint_reports_and_releases_under_the_minting_tenant() {
     let (runtime, mut subscriber) = runtime_with_feed();
@@ -174,6 +179,7 @@ fn create_queue(
     }
 }
 
+// scenario: guest-context/canonical-typed-publication/canonical-publication-is-optional
 #[test]
 fn discovery_lifecycle_over_the_feed_is_revocation_only() {
     let (runtime, mut subscriber) = runtime_with_feed();
@@ -236,7 +242,11 @@ fn drain_feed(subscriber: &mut Subscriber<DiscoveryRequest, ShmTransport>) -> Fe
     }
     events
 }
+// scenario: selium-abi/resource-authority-hostcall/root-minted-resource-reports-the-root-tenant
+// scenario: selium-abi/resource-authority-hostcall/authority-survives-projection-lag
+// scenario: selium-abi/expected-claims-and-process-list/expected-claims-are-visible-to-the-owner
 
+// scenario: route-claims/expected-claim-reconciliation/non-publishing-guest-remains-accounted
 #[test]
 fn expected_claims_are_visible_without_publication() {
     let (runtime, _subscriber) = runtime_with_feed();
@@ -265,6 +275,8 @@ fn expected_claims_are_visible_without_publication() {
     );
 }
 
+// scenario: selium-runtime/principal-provenance-allocation/host-queue-minted-under-the-serving-tenant
+// scenario: selium-abi/resource-authority-hostcall/owned-resource-reports-its-tenant
 #[test]
 fn host_queue_authority_uses_principal_provenance() {
     let (runtime, mut subscriber) = runtime_with_feed();
@@ -308,6 +320,9 @@ fn module_with_entrypoint(entrypoint: &str) -> Vec<u8> {
     wat::parse_str(format!("(module (func (export \"{entrypoint}\")))")).expect("compile wat")
 }
 
+// scenario: selium-runtime/no-host-registration-publication/process-start-publishes-nothing
+// scenario: selium-runtime/owner-published-process-nodes/unpublished-process-is-accounted-but-undiscoverable
+// scenario: discovery-registration/process-node-addressing/an-unpublished-process-is-accounted-but-undiscoverable
 #[test]
 fn process_start_and_exit_publish_no_registration() {
     let (runtime, mut subscriber) = runtime_with_feed();
@@ -345,6 +360,7 @@ fn process_start_and_exit_publish_no_registration() {
     );
 }
 
+// scenario: selium-runtime/principal-provenance-allocation/root-principal-allocates-for-any-tenant-without-delegation
 #[test]
 fn root_process_allocates_for_any_tenant_without_delegation() {
     // Option B: a root principal (no tenant) may mint for any tenant — this
@@ -383,7 +399,8 @@ fn runtime_with_feed() -> (Runtime, Subscriber<DiscoveryRequest, ShmTransport>) 
     let feed_region_id = runtime
         .discovery_feed_region_id()
         .expect("discovery feed region id");
-    let channel = Channel::attach(feed_region_id).expect("attach to discovery feed");
+    let channel = Channel::attach_with_provider(runtime.region_provider().as_ref(), feed_region_id)
+        .expect("attach to discovery feed");
     let capacity = channel.ring().capacity();
     let transport = ShmTransport::new(&channel, &channel).expect("feed transport");
     (
@@ -414,6 +431,7 @@ fn spawn_guest(
         .process_id
 }
 
+// scenario: selium-runtime/principal-provenance-allocation/system-process-allocates-for-another-tenant
 #[test]
 fn system_process_allocates_for_another_tenant_with_delegation() {
     let (runtime, mut subscriber) = runtime_with_feed();
@@ -440,6 +458,7 @@ fn system_process_allocates_for_another_tenant_with_delegation() {
     );
 }
 
+// scenario: selium-runtime/principal-provenance-allocation/unauthorised-cross-tenant-allocation-denied
 #[test]
 fn unauthorised_cross_tenant_allocation_is_denied() {
     let (runtime, _subscriber) = runtime_with_feed();

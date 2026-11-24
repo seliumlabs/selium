@@ -101,7 +101,7 @@ async fn publisher() -> anyhow::Result<()> {
         let deadline = now
             .checked_add(std::time::Duration::from_nanos(PUBLISH_INTERVAL_NANOS))
             .unwrap_or(Instant::MAX);
-        Timer::new(deadline).await;
+        Timer::new(deadline).await?;
     }
 }
 

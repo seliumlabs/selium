@@ -28,9 +28,12 @@ tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sig
 tracing.workspace = true
 wasmtiny = { workspace = true, features = ["aot"] }
 wasmtiny-aotc.workspace = true
+x509-parser.workspace = true
 
 [dev-dependencies]
 quinn = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { workspace = true, features = ["ring", "std"] }
+tokio-rustls = { workspace = true, features = ["ring"] }
 rcgen.workspace = true
 selium-accountant = { path = "../../guests/accountant" }
 selium-control-plane = { path = "../../guests/control-plane" }
@@ -41,7 +44,6 @@ selium-proto-dns.workspace = true
 selium-service.workspace = true
 selium-store = { path = "../../guests/store" }
 wat.workspace = true
-x509-parser.workspace = true
 
 [features]
 # Forwards the Stage 2 (per-OS wait-words) opt-in to the kernel, which in

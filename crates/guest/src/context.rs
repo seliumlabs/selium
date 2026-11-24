@@ -27,6 +27,8 @@ use crate::{
 /// How long a serve-side guest waits for a protocol-handler claim to be
 /// published before treating it as absent.
 const HANDLER_RESOLVE_BOUND: Duration = Duration::from_secs(60);
+/// The root-namespace route of the discovery RPC listener.
+pub const DISCOVERY_ROUTE: &str = "sel:///discovery";
 /// RPC ring capacity for discovery replies.
 const RPC_REP_CAPACITY: u64 = 4096;
 /// RPC ring capacity for discovery requests.
@@ -36,7 +38,11 @@ const RPC_REQ_CAPACITY: u64 = 4096;
 /// System services publish their own routes from their entrypoints, so a
 /// consumer that boots alongside one waits on the route watch rather than
 /// treating an early miss as permanent. The bound is only a failure backstop.
-const SERVICE_READY_BOUND: Duration = Duration::from_secs(30);
+/// How long a guest waits for a boot-order dependency's route (the store or
+/// the control plane) before failing loudly. The platform is interpreted, so
+/// a cold boot behind a loaded host can legitimately take a minute; the bound
+/// still turns a genuinely absent service into an error instead of a hang.
+const SERVICE_READY_BOUND: Duration = Duration::from_secs(120);
 
 /// Declaration of a named service route: a path plus the target to map it to,
 /// with an optional root-service designation for apex aliasing.
@@ -63,11 +69,16 @@ pub struct Context {
     /// constructing a [`Context`] through the entrypoint macro.
     handle: u64,
     client: OwnedRpcClient<DiscoveryRequest, DiscoveryResponse>,
+    /// Already-attached discovery queue, cloned for lease-renewal sessions.
+    discovery_sender: ResourceSender,
     /// Client of the durable store service, connected lazily on first use.
     store_client: Option<StoreClient>,
     /// Client of the control-plane resource catalogue, connected lazily on
     /// first use.
     control_client: Option<ControlClient>,
+    /// Discovery route-table attachment shared by every route watch. Each
+    /// watch receives an independent ring handle, not another memory attach.
+    route_table: Option<(u64, Channel)>,
     /// URIs this context has already started a lease renewal for, so repeated
     /// registrations of one route keep a single renewal task.
     renewing: std::collections::BTreeSet<String>,
@@ -87,21 +98,34 @@ impl Context {
     /// Attaches a `ResourceSender` to the discovery host queue and creates
     /// an `RpcClient` for discovery requests.
     pub async fn from_raw(discovery_handle: u64) -> Result<Self, GuestError> {
-        // Attach to the discovery host queue.
         let sender = ResourceSender::attach(discovery_handle)?;
+        Self::from_attached_sender(discovery_handle, sender).await
+    }
 
-        // Create RPC client for discovery.
-        let client = rpc::connect(sender, RPC_REQ_CAPACITY, RPC_REP_CAPACITY)
+    async fn from_attached_sender(
+        discovery_handle: u64,
+        sender: ResourceSender,
+    ) -> Result<Self, GuestError> {
+        let client = rpc::connect(sender.clone(), RPC_REQ_CAPACITY, RPC_REP_CAPACITY)
             .await
-            .map_err(|e| GuestError::Host(format!("create RPC client: {e}")))?;
+            .map_err(|e| GuestError::from(e).context("create RPC client"))?;
 
         Ok(Self {
             handle: discovery_handle,
             client,
+            discovery_sender: sender,
             store_client: None,
             control_client: None,
+            route_table: None,
             renewing: std::collections::BTreeSet::new(),
         })
+    }
+
+    /// Reconnects after a discovery session failure using the host's current
+    /// listener resolution. A dead discovery service cannot resolve its own
+    /// replacement through the old RPC session or its replaced route table.
+    pub async fn rediscover() -> Result<Self, GuestError> {
+        Self::from_raw(crate::hostcall::discovery_listener()?).await
     }
 
     /// Publishes the canonical typed record `sel://<tenant>/<class>/<id>` for
@@ -269,9 +293,7 @@ impl Context {
             prot: RegionProt::ReadWrite,
             purpose,
             serving_tenant: None,
-        })
-        .map_err(|error| GuestError::Host(error.to_string()))?
-        {
+        })? {
             HostcallOutput::RegionAlloc(allocation) => allocation,
             other => {
                 return Err(GuestError::Host(format!(
@@ -357,13 +379,12 @@ impl Context {
                 "route table is not published yet: {ROUTE_TABLE_ROUTE}"
             ))
         })?;
-        let channel = Channel::attach(table.resource_id)
-            .map_err(|error| GuestError::Host(format!("route table attach: {error}")))?;
+        let channel = self.route_table_channel(&table)?;
         let transport = ShmTransport::new_replay(&channel, &channel)
-            .map_err(|error| GuestError::Host(format!("route table transport: {error}")))?;
+            .map_err(|error| GuestError::from(error).context("route table transport"))?;
         let subscriber = Subscriber::new(FramedRead::new(transport), None);
         let view = LiveTableView::new(subscriber)
-            .map_err(|error| GuestError::Host(format!("route table view: {error}")))?;
+            .map_err(|error| GuestError::from(error).context("route table view"))?;
         // Authoritative seed: a one-shot resolve is not subject to ring wrap.
         let seed = self.lookup(uri).await?;
         // Read the baseline version *after* the seed, so it can only lag the
@@ -372,13 +393,31 @@ impl Context {
         // published before both is already in the seed and produces no
         // duplicate `Appeared`+`Replaced` pair.
         view.sync()
-            .map_err(|error| GuestError::Host(format!("route table sync: {error}")))?;
+            .map_err(|error| GuestError::from(error).context("route table sync"))?;
         let version = view
             .get_record(&uri.to_string())
-            .map_err(|error| GuestError::Host(format!("route table read: {error}")))?
+            .map_err(|error| GuestError::from(error).context("route table read"))?
             .map(|record| record.version)
             .unwrap_or(0);
         Ok(RouteWatch::new(uri.to_string(), seed, version, view))
+    }
+
+    fn route_table_channel(&mut self, table: &ResourceTarget) -> Result<Channel, GuestError> {
+        if let Some((resource_id, channel)) = &self.route_table
+            && *resource_id == table.resource_id
+        {
+            return channel
+                .try_clone()
+                .map_err(|error| GuestError::from(error).context("route table handle clone"));
+        }
+
+        let channel = Channel::attach(table.resource_id)
+            .map_err(|error| GuestError::from(error).context("route table attach"))?;
+        let cached = channel
+            .try_clone()
+            .map_err(|error| GuestError::from(error).context("route table handle clone"))?;
+        self.route_table = Some((table.resource_id, cached));
+        Ok(channel)
     }
 
     /// Resolves a route once it is ready, converging rather than failing when
@@ -465,7 +504,7 @@ impl Context {
                 healthy: true,
             })
             .await
-            .map_err(|e| GuestError::Host(format!("discovery health publish: {e}")))?;
+            .map_err(|e| GuestError::from(e).context("discovery health publish"))?;
         match response {
             DiscoveryResponse::Registered => Ok(()),
             other => Err(GuestError::Host(format!(
@@ -483,7 +522,7 @@ impl Context {
                 healthy: false,
             })
             .await
-            .map_err(|e| GuestError::Host(format!("discovery health unpublish: {e}")))?;
+            .map_err(|e| GuestError::from(e).context("discovery health unpublish"))?;
         match response {
             DiscoveryResponse::Revoked => Ok(()),
             other => Err(GuestError::Host(format!(
@@ -553,7 +592,7 @@ impl Context {
             .discovery()
             .request(request)
             .await
-            .map_err(|e| GuestError::Host(format!("discovery request: {e}")))?;
+            .map_err(|e| GuestError::from(e).context("discovery request"))?;
 
         match response {
             DiscoveryResponse::Found(target) => Ok(Some(target)),
@@ -577,7 +616,7 @@ impl Context {
             .discovery()
             .request(DiscoveryRequest::ListDomains)
             .await
-            .map_err(|e| GuestError::Host(format!("discovery domain list: {e}")))?;
+            .map_err(|e| GuestError::from(e).context("discovery domain list"))?;
 
         match response {
             DiscoveryResponse::Domains(entries) => {
@@ -680,7 +719,7 @@ impl Context {
             .discovery()
             .request(request)
             .await
-            .map_err(|e| GuestError::Host(format!("discovery register: {e}")))?;
+            .map_err(|e| GuestError::from(e).context("discovery register"))?;
 
         match response {
             DiscoveryResponse::Registered => {
@@ -713,8 +752,12 @@ impl Context {
         // margin before expiry.
         let interval = Duration::from_millis(REGISTRATION_LEASE_TTL_MS / 2);
         let handle = self.handle;
+        let sender = self.discovery_sender.clone();
         crate::spawn(async move {
-            let mut ctx = match Context::from_raw(handle).await {
+            // Clone the queue descriptor already attached to this guest. A
+            // fresh `from_raw` would attach the same host queue again and the
+            // renewal task would exit before its first renewal.
+            let mut ctx = match Context::from_attached_sender(handle, sender).await {
                 Ok(ctx) => ctx,
                 Err(_) => return,
             };
@@ -723,7 +766,9 @@ impl Context {
                     Ok(now) => now + interval,
                     Err(_) => return,
                 };
-                crate::Timer::new(deadline).await;
+                if crate::Timer::new(deadline).await.is_err() {
+                    return;
+                }
                 let response = ctx
                     .discovery()
                     .request(DiscoveryRequest::Renew { uri: uri.clone() })
@@ -755,7 +800,7 @@ impl Context {
             .discovery()
             .request(request)
             .await
-            .map_err(|e| GuestError::Host(format!("discovery revoke: {e}")))?;
+            .map_err(|e| GuestError::from(e).context("discovery revoke"))?;
 
         match response {
             DiscoveryResponse::Revoked => Ok(()),
@@ -790,8 +835,10 @@ async fn next_event_before(
         if let std::task::Poll::Ready(result) = event.as_mut().poll(cx) {
             return std::task::Poll::Ready(result.map(Some));
         }
-        if timer.as_mut().poll(cx).is_ready() {
-            return std::task::Poll::Ready(Ok(None));
+        match timer.as_mut().poll(cx) {
+            std::task::Poll::Ready(Ok(())) => return std::task::Poll::Ready(Ok(None)),
+            std::task::Poll::Ready(Err(error)) => return std::task::Poll::Ready(Err(error)),
+            std::task::Poll::Pending => {}
         }
         std::task::Poll::Pending
     })
@@ -803,6 +850,45 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn create_region_preserves_allocation_abi_errors() {
+        let (client, server) =
+            crate::client_session::test_session_pair::<DiscoveryRequest, DiscoveryResponse>().await;
+        let mut context = Context {
+            handle: 0,
+            client,
+            discovery_sender: ResourceSender::from_queue(selium_abi::HostQueueDescriptor {
+                local_id: 0,
+                shared_id: 0,
+            }),
+            store_client: None,
+            control_client: None,
+            route_table: None,
+            renewing: std::collections::BTreeSet::new(),
+        };
+        crate::platform::install_native_hostcall_script(crate::platform::NativeHostcallScript {
+            immediate_failure: Some(selium_abi::AbiError::new(
+                selium_abi::AbiErrorCode::QuotaExceeded,
+                "allocation quota detail",
+            )),
+            ..crate::platform::NativeHostcallScript::default()
+        });
+        let error = context
+            .create_region("sel://acme/region/example", 1, ResourceKind::SharedMemory)
+            .await
+            .expect_err("the host rejects allocation");
+        assert_eq!(
+            error.abi_code(),
+            Some(selium_abi::AbiErrorCode::QuotaExceeded)
+        );
+        assert!(matches!(
+            &error,
+            GuestError::Hostcall { message, .. } if message == "allocation quota detail"
+        ));
+        crate::platform::clear_native_hostcall_script();
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn from_raw_with_invalid_handle_fails() {
         let result = Context::from_raw(0).await;
         assert!(result.is_err());
@@ -810,6 +896,67 @@ mod tests {
         // no host queue infrastructure.
     }
 
+    #[tokio::test]
+    async fn route_table_channel_attaches_once_per_resolved_region() {
+        if selium_memory::region_provider().is_err() {
+            drop(selium_memory::set_region_provider(Box::new(
+                selium_memory::HeapRegionProvider::new(),
+            )));
+        }
+        let first = Channel::create_with_backpressure(
+            4096,
+            selium_shm::ChannelBackpressure::Drop,
+            ResourceKind::LiveTable,
+        )
+        .expect("first route table");
+        let second = Channel::create_with_backpressure(
+            4096,
+            selium_shm::ChannelBackpressure::Drop,
+            ResourceKind::LiveTable,
+        )
+        .expect("second route table");
+
+        let (client, server) =
+            crate::client_session::test_session_pair::<DiscoveryRequest, DiscoveryResponse>().await;
+        let mut context = Context {
+            handle: 0,
+            client,
+            discovery_sender: ResourceSender::from_queue(selium_abi::HostQueueDescriptor {
+                local_id: 0,
+                shared_id: 0,
+            }),
+            store_client: None,
+            control_client: None,
+            route_table: None,
+            renewing: std::collections::BTreeSet::new(),
+        };
+        let target = |resource_id| ResourceTarget {
+            uri: ROUTE_TABLE_ROUTE.to_string(),
+            host_id: String::new(),
+            resource_id,
+            interface: None,
+            tenant: None,
+            class: ResourceClass::SharedRegion,
+            labels: Vec::new(),
+        };
+
+        let initial = context
+            .route_table_channel(&target(first.region_id()))
+            .expect("initial attach");
+        assert_eq!(initial.region_id(), first.region_id());
+        let cloned = context
+            .route_table_channel(&target(first.region_id()))
+            .expect("same-region clone");
+        assert_eq!(cloned.region_id(), first.region_id());
+
+        let replacement = context
+            .route_table_channel(&target(second.region_id()))
+            .expect("replacement attach");
+        assert_eq!(replacement.region_id(), second.region_id());
+        server.abort();
+    }
+
+    // scenario: addressing/named-service-projection-boundary/resource-id-uri-stays-internal
     #[test]
     fn serve_rejects_non_projectable_paths() {
         assert!(uri::labels_from_path("region/7").is_none());
@@ -824,83 +971,7 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-guest` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-guest/safe-guest-handles/guest-opens-primitive-through-sdk-handle
-// scenario: selium-guest/messaging-pattern-layer/guest-selects-messaging-pattern
-// scenario: selium-guest/messaging-pattern-layer/prototype-local-pattern-composition
-// scenario: selium-guest/pub-sub-generation-change-detection/publisher-overwrites-unread-data-shm
-// scenario: selium-guest/pub-sub-generation-change-detection/normal-publishing-within-capacity
-// scenario: selium-guest/pub-sub-generation-change-detection/first-read-after-subscription
-// scenario: selium-guest/non-blocking-reader-poll/frame-is-ready
-// scenario: selium-guest/non-blocking-reader-poll/no-frame-ready-writers-connected
-// scenario: selium-guest/non-blocking-reader-poll/no-frame-ready-all-writers-disconnected
-// scenario: selium-guest/non-blocking-reader-poll/reader-detects-overwrite
-// scenario: selium-guest/strong-writer-backpressure-via-asyncwrite/writer-sends-bytes
-// scenario: selium-guest/strong-writer-backpressure-via-asyncwrite/writer-buffer-full
-// scenario: selium-guest/reader-writer-upgrade-and-downgrade/strong-reader-downgrades-to-weak
-// scenario: selium-guest/reader-writer-upgrade-and-downgrade/weak-reader-upgrades-to-strong
-// scenario: selium-guest/reader-writer-upgrade-and-downgrade/strong-writer-downgrades-to-weak
-// scenario: selium-guest/reader-writer-upgrade-and-downgrade/weak-writer-upgrades-to-strong
-// scenario: selium-guest/subscriber-publisher-upgrade-and-downgrade/subscriber-upgrades-from-weak-to-strong-shm
-// scenario: selium-guest/subscriber-publisher-upgrade-and-downgrade/publisher-upgrades-from-weak-to-strong-shm
-// scenario: selium-guest/safety-comments-on-unsafe-impls/safety-comment-documents-send-sync-rationale
-// scenario: selium-guest/livetable-in-selium-wire/livetable-is-importable-from-selium-wire
-// scenario: selium-guest/livetable-in-selium-wire/livetable-is-re-exported-from-selium-guest
-// scenario: selium-guest/rpc-types-in-selium-wire/rpcclient-is-importable-from-selium-wire
-// scenario: selium-guest/rpc-types-in-selium-wire/rpcclient-is-re-exported-from-selium-guest
-// scenario: selium-guest/guest-log-transport-module/guest-initialises-logging
-// scenario: selium-guest/guest-log-transport-module/logging-not-initialised
-// scenario: selium-guest/log-record-types-re-exported/log-record-fields-are-accessible
-// scenario: selium-guest/initerror-type/initerror-displays-meaningful-messages
-// scenario: selium-guest/resourcekind-threading-in-ringbuf/ringbuf-created-with-logchannel-purpose
-// scenario: selium-guest/guest-log-handle-deprecation/deprecated-guestlog-write-still-functions
-// scenario: selium-guest/reactor-parking-and-wake-sources/reactor-stalls-on-channel-waits
-// scenario: selium-guest/reactor-parking-and-wake-sources/channel-wait-resumes-on-generation-advance
-// scenario: selium-guest/host-clock-timer-firing/deadline-wake-delivery
-// scenario: selium-guest/entrypoint-result-extraction/successful-future-returns-its-output
-// scenario: selium-guest/entrypoint-result-extraction/failing-future-returns-its-error
-// scenario: selium-guest/entrypoint-result-extraction/entrypoint-parks-without-completing
-// scenario: selium-guest/entrypoint-result-extraction/late-completion-ends-the-process
-// scenario: selium-guest/entrypoint-result-extraction/panic-in-future-aborts-the-guest
-// scenario: selium-guest/joinhandle-result-access/result-extracted-after-reactor-parks
-// scenario: selium-guest/joinhandle-result-access/result-extraction-before-completion
-// scenario: selium-guest/raw-discovery-handle-accessor/guest-forwards-discovery-handle-to-a-spawned-child
-// scenario: selium-guest/entrypoint-argument-reader/read-pointer-argument-as-bytes
-// scenario: selium-guest/entrypoint-argument-reader/read-pointer-argument-as-utf-8
-// scenario: selium-guest/concurrent-task-execution/independent-tasks-advance-in-parallel
-// scenario: selium-guest/concurrent-task-execution/spawned-future-must-be-send
-// scenario: selium-guest/durable-storage-handles/log-operations-served-by-the-store
-// scenario: selium-guest/durable-storage-handles/no-storage-hostcalls-remain
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `guest-context` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: guest-context/discovery-client-in-context/guest-resolves-a-uri
-// scenario: guest-context/context-lookup-convenience-method/guest-resolves-a-known-uri-via-lookup
-// scenario: guest-context/context-lookup-convenience-method/guest-resolves-an-unknown-uri-via-lookup
-// scenario: guest-context/context-lookup-convenience-method/discovery-service-disconnected-during-lookup
-// scenario: guest-context/boot-time-service-convergence/consumer-converges-on-a-service-that-publishes-later
-// scenario: guest-context/boot-time-service-convergence/a-genuine-miss-is-not-retried-on-the-request-path
-// scenario: guest-context/boot-time-service-convergence/provider-never-appears
-// scenario: guest-context/context-register-convenience-method/guest-registers-a-uri-via-context
-// scenario: guest-context/context-register-convenience-method/registration-rejected-forbidden
-// scenario: guest-context/canonical-typed-publication/owner-publishes-a-canonical-record
-// scenario: guest-context/canonical-typed-publication/cross-tenant-canonical-publication-refused
-// scenario: guest-context/canonical-typed-publication/canonical-publication-is-optional
-// scenario: guest-context/context-revoke-convenience-method/guest-revokes-a-uri-via-context
-// scenario: guest-context/serve-based-route-registration/guest-registers-its-own-route
-// scenario: guest-context/serve-based-route-registration/route-registration-derives-wire-name-from-the-domain-table
-// scenario: guest-context/serve-based-route-registration/canonical-record-is-published-first
-// scenario: guest-context/serve-based-route-registration/claimed-root-name-is-served
-// scenario: guest-context/serve-based-route-registration/unclaimed-root-name-is-refused
-// scenario: guest-context/root-registration-capability-gated/root-registration-requires-capability
-// scenario: guest-context/root-registration-capability-gated/capability-holding-guest-registers-in-root
-// scenario: guest-context/context-store-client/durable-log-through-the-context
-// scenario: guest-context/context-store-client/store-service-unreachable
-// scenario: guest-context/context-resource-operations/named-region-creation
-// scenario: guest-context/context-resource-operations/name-resolution
-// scenario: guest-context/context-resource-operations/allocation-without-the-catalogue
-// scenario: guest-context/context-route-watch/guest-watches-a-route-and-converges
-// scenario: guest-context/context-route-watch/guest-re-attaches-after-a-provider-restarts
-// scenario: guest-context/context-route-watch/watch-outlives-an-unreachable-registry
-// scenario: guest-context/context-health-reporting/guest-publishes-health
-// scenario: guest-context/context-health-reporting/health-is-optional

@@ -4,6 +4,7 @@ members = [
   "crates/abi",
   "crates/cli",
   "crates/client",
+  "crates/connector-resolve",
   "crates/guest",
   "crates/guest/macros",
   "crates/kernel",
@@ -22,11 +23,12 @@ members = [
   "guests/connector-quic",
   "guests/control-plane",
   "guests/discovery",
+  "guests/http-demo",
   "guests/identity",
   "guests/store",
-  "integration/discovery-probe",
   "integration/control-probe",
   "integration/deploy-probe",
+  "integration/discovery-probe",
   "integration/dns-demo",
   "integration/identity-onboard",
   "integration/mt-demo",
@@ -36,7 +38,7 @@ members = [
   "integration/timer-probe",
   "integration/wake-probe",
 ]
-exclude = ["vendor"]
+exclude = ["fuzz", "vendor"]
 # Frozen during the spine rebuild (kept in-tree for later increments):
 #   "guests/cluster"
 #   "guests/scheduler"
@@ -71,17 +73,18 @@ ring = { version = "0.17", default-features = false }
 rkyv = { version = "0.8", default-features = false }
 rustls = { version = "0.23", default-features = false }
 rustls-pki-types = { version = "1", default-features = false }
-selium-abi = { path = "crates/abi", default-features = false }
-selium-client = { path = "crates/client", default-features = false }
-selium-guest = { path = "crates/guest", default-features = false }
-selium-guest-macros = { path = "crates/guest/macros", default-features = false }
-selium-kernel = { path = "crates/kernel", default-features = false }
-selium-memory = { path = "crates/memory", default-features = false }
-selium-proto-dns = { path = "crates/proto-dns", default-features = false }
-selium-proto-http = { path = "crates/proto-http", default-features = false }
-selium-service = { path = "crates/service", default-features = false }
-selium-shm = { path = "crates/shm", default-features = false }
-selium-wire = { path = "crates/wire", default-features = false }
+selium-abi = { path = "crates/abi", version = "1.0.0-alpha.7", default-features = false }
+selium-client = { path = "crates/client", version = "1.0.0-alpha.7", default-features = false }
+selium-connector-resolve = { path = "crates/connector-resolve", version = "1.0.0-alpha.7", default-features = false }
+selium-guest = { path = "crates/guest", version = "1.0.0-alpha.7", default-features = false }
+selium-guest-macros = { path = "crates/guest/macros", version = "1.0.0-alpha.7", default-features = false }
+selium-kernel = { path = "crates/kernel", version = "1.0.0-alpha.7", default-features = false }
+selium-memory = { path = "crates/memory", version = "1.0.0-alpha.7", default-features = false }
+selium-proto-dns = { path = "crates/proto-dns", version = "1.0.0-alpha.7", default-features = false }
+selium-proto-http = { path = "crates/proto-http", version = "1.0.0-alpha.7", default-features = false }
+selium-service = { path = "crates/service", version = "1.0.0-alpha.7", default-features = false }
+selium-shm = { path = "crates/shm", version = "1.0.0-alpha.7", default-features = false }
+selium-wire = { path = "crates/wire", version = "1.0.0-alpha.7", default-features = false }
 sha2 = { version = "0.11", default-features = false }
 syn = { version = "3.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
@@ -141,8 +144,8 @@ unwrap_used = "warn"
 getrandom = { git = "https://github.com/seliumlabs/getrandom", rev = "1cd6d1f288be4a8dfe2f72aac02add4b8c3e0ac5" }
 # Drop this entry once ring releases a 0.17.x built on getrandom 0.4.
 ring = { git = "https://github.com/briansmith/ring", rev = "840167e18e4fa837eb48de46500454a616a15a6e" }
-# wasmtiny = { path = "../../wasmtiny/crates/core" }
-# wasmtiny-aotc = { path = "../../wasmtiny/crates/aotc" }
+# wasmtiny = { path = "../wasmtiny/crates/core" }
+# wasmtiny-aotc = { path = "../wasmtiny/crates/aotc" }
 wasmtiny = { git = "https://github.com/seliumlabs/wasmtiny", rev = "99e0c537c08aac877e7db733bc346e0b213983dc" }
 wasmtiny-aotc = { git = "https://github.com/seliumlabs/wasmtiny", rev = "99e0c537c08aac877e7db733bc346e0b213983dc" }
 web-time = { path = "vendor/web-time" }

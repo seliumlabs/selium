@@ -10,7 +10,8 @@ determinism, and soak coverage, and precisely what a green gate asserts.
 
 ### Requirement: Full ignored pack in CI
 The project SHALL run every `#[ignore]`d integration test as part of an enforced
-continuous-integration job on Linux, building every prerequisite it needs —
+continuous-integration job on Linux, except tests explicitly classified as
+non-gating latency reports. It SHALL build every prerequisite the pack needs —
 including the nightly atomics and multithreaded guest artifacts — before the
 tests run. A selected-path job SHALL NOT stand in for the pack.
 

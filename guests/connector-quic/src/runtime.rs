@@ -109,7 +109,15 @@ impl AsyncTimer for ConnectorTimer {
 
         if let Some(sleep) = this.sleep.as_mut() {
             match Pin::new(sleep).poll(cx) {
-                Poll::Ready(()) => {
+                Poll::Ready(Ok(())) => {
+                    this.sleep = None;
+                    Poll::Ready(())
+                }
+                Poll::Ready(Err(error)) => {
+                    // `quinn::AsyncTimer` cannot carry a result: surface the
+                    // failed sleep and complete the timer so quinn applies its
+                    // own timeout handling instead of parking forever.
+                    tracing::warn!(%error, "guest timer sleep failed; completing the timer");
                     this.sleep = None;
                     Poll::Ready(())
                 }

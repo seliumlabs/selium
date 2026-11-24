@@ -21,6 +21,7 @@ getrandom.workspace = true
 rustls = { workspace = true, features = ["ring", "std"] }
 rustls-pki-types = { workspace = true, features = ["alloc", "web"] }
 selium-abi.workspace = true
+selium-connector-resolve.workspace = true
 selium-guest.workspace = true
 selium-proto-http.workspace = true
 selium-service.workspace = true

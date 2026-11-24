@@ -25,6 +25,7 @@ const SERVER_KEY_PEM: &[u8] =
     include_bytes!("../../../guests/connector-quic/tests/fixtures/key.pem");
 const SERVER_NAME: &str = "localhost";
 
+// scenario: selium-client/pre-reply-eof-is-not-handshake-rejection/explicit-bad-handshake-termination
 /// 6.1 (extended): a bad-handshake termination code maps to the bad-handshake
 /// variant.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -66,6 +67,7 @@ async fn bad_handshake_termination_maps_to_bad_handshake_error() {
     bridge.abort();
 }
 
+// scenario: selium-rpc/bidi-streaming-rpc/half-close
 /// 5.4: a bidirectional-streaming RPC round-trips items in both directions
 /// on one session.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -153,6 +155,7 @@ async fn bind_server(config: quinn::ServerConfig) -> (SocketAddr, quinn::Endpoin
 
 /// 5.1: channel open writes the typed handshake, the bridge replies accepted,
 /// and a following data frame carries the publisher's correlation tag.
+// scenario: selium-client/channel-open-per-stream/open-a-channel
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn channel_open_writes_handshake_then_tagged_frame() {
     let (addr, server) = bind_server(plain_server_config()).await;
@@ -199,6 +202,7 @@ fn client_key() -> PrivateKeyDer<'static> {
 
 /// Spec: Mutual TLS Client Identity — an identity in the connect options
 /// completes mutual TLS through the connector's mTLS server config.
+// scenario: selium-client/mutual-tls-client-identity/client-presents-identity
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn client_presents_identity_for_mutual_tls() {
     let (addr, server) = bind_server(mtls_server_config()).await;
@@ -278,6 +282,7 @@ async fn connect_and_channel_round_trip() {
 }
 
 /// 4.3: `connect` returns a `Client` owning the connection, with a trusted root.
+// scenario: selium-client/quic-connection/client-connects
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn connect_returns_client_with_trusted_root() {
     let (addr, server) = bind_server(plain_server_config()).await;
@@ -301,6 +306,8 @@ async fn connect_returns_client_with_trusted_root() {
 /// 6.1: a bridge termination frame surfaces the typed attach-failed error at
 /// channel open (the handshake reply is deterministic: refusal is a typed
 /// `Terminate`, not silence).
+// scenario: selium-client/typed-termination-errors/channel-open-fails
+// scenario: selium-client/unified-error-surface/connection-failure-surfaces-typed-error
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn denied_attach_returns_typed_error_at_open() {
     let (addr, server) = bind_server(plain_server_config()).await;
@@ -414,6 +421,7 @@ async fn expect_open_error<T>(
 }
 
 /// 6.2: `FlatMsg` and the encoding crate are reachable from the client alone.
+// scenario: selium-client/encoding-re-exports/single-import-surface
 #[test]
 fn flat_msg_and_encoding_are_re_exported() {
     fn assert_bound<T: selium_client::FlatMsg>() {}
@@ -485,9 +493,11 @@ async fn keep_connection_alive() {
     std::future::pending::<()>().await
 }
 
-/// 5.5: a live table round-trips set/get/delete over the async sync path.
+/// 5.5: writable live tables require authority enforced by the transport.
+/// QUIC streams have no shared writer arbiter, so construction fails honestly
+/// rather than substituting process-local topic claims for cross-writer CAS.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_table_set_get_delete_round_trip() {
+async fn live_table_without_transport_authority_is_rejected() {
     let (addr, server) = bind_server(plain_server_config()).await;
     let bridge = tokio::spawn(async move {
         let connection = server
@@ -502,38 +512,23 @@ async fn live_table_set_get_delete_round_trip() {
         let mut writer = FramedWrite::new(QuicTransport::write_only(send));
 
         handshake_and_accept(&mut reader, &mut writer, "sel://acme/table").await;
-
-        // The fabric replays every mutation back to the topic; loop echoing.
-        while let Ok((payload, tag, flags)) = reader.read_frame_async().await {
-            if writer.write_frame_with_flags(&payload, tag, flags).is_err() {
-                break;
-            }
-        }
+        keep_connection_alive().await;
     });
 
     let client = selium_client::connect(addr, plain_options())
         .await
         .expect("connect");
-    let table = client
-        .live_table::<String, u64>("sel://acme/table")
-        .await
-        .expect("live table");
-
-    table
-        .set_async("alpha".to_string(), 10u64)
-        .await
-        .expect("set");
-    assert_eq!(table.get(&"alpha".to_string()).expect("get"), Some(10u64));
-
-    table
-        .delete_async("alpha".to_string())
-        .await
-        .expect("delete");
-    assert_eq!(table.get(&"alpha".to_string()).expect("get"), None);
+    let error = expect_open_error(client.live_table::<String, u64>("sel://acme/table")).await;
+    assert!(matches!(
+        error,
+        selium_client::Error::Wire(selium_wire::Error::TableAuthorityUnavailable { ref topic })
+            if topic == "live-table:sel://acme/table"
+    ));
 
     bridge.abort();
 }
 
+// scenario: selium-client/pre-reply-eof-is-not-handshake-rejection/malformed-or-unexpected-control-reply
 /// A control reply that cannot be decoded is a contract violation and keeps
 /// its bad-handshake mapping.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -617,6 +612,7 @@ fn plain_server_config() -> quinn::ServerConfig {
     quinn::ServerConfig::with_single_cert(server_certs(), server_key()).expect("server config")
 }
 
+// scenario: selium-client/pre-reply-eof-is-not-handshake-rejection/bridge-closes-without-a-control-reply
 /// A bridge that closes the stream before any control reply is wire
 /// termination, not a handshake rejection.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -664,6 +660,8 @@ async fn pre_reply_stream_close_is_transport_termination() {
 }
 
 /// 5.3: a publisher is a `futures::Sink<T>` whose `send` emits an encoded frame.
+// scenario: transport-abstraction/patterns-generic-over-messagetransport/publisher-is-instantiated-with-quic-transport
+// scenario: selium-client/typed-messaging-handles/publish-to-a-channel
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn publisher_sends_encoded_message() {
     let (addr, server) = bind_server(plain_server_config()).await;
@@ -701,6 +699,9 @@ async fn publisher_sends_encoded_message() {
     bridge.await.expect("bridge task");
 }
 
+// scenario: selium-rpc/rpc-request-correlation/server-replies-to-a-specific-request
+// scenario: secure-rpc/typed-request-reply-with-correlation/client-sends-typed-request-and-receives-typed-reply
+// scenario: secure-rpc/frameheader-tag-field-for-rpc-correlation/client-matches-reply-to-request
 /// 5.4: request/response RPC round-trips a request and its correlation tag.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rpc_request_reply_round_trip() {
@@ -751,6 +752,7 @@ fn server_key() -> PrivateKeyDer<'static> {
     selium_client::private_key_from_pem(SERVER_KEY_PEM).expect("server key PEM")
 }
 
+// scenario: selium-rpc/server-streaming-rpc/ordered-reply-stream
 /// 5.4: a server-streaming RPC round-trips a request into a stream of items.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn server_stream_round_trip() {
@@ -818,7 +820,11 @@ async fn server_stream_round_trip() {
     bridge.abort();
 }
 
+// scenario: transport-abstraction/frame-format-transport-independent/frame-written-over-quic-is-readable-over-quic
+// scenario: transport-abstraction/patterns-generic-over-messagetransport/subscriber-does-not-report-overwrite-over-quic-transport
+// scenario: framed-io/framedread-framedwrite-generic-over-transport/framedread-wraps-a-quic-transport
 /// 5.2: a subscriber yields decoded values end-to-end.
+// scenario: selium-client/typed-messaging-handles/subscribe-to-a-channel
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn subscriber_reads_decoded_values_end_to_end() {
     let (addr, server) = bind_server(plain_server_config()).await;
@@ -934,6 +940,3 @@ async fn unexpected_control_reply_maps_to_bad_handshake() {
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: selium-client/pre-reply-eof-is-not-handshake-rejection/bridge-closes-without-a-control-reply
-// scenario: selium-client/pre-reply-eof-is-not-handshake-rejection/explicit-bad-handshake-termination
-// scenario: selium-client/pre-reply-eof-is-not-handshake-rejection/malformed-or-unexpected-control-reply

@@ -4,7 +4,7 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -34,6 +34,10 @@ pub struct VolumeDescriptor {
 /// A single open local handle onto a volume file.
 struct VolumeHandle {
     file: Mutex<File>,
+    /// Shared append synchronisation for this underlying volume. Every handle
+    /// opened on the same path holds the same lock, so offset lookup and the
+    /// write are one ordered operation across handles.
+    append: Arc<Mutex<()>>,
 }
 
 /// Registry of opaque durable byte containers rooted at a state directory.
@@ -53,6 +57,13 @@ pub(crate) struct VolumeRegistryInner {
     ephemeral: AtomicBool,
     next_local: AtomicU64,
     handles: Mutex<HashMap<LocalResourceId, Arc<VolumeHandle>>>,
+    /// Per-underlying-volume append locks, shared by every open handle.
+    ///
+    /// Weak on purpose: a path's lock lives exactly as long as some handle
+    /// references it, and dead entries are pruned on the next open so opening
+    /// short-lived tenant volumes does not grow the map for the life of the
+    /// process.
+    append_locks: Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>,
 }
 
 impl VolumeRegistry {
@@ -74,6 +85,7 @@ impl VolumeRegistry {
                 ephemeral: AtomicBool::new(ephemeral),
                 next_local: AtomicU64::new(1),
                 handles: Mutex::new(HashMap::new()),
+                append_locks: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -137,8 +149,24 @@ impl VolumeRegistry {
             .open(&path)?;
         let len = file.metadata()?.len();
         let local_id = self.inner.next_local.fetch_add(1, Ordering::SeqCst);
+        let append = {
+            let mut locks = self.inner.append_locks.lock();
+            // Drop locks whose last handle has closed; otherwise opening
+            // transient volumes would accumulate one entry per path forever.
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            let existing = locks.get(&path).and_then(Weak::upgrade);
+            match existing {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(Mutex::new(()));
+                    locks.insert(path, Arc::downgrade(&lock));
+                    lock
+                }
+            }
+        };
         let handle = Arc::new(VolumeHandle {
             file: Mutex::new(file),
+            append,
         });
         self.inner.handles.lock().insert(local_id, handle);
         Ok(VolumeDescriptor {
@@ -150,8 +178,13 @@ impl VolumeRegistry {
     }
 
     /// Appends bytes to an open volume and returns the offset they landed at.
+    ///
+    /// Handles opened on the same underlying volume share one append lock, so
+    /// the offset lookup and the write are atomic across handles: concurrent
+    /// appends never return overlapping ranges.
     pub fn append(&self, local_id: LocalResourceId, bytes: &[u8]) -> Result<u64> {
         let handle = self.handle(local_id)?;
+        let _append = handle.append.lock();
         let mut file = handle.file.lock();
         let offset = file.metadata()?.len();
         file.write_all(bytes)?;
@@ -434,6 +467,115 @@ mod tests {
         VolumeRegistry::ephemeral()
     }
 
+    /// Two independently opened handles share one append domain: every
+    /// returned range is unique and complete payloads read back in offset
+    /// order.
+    // scenario: selium-kernel/concurrent-volume-appends-have-unique-ordered-offsets/two-handles-append-concurrently
+    #[test]
+    fn concurrent_handles_append_unique_ordered_ranges() {
+        let registry = temp_registry();
+        let first = registry.open(Some("acme"), "orders").expect("open first");
+        let second = registry.open(Some("acme"), "orders").expect("open second");
+
+        let mut workers = Vec::new();
+        for (local_id, payload) in [
+            (first.local_id, b"first-payload".to_vec()),
+            (second.local_id, b"second-payload".to_vec()),
+        ] {
+            for _ in 0..50 {
+                let registry = registry.clone();
+                let payload = payload.clone();
+                workers.push(std::thread::spawn(move || {
+                    let offset = registry.append(local_id, &payload).expect("append");
+                    (offset, payload)
+                }));
+            }
+        }
+
+        let mut written: Vec<(u64, Vec<u8>)> = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("append worker"))
+            .collect();
+        written.sort_by_key(|(offset, _)| *offset);
+
+        let mut expected_offset = 0u64;
+        for (offset, payload) in &written {
+            assert_eq!(
+                *offset, expected_offset,
+                "appends must be contiguous and non-overlapping"
+            );
+            assert_eq!(
+                registry
+                    .read_at(first.local_id, *offset, payload.len())
+                    .expect("read"),
+                *payload,
+                "each returned range must hold its complete payload"
+            );
+            expected_offset += payload.len() as u64;
+        }
+        assert_eq!(registry.len(first.local_id).expect("len"), expected_offset);
+    }
+
+    /// A write that cannot complete is reported, and the failed append does
+    /// not advance the volume: recovery never sees a half-written payload as
+    /// a committed append.
+    // scenario: selium-kernel/concurrent-volume-appends-have-unique-ordered-offsets/partial-append-failure
+    #[test]
+    fn an_append_that_cannot_be_written_is_reported_without_advancing() {
+        let registry = temp_registry();
+        let volume = registry.open(Some("acme"), "orders").expect("open");
+        let before = registry.len(volume.local_id).expect("len");
+
+        // Swap the handle's descriptor for a read-only one, so the write
+        // itself fails after the file is open (exactly the partial-write I/O
+        // failure the kernel must report).
+        let path = registry
+            .root_path()
+            .join(VOLUMES_DIR)
+            .join(encode_tenant(Some("acme")).expect("tenant component"))
+            .join(encode_name("orders").expect("name component"));
+        let read_only = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .expect("reopen read-only");
+        let handle = registry.handle(volume.local_id).expect("handle");
+        *handle.file.lock() = read_only;
+
+        assert!(
+            matches!(
+                registry.append(volume.local_id, b"payload"),
+                Err(Error::Io(_))
+            ),
+            "a failed write is reported, not acknowledged"
+        );
+        assert_eq!(
+            registry.len(volume.local_id).expect("len"),
+            before,
+            "a failed append leaves the volume at its previous length"
+        );
+    }
+
+    /// Closing every handle releases the volume's append lock, so opening
+    /// transient volumes does not grow host state for the process lifetime.
+    #[test]
+    fn closed_handles_release_their_append_locks() {
+        let registry = temp_registry();
+        for index in 0..4 {
+            let volume = registry
+                .open(Some("acme"), &format!("transient-{index}"))
+                .expect("open");
+            registry.close(volume.local_id).expect("close");
+        }
+        let kept = registry.open(Some("acme"), "kept").expect("open");
+        assert_eq!(
+            registry.inner.append_locks.lock().len(),
+            1,
+            "only the live volume keeps an append domain"
+        );
+        registry.close(kept.local_id).expect("close");
+    }
+
+    // scenario: selium-kernel/durable-volume-primitives/contents-are-opaque
     #[test]
     fn append_and_read_round_trip() {
         let registry = temp_registry();
@@ -479,7 +621,10 @@ mod tests {
             Err(Error::NotFound(_))
         ));
     }
+    // scenario: selium-abi/volume-hostcall-variants/sync-is-a-durable-barrier
+    // scenario: selium-abi/tenant-volume-usage-hostcall/reading-reflects-resident-bytes
 
+    // scenario: selium-kernel/durable-volume-primitives/bytes-survive-a-kernel-restart
     #[test]
     fn a_fresh_registry_over_the_same_directory_observes_earlier_bytes() {
         let root = unique_temp_root();

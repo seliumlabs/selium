@@ -1,5 +1,3 @@
-use std::sync::atomic::{Ordering, fence};
-
 use selium_abi::ResourceKind;
 use selium_memory::FrameHeader;
 use selium_wire::error::{Error, Result};
@@ -10,7 +8,7 @@ use crate::{
 };
 
 /// Minimum ring buffer data capacity (in bytes).
-/// Must hold at least one frame header (12 bytes) plus a small payload.
+/// Must hold at least one 16-byte frame header plus a small payload.
 const MIN_RING_CAPACITY: u64 = 64;
 
 /// A lock-free ring buffer log on shared memory.
@@ -35,7 +33,19 @@ impl RingBuf {
     /// The `purpose` tag is threaded through to the `AllocRegion` hostcall for
     /// runtime discovery registration (informational only, not used for AAA).
     pub fn create(capacity: u64, purpose: ResourceKind) -> Result<Self> {
-        let region = ChannelRegion::create(capacity, purpose)?;
+        #[cfg(test)]
+        crate::ensure_heap_provider();
+        let provider = selium_memory::region_provider()?;
+        Self::create_with_provider(provider, capacity, purpose)
+    }
+
+    /// Creates a ring buffer through an explicit region provider.
+    pub fn create_with_provider(
+        provider: &dyn selium_memory::RegionProvider,
+        capacity: u64,
+        purpose: ResourceKind,
+    ) -> Result<Self> {
+        let region = ChannelRegion::create_with_provider(provider, capacity, purpose)?;
         let mask = mask_for_capacity(capacity)?;
         region.initialise()?;
         region.store_shared_capacity(capacity)?;
@@ -50,7 +60,18 @@ impl RingBuf {
     ///
     /// Reads the capacity from the shared channel header.
     pub fn attach(region_id: u64) -> Result<Self> {
-        let region = ChannelRegion::attach(region_id)?;
+        #[cfg(test)]
+        crate::ensure_heap_provider();
+        let provider = selium_memory::region_provider()?;
+        Self::attach_with_provider(provider, region_id)
+    }
+
+    /// Attaches a ring buffer through an explicit region provider.
+    pub fn attach_with_provider(
+        provider: &dyn selium_memory::RegionProvider,
+        region_id: u64,
+    ) -> Result<Self> {
+        let region = ChannelRegion::attach_with_provider(provider, region_id)?;
         Self::wrap_region(region)
     }
 
@@ -144,69 +165,28 @@ impl RingBuf {
     /// 4. Write header with READY flag at `pos`
     /// 5. Bump generation counter and notify waiters
     pub fn write_frame(&self, pos: u64, payload: &[u8], tag: u32, flags: u8) -> Result<()> {
-        let frame_size = FrameHeader::ENCODED_SIZE as u64 + payload.len() as u64;
-        if frame_size > self.capacity {
-            return Err(Error::CapacityExceeded);
-        }
-
-        // Placeholder header (checksum-valid, not READY): marks this
-        // reservation as in-flight so a checksum-verifying reader sees a
-        // decodable, not-ready frame instead of stale bytes it would mistake
-        // for a torn header.
-        let placeholder = FrameHeader {
-            len: payload.len() as u32,
-            tag,
-            flags: flags & !FrameHeader::FLAG_READY,
-        };
-        self.write_at(pos, &placeholder.encode())?;
-
-        // Step 2: Write payload first.
-        let payload_pos = pos
-            .checked_add(FrameHeader::ENCODED_SIZE as u64)
-            .ok_or_else(|| Error::InvalidFrame("payload position overflow".to_string()))?;
-        self.write_at(payload_pos, payload)?;
-
-        // Step 2: Release fence ensures payload is visible before the header.
-        fence(Ordering::Release);
-
-        // Step 3: Write header with READY flag (single write, no two-phase).
-        let ready_header = FrameHeader {
-            len: payload.len() as u32,
-            tag,
-            flags: flags | FrameHeader::FLAG_READY,
-        };
-        self.write_at(pos, &ready_header.encode())?;
-
-        // Step 4: Bump generation counter and notify waiters.
-        self.region.bump_generation()?;
-
-        Ok(())
+        self.region.write_frame_at(pos, payload, tag, flags)
     }
 
     /// Reads a frame header from a position with acquire fencing.
     pub fn read_frame_header(&self, pos: u64) -> Result<FrameHeader> {
-        // Acquire fence ensures we see the writer's payload before the header.
-        fence(Ordering::Acquire);
-        let bytes = self.read_at(pos, FrameHeader::ENCODED_SIZE as u64)?;
-        FrameHeader::decode(&bytes).map_err(|e| Error::InvalidFrame(e.to_string()))
+        crate::layout::read_frame_header(
+            self.region.mapping().backend(),
+            pos,
+            self.mask,
+            self.capacity,
+        )
     }
 
     /// Reads a full framed message from a position with acquire fencing.
     pub fn read_frame(&self, pos: u64) -> Result<(FrameHeader, Vec<u8>)> {
-        // Acquire fence ensures we see the writer's payload.
-        fence(Ordering::Acquire);
-        let header = {
-            let bytes = self.read_at(pos, FrameHeader::ENCODED_SIZE as u64)?;
-            FrameHeader::decode(&bytes).map_err(|e| Error::InvalidFrame(e.to_string()))?
-        };
-        if !header.is_ready() {
-            return Err(Error::BufferEmpty);
-        }
-        let payload_pos = pos
-            .checked_add(FrameHeader::ENCODED_SIZE as u64)
-            .ok_or_else(|| Error::InvalidFrame("payload position overflow".to_string()))?;
-        let payload = self.read_at(payload_pos, header.len as u64)?;
-        Ok((header, payload))
+        crate::layout::read_frame(
+            self.region.mapping().backend(),
+            pos,
+            self.mask,
+            self.capacity,
+        )?
+        .ok_or(Error::BufferEmpty)
     }
 
     /// Returns the current generation counter value.

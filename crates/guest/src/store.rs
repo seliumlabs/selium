@@ -1,12 +1,9 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 use selium_service::{StoreRecord, StoreRecordHeader, StoreRequest, StoreResponse};
 use selium_shm::rpc::{self, OwnedRpcClient};
 
-use crate::{GuestError, Result, async_runtime::yield_now};
+use crate::{GuestError, Result, client_session::SessionState};
 
 /// Reply ring capacity for a store session; sized for replay batches.
 const RPC_REP_CAPACITY: u64 = 256 * 1024;
@@ -28,10 +25,10 @@ pub struct StoreClient {
 }
 
 struct StoreClientInner {
-    /// Cooperative gate: the session is taken out for the duration of a
-    /// request, so concurrent callers cannot interleave frames on one session.
-    gate: AtomicBool,
-    session: Mutex<Option<OwnedRpcClient<StoreRequest, StoreResponse>>>,
+    /// Cancellation-safe checkout: one request owns the session for its
+    /// duration, and dropping the request future closes or restores it before
+    /// reopening the gate.
+    session: SessionState<OwnedRpcClient<StoreRequest, StoreResponse>>,
 }
 
 /// A handle to a durable log served by the store.
@@ -66,8 +63,7 @@ impl StoreClient {
     pub fn from_session(session: OwnedRpcClient<StoreRequest, StoreResponse>) -> Self {
         Self {
             inner: Arc::new(StoreClientInner {
-                gate: AtomicBool::new(false),
-                session: Mutex::new(Some(session)),
+                session: SessionState::new(session),
             }),
         }
     }
@@ -75,31 +71,30 @@ impl StoreClient {
     /// Sends one request and awaits its reply.
     ///
     /// A store-reported failure is returned as a [`GuestError`]; the session
-    /// survives a `StoreResponse::Error`.
+    /// survives a `StoreResponse::Error`. Cancelling the future closes the
+    /// torn session and reopens the gate so later requests are admitted and
+    /// fail clearly rather than spinning.
     pub async fn request(&self, request: StoreRequest) -> Result<StoreResponse> {
-        self.acquire().await;
-        let session = self
-            .inner
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        let Some(mut session) = session else {
-            self.inner.gate.store(false, Ordering::Release);
+        let mut guard = self.inner.session.acquire().await;
+        let Some(session) = guard.session() else {
             return Err(GuestError::Host("store session unavailable".to_string()));
         };
         let reply = session.request(request).await;
-        // Restore the session before opening the gate again.
-        *self
-            .inner
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session);
-        self.inner.gate.store(false, Ordering::Release);
-
-        match reply.map_err(|error| GuestError::Host(format!("store request: {error}")))? {
-            StoreResponse::Error { code, message } => Err(store_error(&code, &message)),
-            other => Ok(other),
+        match reply {
+            Ok(reply) => {
+                // Restore before reopening the gate: the transport is intact
+                // and the session survives an application-level error.
+                guard.restore();
+                match reply {
+                    StoreResponse::Error { code, message } => Err(store_error(&code, &message)),
+                    other => Ok(other),
+                }
+            }
+            Err(error) => {
+                // A transport failure leaves the session torn; the guard drops
+                // it and reopens the gate on the way out.
+                Err(GuestError::from(error).context("store request"))
+            }
         }
     }
 
@@ -112,12 +107,6 @@ impl StoreClient {
         {
             StoreResponse::Ok => Ok(()),
             _ => Err(GuestError::Host("unexpected store ping reply".to_string())),
-        }
-    }
-
-    async fn acquire(&self) {
-        while self.inner.gate.swap(true, Ordering::AcqRel) {
-            yield_now().await;
         }
     }
 }
@@ -147,6 +136,11 @@ impl DurableLog {
     }
 
     /// Appends a record and returns its sequence number.
+    ///
+    /// The store batches appends for throughput, so a successful append is not
+    /// by itself a durability acknowledgement. A caller that reports success to
+    /// someone else (identity, accounting, desired state) must also call
+    /// [`Self::sync`] before acknowledging.
     pub async fn append(
         &self,
         timestamp_ms: u64,
@@ -168,6 +162,23 @@ impl DurableLog {
             .await?
         {
             StoreResponse::Appended { sequence } => Ok(sequence),
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    /// Forces the log's appended records to stable storage.
+    ///
+    /// The durable-commit boundary: a caller that acknowledges a mutation only
+    /// after this returns (`Ok`) may claim the record survives a power cycle.
+    pub async fn sync(&self) -> Result<()> {
+        match self
+            .client
+            .request(StoreRequest::Sync {
+                log: self.name.clone(),
+            })
+            .await?
+        {
+            StoreResponse::Ok => Ok(()),
             other => Err(unexpected(&other)),
         }
     }
@@ -359,7 +370,7 @@ where
 {
     let session = rpc::connect(rendezvous, RPC_REQ_CAPACITY, RPC_REP_CAPACITY)
         .await
-        .map_err(|error| GuestError::Host(format!("store connect: {error}")))?;
+        .map_err(|error| GuestError::from(error).context("store connect"))?;
     Ok(StoreClient::from_session(session))
 }
 
@@ -374,4 +385,44 @@ fn store_error(code: &str, message: &str) -> GuestError {
 
 fn unexpected(response: &StoreResponse) -> GuestError {
     GuestError::Host(format!("unexpected store response: {response:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending_once<F: std::future::Future>(future: std::pin::Pin<&mut F>) -> bool {
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        future.poll(&mut context).is_pending()
+    }
+
+    // scenario: selium-guest/shared-clients-are-cancellation-safe/store-request-is-cancelled
+    #[tokio::test]
+    async fn cancelled_store_request_does_not_strand_the_client() {
+        let (session, server) =
+            crate::client_session::test_session_pair::<StoreRequest, StoreResponse>().await;
+        let client = StoreClient::from_session(session);
+
+        let mut request = Box::pin(client.request(StoreRequest::OpenLog {
+            log: "cancelled".to_string(),
+        }));
+        assert!(
+            pending_once(request.as_mut()),
+            "the request should park awaiting the store's reply"
+        );
+        drop(request);
+
+        let error = client
+            .request(StoreRequest::OpenLog {
+                log: "after-cancel".to_string(),
+            })
+            .await
+            .expect_err("the cancelled session is closed");
+        assert!(
+            matches!(&error, GuestError::Host(message) if message.contains("unavailable")),
+            "a cancelled session must fail clearly, not hang: {error:?}"
+        );
+        server.abort();
+    }
 }

@@ -13,15 +13,18 @@
 #                                       nightly atomics net-demo and mt-demo)
 #   7. the atomics module's shared-memory declaration
 #   8. scripts/check-wasm-patches.sh
-#   9. scripts/check-traceability.sh   (spec scenario -> test/waiver)
-#  10. stage-2 wait-word conformance    (Linux only; the module is cfg'd away
+#   9. scripts/check-traceability.sh   (spec scenario -> test/waiver, including
+#                                       every unparked change's delta)
+#  10. scripts/check-openspec.sh       (strict deltas, no stale paths)
+#  11. scripts/publish.sh --self-test + scripts/smoke-artifact.sh (release tooling)
+#  12. stage-2 wait-word conformance    (Linux only; the module is cfg'd away
 #                                       elsewhere)
-#  11. scripts/flake-check.sh          (the full ignored pack, retried:
+#  13. scripts/flake-check.sh          (the full ignored pack, retried:
 #                                       every `#[ignore]`d spine plus the
 #                                       failure-injection binaries
 #                                       `failure_*`; the soak and crash lanes
 #                                       are excluded here and run under --soak)
-#  12. the known-unknowns register, printed alongside the result
+#  14. the known-unknowns register, printed alongside the result
 #
 # Every step runs even when an earlier one fails, and the exit status is
 # non-zero if any step failed, so one run reports every regression it can. The
@@ -44,7 +47,7 @@
 #
 # Environment:
 #   GATE_REPEAT      ignored-pack runs for flake detection (default 1)
-#   RUST_IMAGE       container image tag (default: rust:latest)
+#   RUST_IMAGE       container image tag (default: rust:1.99.1)
 #   GATE_IN_CONTAINER set by the re-exec; do not set by hand
 #   GATE_NATIVE      1 is the same as --native
 #   CARGO_TARGET_DIR forwarded into the container run
@@ -61,6 +64,10 @@ LIST=0
 NATIVE=0
 REPEAT="${GATE_REPEAT:-1}"
 [ "${GATE_NATIVE:-0}" = "1" ] && NATIVE=1
+
+# The original arguments are forwarded verbatim into the container re-exec
+# below; the parsing loop consumes its own copies.
+ORIGINAL_ARGS=("$@")
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -94,7 +101,7 @@ done
 # lock destruction differences), so a non-Linux host runs the same command in
 # the same container `scripts/test.sh`/`scripts/clippy.sh` use.
 # ---------------------------------------------------------------------------
-if [ "$NATIVE" = "0" ] && [ -z "${GATE_IN_CONTAINER:-}" ] && [ "$(uname -s)" != "Linux" ]; then
+if [ "$NATIVE" = "0" ] && [ "$LIST" = "0" ] && [ -z "${GATE_IN_CONTAINER:-}" ] && [ "$(uname -s)" != "Linux" ]; then
   if ! docker info >/dev/null 2>&1; then
     if [ "$(uname -s)" = "Darwin" ]; then
       echo "gate.sh: starting Docker Desktop..."
@@ -115,11 +122,24 @@ if [ "$NATIVE" = "0" ] && [ -z "${GATE_IN_CONTAINER:-}" ] && [ "$(uname -s)" != 
   PARENT_NAME="$(basename "$(cd "$ROOT/.." && pwd -P)")"
   REPO_NAME="$(basename "$ROOT")"
   CONTAINER_WS="/work/$PARENT_NAME/$REPO_NAME"
-  RUST_IMAGE="${RUST_IMAGE:-rust:latest}"
+  # Every pin below matches `.github/workflows/ci.yml` and
+  # `.github/workflows/audit.yml`: a local gate and CI resolve the same
+  # toolchains and utilities, so "works here" means "works there".
+  RUST_TOOLCHAIN="${SELIUM_RUST_TOOLCHAIN:-1.99.1}"
+  NIGHTLY_TOOLCHAIN="${SELIUM_NIGHTLY_TOOLCHAIN:-nightly-2026-10-25}"
+  WASM_TOOLS_VERSION="${WASM_TOOLS_VERSION:-1.259.0}"
+  OPENSPEC_VERSION="${OPENSPEC_VERSION:-1.16.0}"
+  # The base image must be >= the pinned toolchain for rustup to resolve it;
+  # the mounted rustup volume keeps the pin installed across runs.
+  RUST_IMAGE="${RUST_IMAGE:-rust:${RUST_TOOLCHAIN}}"
 
   TTY_ARGS=()
   [ -t 1 ] && TTY_ARGS=(-t)
 
+  # Docker's VM disk is shared by every volume. The debug profile's full
+  # debuginfo roughly triples the artifact tree and has filled that disk;
+  # trimming it keeps behaviour identical (same code, same tests) and is only
+  # set for the container run, not for CI.
   echo "gate.sh: re-exec into Linux container ($RUST_IMAGE) at $CONTAINER_WS"
   exec docker run --rm \
     ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} \
@@ -129,8 +149,13 @@ if [ "$NATIVE" = "0" ] && [ -z "${GATE_IN_CONTAINER:-}" ] && [ "$(uname -s)" != 
     -v selium-gate-target:/target \
     -e WS="$CONTAINER_WS" \
     -e GATE_IN_CONTAINER=1 \
+    -e SELIUM_NIGHTLY_TOOLCHAIN="$NIGHTLY_TOOLCHAIN" \
+    -e WASM_TOOLS_VERSION="$WASM_TOOLS_VERSION" \
+    -e OPENSPEC_VERSION="$OPENSPEC_VERSION" \
+    -e RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
     -e CARGO_INCREMENTAL=0 \
     -e CARGO_TARGET_DIR=/target \
+    -e CARGO_PROFILE_DEV_DEBUG=0 \
     -e CARGO_TERM_COLOR=always \
     "$RUST_IMAGE" \
     bash -c '
@@ -138,13 +163,21 @@ if [ "$NATIVE" = "0" ] && [ -z "${GATE_IN_CONTAINER:-}" ] && [ "$(uname -s)" != 
       apt-get update -qq
       apt-get install -y -qq clang cmake >/dev/null
       cd "$WS"
-      rustup component add clippy rustfmt >/dev/null
-      rustup target add wasm32-unknown-unknown >/dev/null
-      rustup toolchain install nightly --component rust-src --target wasm32-unknown-unknown >/dev/null
-      command -v wasm-tools >/dev/null 2>&1 ||
-        cargo install wasm-tools --locked --no-default-features --features print
+      rustup toolchain install "$RUST_TOOLCHAIN" \
+        --component clippy,rustfmt --target wasm32-unknown-unknown >/dev/null
+      rustup toolchain install "$SELIUM_NIGHTLY_TOOLCHAIN" \
+        --component rust-src --target wasm32-unknown-unknown >/dev/null
+      if ! command -v wasm-tools >/dev/null 2>&1 ||
+        [ "$(wasm-tools --version)" != "wasm-tools $WASM_TOOLS_VERSION" ]; then
+        cargo install wasm-tools --version "$WASM_TOOLS_VERSION" --locked --force \
+          --no-default-features --features print
+      fi
+      if ! command -v openspec >/dev/null 2>&1; then
+        apt-get install -y -qq nodejs npm >/dev/null
+        npm install -g "@fission-ai/openspec@$OPENSPEC_VERSION" >/dev/null
+      fi
       exec scripts/gate.sh "$@"
-    ' bash "$@"
+    ' bash ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
 fi
 
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
@@ -159,6 +192,13 @@ step_tests() { cargo test --workspace --all-targets; }
 step_doc_tests() { cargo test --workspace --doc; }
 step_wasm_prereqs() { scripts/build-all.sh; }
 step_shared_memory() {
+  local expected_wasm_tools="${WASM_TOOLS_VERSION:-1.259.0}"
+  local actual_wasm_tools
+  actual_wasm_tools="$(wasm-tools --version)" || return 1
+  if [ "$actual_wasm_tools" != "wasm-tools $expected_wasm_tools" ]; then
+    echo "cached wasm-tools is $actual_wasm_tools; expected wasm-tools $expected_wasm_tools" >&2
+    return 1
+  fi
   # The atomics net-demo the fast-path test loads must declare memory 0 shared
   # with a maximum, or the wasmtiny validator rejects its atomic instructions
   # and the fast path can never activate. This is the assertion the former
@@ -172,7 +212,18 @@ step_shared_memory() {
   wasm-tools print "$artifact" | grep -E '\(memory .*shared'
 }
 step_wasm_patches() { scripts/check-wasm-patches.sh; }
-step_traceability() { scripts/check-traceability.sh; }
+step_traceability() {
+  # The classifier self-test fails when an attached annotation stops counting
+  # or a detached one starts counting; run it before the real report so a
+  # weakened checker cannot pass silently.
+  scripts/check-traceability.sh --self-test
+  scripts/check-traceability.sh
+}
+step_openspec() {
+  # Strict validation for every active change plus the stale-path check, so a
+  # malformed delta or a proposal pointing at deleted code cannot land.
+  scripts/check-openspec.sh
+}
 step_stage2() {
   cargo test -p selium-kernel --features stage2-wait-words --test wait_notify &&
     cargo test -p selium-kernel -p selium-runtime --features selium-runtime/stage2-wait-words
@@ -181,6 +232,19 @@ step_ignored_pack() { scripts/flake-check.sh --runs "$REPEAT"; }
 step_soak() {
   cargo test -p selium-runtime --test soak -- --ignored &&
     cargo test -p selium-runtime --test crash_consistency -- --ignored
+}
+
+step_release_tools() {
+  # Publication is dependency-ordered and stop-on-failure; the packaged
+  # artifact must start and bootstrap a real guest. Both are cheap here and
+  # would otherwise first run on a release tag.
+  scripts/publish.sh --self-test
+  scripts/smoke-artifact.sh --self-test
+  scripts/check-release-workflow.sh
+  cargo build -q -p selium-runtime
+  scripts/smoke-artifact.sh \
+    "${CARGO_TARGET_DIR:-target}/debug/selium-runtime" \
+    "${CARGO_TARGET_DIR:-target}/wasm32-unknown-unknown/debug/selium_spine_demo.wasm"
 }
 
 STEP_NAMES=()
@@ -203,6 +267,8 @@ else
   add_step "atomics shared-memory declaration" step_shared_memory
   add_step "wasm patch guard" step_wasm_patches
   add_step "spec traceability" step_traceability
+  add_step "openspec strict validation" step_openspec
+  add_step "release tooling and artifact smoke" step_release_tools
   add_step "stage-2 wait-word conformance" step_stage2
   if [ "$QUICK" = "0" ]; then
     add_step "ignored pack (flake-checked)" step_ignored_pack

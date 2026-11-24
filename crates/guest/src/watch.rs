@@ -50,6 +50,41 @@ impl RouteWatch {
         }
     }
 
+    /// Non-blocking check for a route change.
+    pub fn try_next(&mut self) -> Result<Option<RouteEvent>> {
+        if let Some(event) = self.pending.take() {
+            return Ok(Some(event));
+        }
+        self.view
+            .sync()
+            .map_err(|error| GuestError::from(error).context("route watch sync"))?;
+        if let Some(record) = self
+            .view
+            .get_record(&self.uri)
+            .map_err(|error| GuestError::from(error).context("route watch read"))?
+            && record.version > self.version
+        {
+            self.version = record.version;
+            match record.value {
+                Some(target) => {
+                    let event = if self.current.is_some() {
+                        RouteEvent::Replaced(target.clone())
+                    } else {
+                        RouteEvent::Appeared(target.clone())
+                    };
+                    self.current = Some(target);
+                    return Ok(Some(event));
+                }
+                None => {
+                    if self.current.take().is_some() {
+                        return Ok(Some(RouteEvent::Revoked));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Awaits the next change on the watched route.
     ///
     /// When no change is available the watch *parks on the table* rather than
@@ -68,43 +103,16 @@ impl RouteWatch {
     /// there the monotonic-clock hostcall that selects the park path always
     /// fails, and no host exists to wake anything anyway.
     pub async fn next(&mut self) -> Result<RouteEvent> {
-        if let Some(event) = self.pending.take() {
-            return Ok(event);
-        }
         loop {
-            self.view
-                .sync()
-                .map_err(|error| GuestError::Host(format!("route watch sync: {error}")))?;
-            if let Some(record) = self
-                .view
-                .get_record(&self.uri)
-                .map_err(|error| GuestError::Host(format!("route watch read: {error}")))?
-                && record.version > self.version
-            {
-                self.version = record.version;
-                match record.value {
-                    Some(target) => {
-                        let event = if self.current.is_some() {
-                            RouteEvent::Replaced(target.clone())
-                        } else {
-                            RouteEvent::Appeared(target.clone())
-                        };
-                        self.current = Some(target);
-                        return Ok(event);
-                    }
-                    None => {
-                        if self.current.take().is_some() {
-                            return Ok(RouteEvent::Revoked);
-                        }
-                    }
-                }
+            if let Some(event) = self.try_next()? {
+                return Ok(event);
             }
             match crate::Instant::now() {
                 Ok(_) => self
                     .view
                     .sync_async()
                     .await
-                    .map_err(|error| GuestError::Host(format!("route watch park: {error}")))?,
+                    .map_err(|error| GuestError::from(error).context("route watch park"))?,
                 Err(_) => yield_now().await,
             }
         }
@@ -150,7 +158,10 @@ mod tests {
         let read = ShmTransport::new(&channel, &channel).expect("read");
         let publisher = Publisher::new(FramedWrite::new(write));
         let subscriber = Subscriber::new(FramedRead::new(read), None);
-        let table: Table = LiveTable::new(publisher, subscriber).expect("table");
+        let authority =
+            selium_wire::TableWriterAuthority::claim(format!("watch.test.{}", channel.region_id()))
+                .expect("authority");
+        let table: Table = LiveTable::new(authority, publisher, subscriber).expect("table");
 
         let read = ShmTransport::new_replay(&channel, &channel).expect("read replay");
         let subscriber = Subscriber::new(FramedRead::new(read), None);
@@ -159,6 +170,33 @@ mod tests {
         (table, view)
     }
 
+    #[tokio::test]
+    async fn try_next_reports_replacement_and_revocation() {
+        let (table, view) = table_and_view();
+        let uri = "sel://acme/region/9".to_string();
+        let mut watch = RouteWatch::new(uri.clone(), None, 0, view);
+
+        table.set(uri.clone(), target(9)).expect("set");
+        assert!(matches!(
+            watch.try_next().expect("try_next"),
+            Some(RouteEvent::Appeared(_))
+        ));
+
+        table.set(uri.clone(), target(10)).expect("replace");
+        assert!(matches!(
+            watch.try_next().expect("try_next"),
+            Some(RouteEvent::Replaced(target)) if target.resource_id == 10
+        ));
+
+        table.delete(uri).expect("revoke");
+        assert!(matches!(
+            watch.try_next().expect("try_next"),
+            Some(RouteEvent::Revoked)
+        ));
+        assert!(watch.try_next().expect("idle").is_none());
+    }
+
+    // scenario: guest-context/context-route-watch/guest-watches-a-route-and-converges
     #[tokio::test]
     async fn watch_reports_appearance_when_the_route_appears_later() {
         let (table, view) = table_and_view();
@@ -201,6 +239,7 @@ mod tests {
         assert_eq!(watch.next().await.expect("revoke"), RouteEvent::Revoked);
     }
 
+    // scenario: guest-context/context-route-watch/guest-re-attaches-after-a-provider-restarts
     #[tokio::test]
     async fn watch_re_attaches_after_a_provider_restart() {
         let (table, view) = table_and_view();

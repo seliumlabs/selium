@@ -1,6 +1,12 @@
-//! Crash-consistency lane: a durable component stopped mid-write must replay
-//! to a consistent state on restart.
+//! Format-level torn-write lane: the durable *record format* cut mid-write
+//! must replay to a consistent state on restart.
 //!
+//! These tests operate on the framed record format directly (append a byte
+//! prefix of a real volume, then reopen it); they deliberately do **not**
+//! claim component-level behaviour. Real store interruption/restart injection
+//! lives in `guests/store/src/tests.rs`; identity and control-plane component
+//! interruption/restart evidence lives in `identity_durability.rs` and
+//! `control_plane_durability.rs` over real DurableLog/store RPCs.
 //! The store's on-disk contract is a framed record log: each record carries a
 //! length and a CRC32, and a reader replays frames until the first frame that
 //! is incomplete or fails its checksum (`selium_store::format::scan_frames`).
@@ -57,7 +63,7 @@ impl Drop for TempRoot {
 /// before it completes must leave the previous manifest as the visible state.
 #[test]
 #[ignore = "crash-consistency lane: run nightly via scripts/gate.sh --soak"]
-fn crash_before_a_manifest_publish_keeps_the_previous_manifest() {
+fn format_torn_manifest_publish_keeps_the_previous_record() {
     let root = TempRoot::new("crash-manifest");
     let kernel = Kernel::with_state_dir(13, root.path());
     let volumes = kernel.volumes();
@@ -112,7 +118,7 @@ fn crash_before_a_manifest_publish_keeps_the_previous_manifest() {
 /// the CRC is the boundary between "durable" and "discard".
 #[test]
 #[ignore = "crash-consistency lane: run nightly via scripts/gate.sh --soak"]
-fn crash_corruption_of_a_log_record_is_discarded_not_replayed() {
+fn format_corrupt_record_is_discarded_not_replayed() {
     let root = TempRoot::new("crash-corrupt");
     let kernel = Kernel::with_state_dir(11, root.path());
     let volumes = kernel.volumes();
@@ -149,9 +155,10 @@ fn crash_corruption_of_a_log_record_is_discarded_not_replayed() {
 
 /// Cuts a three-record log at every byte offset; each restart must replay a
 /// prefix whose last record is complete.
+// scenario: verification-gate/soak-and-crash-consistency-coverage/restart-mid-write-recovers
 #[test]
 #[ignore = "crash-consistency lane: run nightly via scripts/gate.sh --soak"]
-fn crash_truncation_of_a_log_replays_a_consistent_prefix() {
+fn format_truncation_replays_a_complete_record_prefix() {
     let root = TempRoot::new("crash-consistency");
     let kernel = Kernel::with_state_dir(7, root.path());
     let volumes = kernel.volumes();

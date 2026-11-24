@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use selium_abi::{RegionProt, ResourceKind};
-use selium_memory::{Region, RegionMapping, WASM_PAGE_SIZE};
+use selium_memory::{Region, RegionMapping, RegionProvider, WASM_PAGE_SIZE};
 use selium_wire::error::{Error, Result};
 
 use crate::layout::{
@@ -14,6 +14,39 @@ use crate::layout::{
     store_reader_slot, store_shared_capacity, store_writer_slot, update_reader_slot,
     update_writer_slot,
 };
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RegionFailure {
+    DecrementWriter,
+    ReleaseWriterSlot,
+    Generation,
+    Notify,
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static REGION_FAILURE: std::cell::Cell<Option<RegionFailure>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn inject_region_failure(stage: RegionFailure) -> Result<()> {
+    let failed = REGION_FAILURE.with(|failure| {
+        if failure.get() == Some(stage) {
+            failure.set(None);
+            true
+        } else {
+            false
+        }
+    });
+    if failed {
+        Err(Error::Guest(format!(
+            "injected region failure at {stage:?}"
+        )))
+    } else {
+        Ok(())
+    }
+}
 
 // Re-export all layout constants for backward compatibility.
 pub use crate::layout::{
@@ -56,15 +89,40 @@ struct ChannelPrivateState {
     next_mutation_id: AtomicU64,
 }
 
+impl selium_wire::TableWriterArbiter for ChannelRegion {
+    fn claim_table_writer(&self, claim: u64) -> Result<bool> {
+        layout::claim_table_writer(self.backend(), claim)
+    }
+
+    fn release_table_writer(&self, claim: u64) -> Result<()> {
+        layout::release_table_writer(self.backend(), claim)
+    }
+}
+
 impl ChannelRegion {
     /// Creates a new channel region by allocating a shared region via
     /// [`Region::allocate`].
     pub fn create(capacity: u64, purpose: ResourceKind) -> Result<Self> {
         #[cfg(test)]
         crate::ensure_heap_provider();
+        let provider = selium_memory::region_provider()?;
+        Self::create_with_provider(provider, capacity, purpose)
+    }
+
+    /// Creates a channel region through an explicit provider.
+    ///
+    /// Runtime-owned channels use this so two runtimes in one process never
+    /// allocate through each other's (or the ambient guest provider's) kernel.
+    pub fn create_with_provider(
+        provider: &dyn RegionProvider,
+        capacity: u64,
+        purpose: ResourceKind,
+    ) -> Result<Self> {
         let total_aligned = aligned_region_size(capacity)?;
         let pages = pages_for_bytes(total_aligned);
-        let region = crate::allocate_region(pages, RegionProt::ReadWrite, purpose)?;
+        let region = provider
+            .allocate(pages, RegionProt::ReadWrite, purpose)
+            .map_err(Error::from)?;
         let mapping = region.mapping();
         Ok(Self {
             region_id: region.region_id(),
@@ -80,7 +138,15 @@ impl ChannelRegion {
     pub fn attach(region_id: u64) -> Result<Self> {
         #[cfg(test)]
         crate::ensure_heap_provider();
-        let region = crate::attach_region(region_id, None, RegionProt::ReadWrite)?;
+        let provider = selium_memory::region_provider()?;
+        Self::attach_with_provider(provider, region_id)
+    }
+
+    /// Attaches a channel region through an explicit provider.
+    pub fn attach_with_provider(provider: &dyn RegionProvider, region_id: u64) -> Result<Self> {
+        let region = provider
+            .attach(region_id, None, RegionProt::ReadWrite)
+            .map_err(Error::from)?;
         let mapping = region.mapping();
 
         let capacity = layout::load_shared_capacity(mapping.backend())?;
@@ -162,7 +228,54 @@ impl ChannelRegion {
 
     /// Increments the generation counter in shared memory and notifies waiters.
     pub fn bump_generation(&self) -> Result<u64> {
+        #[cfg(test)]
+        inject_region_failure(RegionFailure::Generation)?;
         let new_gen = layout::bump_generation(self.backend())?;
+        self.publish_generation(new_gen)?;
+        Ok(new_gen)
+    }
+
+    /// Writes a frame at an already-reserved position and publishes it.
+    ///
+    /// The ring protocol's write step ([`layout::write_frame_at`]) advances the
+    /// generation counter, but a commit also has to *signal*: a reader parked
+    /// on this ring (a guest task registered through `WaitRegister`, or a host
+    /// drainer parked on the generation word) only re-checks when the advance
+    /// is published. Routing every ring write through this method keeps the
+    /// write and its wake a single operation.
+    pub fn write_frame_at(&self, pos: u64, payload: &[u8], tag: u32, flags: u8) -> Result<()> {
+        let mask = self.capacity - 1;
+        let new_gen = layout::write_frame_at(
+            self.backend(),
+            pos,
+            payload,
+            tag,
+            flags,
+            self.capacity,
+            mask,
+        )?;
+        self.publish_generation(new_gen)
+    }
+
+    /// Writes an already-encoded frame at a reserved position and publishes it.
+    ///
+    /// See [`Self::write_frame_at`] for why the commit publishes the advance.
+    pub fn write_encoded_frame(&self, pos: u64, encoded: &[u8]) -> Result<()> {
+        let mask = self.capacity - 1;
+        let new_gen =
+            layout::write_encoded_frame_at(self.backend(), pos, encoded, self.capacity, mask)?;
+        self.publish_generation(new_gen)
+    }
+
+    /// Publishes a generation advance to every waiter on this ring.
+    ///
+    /// Two wake domains: the engine's address-level notify (host threads
+    /// parked on the generation word) and the reactor callback path (guest
+    /// tasks parked through `WaitRegister`, which the host routes back to the
+    /// guest's mailbox).
+    fn publish_generation(&self, new_generation: u64) -> Result<()> {
+        #[cfg(test)]
+        inject_region_failure(RegionFailure::Notify)?;
         // Wake count is 1: exactly one host drainer parks on the ring's
         // generation word (guest tasks park via `register_generation_wait`
         // below, which never uses `memory.atomic.wait`). The count was
@@ -170,9 +283,11 @@ impl ChannelRegion {
         // `memory.atomic.notify` would make the engine iterate the count
         // under the waiter registry's read lock, so keep it minimal and
         // exact.
-        drop(self.mapping.atomic_notify(GENERATION_COUNTER_OFFSET, 1));
-        selium_memory::wake_generation_waiters(self.region_id, new_gen);
-        Ok(new_gen)
+        self.mapping
+            .atomic_notify(GENERATION_COUNTER_OFFSET, 1)
+            .map_err(Error::from)?;
+        selium_memory::wake_generation_waiters(self.region_id, new_generation);
+        Ok(())
     }
 
     /// Loads the shared `next_tail` cursor from shared memory.
@@ -241,7 +356,9 @@ impl ChannelRegion {
     /// Marks the peer as departed and wakes parked readers by bumping the
     /// generation. Returns the new generation.
     pub fn mark_peer_closed(&self) -> Result<u64> {
-        mark_peer_closed(self.backend())
+        let new_generation = mark_peer_closed(self.backend())?;
+        self.publish_generation(new_generation)?;
+        Ok(new_generation)
     }
 
     /// Atomically adds to the shared `writer_count`, returning the previous value.
@@ -263,6 +380,8 @@ impl ChannelRegion {
 
     /// Decrements the shared writer count.
     pub fn decrement_writer_count(&self) -> Result<()> {
+        #[cfg(test)]
+        inject_region_failure(RegionFailure::DecrementWriter)?;
         self.fetch_add_writer_count(u64::MAX)?;
         Ok(())
     }
@@ -373,6 +492,8 @@ impl ChannelRegion {
 
     /// Releases an allocated writer cursor slot.
     pub fn release_writer_slot(&self, slot: u32) -> Result<()> {
+        #[cfg(test)]
+        inject_region_failure(RegionFailure::ReleaseWriterSlot)?;
         self.store_writer_slot(slot, 0)
     }
 
@@ -472,6 +593,7 @@ mod tests {
         );
     }
 
+    // scenario: guest-shared-memory/shared-region-coordination-layout/standard-coordination-layout
     #[test]
     fn aligned_region_size_accounts_for_header_and_limits() {
         assert_eq!(aligned_region_size(1), Ok(MIN_REGION_BYTES));
@@ -561,6 +683,7 @@ mod tests {
         }
     }
 
+    // scenario: guest-shared-memory/native-atomic-access-to-shared-regions/guest-uses-atomic-cas-on-coordination-field
     #[test]
     fn two_writers_coordinate_on_shared_next_tail() {
         let region_a = ChannelRegion::create(4096, ResourceKind::SharedMemory).expect("create");

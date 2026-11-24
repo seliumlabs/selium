@@ -42,8 +42,8 @@ pub enum Error {
     InvalidRegion,
     #[error("region layout mismatch")]
     LayoutMismatch,
-    #[error("ABI error: {0:?}")]
-    Abi(selium_abi::AbiErrorCode),
+    #[error("ABI error ({code:?}): {message}", code = .0.code, message = .0.message)]
+    Abi(selium_abi::AbiError),
     #[error("guest error: {0}")]
     Guest(String),
     #[error("index out of bounds")]
@@ -54,6 +54,16 @@ pub enum Error {
     BackpressureNotSupported,
     #[error("transport error: {0}")]
     Transport(String),
+    #[error("live-table authority for topic {topic:?} is already held by another writer")]
+    TableAuthorityConflict {
+        /// Topic whose exclusive writer authority is contested.
+        topic: String,
+    },
+    #[error("live-table topic {topic:?} has no shared writer arbiter; CAS is unavailable")]
+    TableAuthorityUnavailable {
+        /// Topic whose transport cannot arbitrate writers.
+        topic: String,
+    },
 }
 
 impl From<std::io::Error> for Error {
@@ -77,6 +87,7 @@ impl From<selium_memory::MemoryError> for Error {
             }
             selium_memory::MemoryError::ProviderNotSet => Self::InvalidRegion,
             selium_memory::MemoryError::RegionNotFound(_) => Self::InvalidRegion,
+            selium_memory::MemoryError::Abi(error) => Self::Abi(error),
             selium_memory::MemoryError::Other(msg) => Self::Guest(msg),
         }
     }

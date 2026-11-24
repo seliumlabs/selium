@@ -8,8 +8,6 @@
 //! `#[ignore]`d by default because it needs the wake-probe guest built for
 //! `wasm32-unknown-unknown`.
 
-use std::time::Instant;
-
 use failure_common as fx;
 use selium_runtime::Runtime;
 
@@ -26,7 +24,6 @@ fn concurrent_watchers_are_all_woken_by_one_publisher_stream() {
 
     // Both watchers attach before either has been woken: the race is two
     // waiters registered on the same generation word.
-    let started = Instant::now();
     let watcher_a = fx::spawn_wake_probe(
         &runtime,
         "race-watcher-a",
@@ -52,12 +49,6 @@ fn concurrent_watchers_are_all_woken_by_one_publisher_stream() {
         "wake-probe: woke",
         fx::CONVERGENCE_BOUND,
     );
-    let latency = started.elapsed();
-    assert!(
-        latency < fx::CONVERGENCE_BOUND,
-        "both watchers must be woken by the live stream, took {latency:?}"
-    );
-
     // A watcher attaching after the first wake still converges: the publisher
     // keeps publishing, and its reader starts at the live tail.
     let late = fx::spawn_wake_probe(

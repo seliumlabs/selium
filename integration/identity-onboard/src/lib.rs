@@ -14,12 +14,15 @@
 
 use anyhow::{Context as _, bail};
 use selium_abi::{Capability, CapabilityGrant, ResourceClass, ResourceSelector};
-use selium_guest::{Context, ResourceSender, entrypoint, error, info};
+use selium_guest::{
+    Channel, Context, FramedRead, LiveTableView, ResourceSender, Subscriber, entrypoint, error,
+    info,
+};
 use selium_service::{
     AccountantControl, AccountantControlResponse, ControlRequest, ControlResponse, IdentityRequest,
     IdentityResponse,
 };
-use selium_shm::rpc;
+use selium_shm::{rpc, transport::ShmTransport};
 use sha2::{Digest, Sha256};
 
 /// The served accountant control route.
@@ -29,6 +32,7 @@ const CONTROL_ROUTE: &str = "sel:///control";
 /// The served identity route.
 const IDENTITY_ROUTE: &str = "sel:///identity";
 const LEAF_MANIFEST: &str = "acme-leaf";
+const GRANT_FINGERPRINT: [u8; 32] = [0xAA; 32];
 /// Manifest the post-restart leaf is published under.
 const LEAF_MANIFEST_AFTER_RESTART: &str = "acme-leaf-after-restart";
 /// Entry mode: upload a module and record a deployment through the control
@@ -45,6 +49,17 @@ pub const MODE_REVOKE: u64 = 1;
 /// surface, so the durable ledger carries a policy record a restart must
 /// replay and re-author.
 pub const MODE_SET_QUOTA: u64 = 5;
+/// Entry modes: record the pointer-supplied domain under acme or beta.
+pub const MODE_SET_DOMAIN_ACME: u64 = 6;
+pub const MODE_SET_DOMAIN_BETA: u64 = 7;
+/// Entry mode: deploy a distinct replica count for interruption testing.
+pub const MODE_DEPLOY_NINE: u64 = 9;
+/// Entry modes: replace and verify a principal's opaque baseline grant bytes.
+pub const MODE_SET_GRANTS_ONE: u64 = 10;
+pub const MODE_SET_GRANTS_TWO: u64 = 11;
+pub const MODE_VERIFY_GRANTS: u64 = 12;
+/// Entry mode: rotate the already-onboarded tenant's CA.
+pub const MODE_ROTATE: u64 = 13;
 /// Entry mode: read a workload's recorded deployment back through the control
 /// plane and log it, so a restart's survival is observable host-side.
 pub const MODE_VERIFY_DEPLOYMENT: u64 = 4;
@@ -260,6 +275,13 @@ async fn run_mode(ctx: &mut Context, spki: (u64, u64), mode: u64) -> anyhow::Res
         MODE_DEPLOY => upload_and_deploy(ctx).await?,
         MODE_VERIFY_DEPLOYMENT => verify_deployment(ctx).await?,
         MODE_SET_QUOTA => set_process_quota(ctx).await?,
+        MODE_SET_DOMAIN_ACME => set_domain(ctx, spki, TENANT).await?,
+        MODE_SET_DOMAIN_BETA => set_domain(ctx, spki, "beta").await?,
+        MODE_DEPLOY_NINE => deploy_nine(ctx).await?,
+        MODE_SET_GRANTS_ONE => set_grants(ctx, 1).await?,
+        MODE_SET_GRANTS_TWO => set_grants(ctx, 2).await?,
+        MODE_VERIFY_GRANTS => verify_grants(ctx).await?,
+        MODE_ROTATE => rotate_acme(ctx).await?,
         MODE_REVOKE => {
             let mut client = identity_client(ctx).await?;
             let revoked = client
@@ -276,6 +298,103 @@ async fn run_mode(ctx: &mut Context, spki: (u64, u64), mode: u64) -> anyhow::Res
         other => bail!("identity-onboard: unknown entry mode {other}"),
     }
 
+    Ok(())
+}
+
+/// Rotates the already-onboarded tenant through the real identity RPC.
+async fn rotate_acme(ctx: &mut Context) -> anyhow::Result<()> {
+    let mut client = identity_client(ctx).await?;
+    let response = client
+        .request(IdentityRequest::RotateTenantCa {
+            tenant: TENANT.to_string(),
+        })
+        .await
+        .with_context(|| "identity-onboard: rotate tenant CA failed")?;
+    let IdentityResponse::Rotated { .. } = response else {
+        bail!("identity-onboard: unexpected rotate response: {response:?}");
+    };
+    info!("identity-onboard: {TENANT} tenant CA rotated");
+    Ok(())
+}
+
+/// Replaces the test principal's baseline grant bytes through identity.
+async fn set_grants(ctx: &mut Context, value: u8) -> anyhow::Result<()> {
+    let mut client = identity_client(ctx).await?;
+    let response = client
+        .request(IdentityRequest::SetPrincipalGrants {
+            tenant: TENANT.to_string(),
+            fingerprint: GRANT_FINGERPRINT.to_vec(),
+            grants: vec![value],
+        })
+        .await
+        .with_context(|| "identity-onboard: set grants failed")?;
+    let IdentityResponse::PrincipalRecorded { .. } = response else {
+        bail!("identity-onboard: unexpected grants response: {response:?}");
+    };
+    info!("identity-onboard: principal grants [{value}] recorded");
+    Ok(())
+}
+
+/// Reads the identity-published grant table after a component restart.
+async fn verify_grants(ctx: &mut Context) -> anyhow::Result<()> {
+    let target = ctx
+        .resolve_ready("sel:///identity-grants", ROUTE_READY_BOUND)
+        .await
+        .with_context(|| "identity-onboard: grant table resolve failed")?;
+    let channel = Channel::attach(target.resource_id)
+        .with_context(|| "identity-onboard: grant table attach failed")?;
+    let transport = ShmTransport::new_replay(&channel, &channel)
+        .with_context(|| "identity-onboard: grant table transport failed")?;
+    let subscriber = Subscriber::new(FramedRead::new(transport), None);
+    let view: LiveTableView<Vec<u8>, Vec<u8>, ShmTransport> = LiveTableView::new(subscriber)
+        .with_context(|| "identity-onboard: grant table view failed")?;
+    view.sync()
+        .with_context(|| "identity-onboard: grant table sync failed")?;
+    let grants = view
+        .get(&GRANT_FINGERPRINT.to_vec())
+        .with_context(|| "identity-onboard: grant table read failed")?;
+    info!("identity-onboard: principal grants {grants:?}");
+    Ok(())
+}
+
+/// Records a pointer-supplied domain through the identity request surface.
+async fn set_domain(ctx: &mut Context, domain: (u64, u64), tenant: &str) -> anyhow::Result<()> {
+    // SAFETY: the runtime wrote the domain into this guest's linear memory for
+    // this entrypoint invocation; identity-facing modes never treat it as SPKI.
+    let domain = unsafe { selium_guest::args::str(domain.0, domain.1) }
+        .context("identity-onboard: invalid domain argument")?
+        .to_string();
+    let mut client = identity_client(ctx).await?;
+    let response = client
+        .request(IdentityRequest::SetDomain {
+            domain: domain.clone(),
+            tenant: tenant.to_string(),
+        })
+        .await
+        .with_context(|| "identity-onboard: set domain failed")?;
+    let IdentityResponse::DomainRecorded { .. } = response else {
+        bail!("identity-onboard: unexpected domain response: {response:?}");
+    };
+    info!("identity-onboard: domain {domain}={tenant} recorded");
+    Ok(())
+}
+
+/// Records a deployment with a distinct replica count so a failed replacement
+/// cannot be mistaken for the previously acknowledged deployment on replay.
+async fn deploy_nine(ctx: &mut Context) -> anyhow::Result<()> {
+    let mut client = control_client(ctx).await?;
+    let response = client
+        .request(ControlRequest::Deploy {
+            workload_id: WORKLOAD_ID.to_string(),
+            replicas: 9,
+            module: "interrupted/module".to_string(),
+        })
+        .await
+        .with_context(|| "identity-onboard: interrupted deploy failed")?;
+    let ControlResponse::Accepted { replicas: 9, .. } = response else {
+        bail!("identity-onboard: unexpected interrupted deploy response: {response:?}");
+    };
+    info!("power-cycle: deployed {WORKLOAD_ID} replicas=9 module=interrupted/module");
     Ok(())
 }
 

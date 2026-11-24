@@ -225,6 +225,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
             ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
+            ),
         ],
         tenant: None,
         discovery_service: true,
@@ -287,6 +291,15 @@ async fn echo_round_trip(connection: &quinn::Connection, payload: Vec<u8>) -> Ve
 // The connector's quinn timers (loss detection, retransmit) sleep via the
 // `Sleep` hostcall, whose host-side wake is driven by `tokio::spawn`, so the
 // test provides a Tokio runtime.
+// scenario: guest-networking/quinn-udpsender-implementation/quinn-sends-a-datagram
+// scenario: guest-networking/quinn-asyncudpsocket-recv-implementation/quinn-polls-for-received-datagrams
+// scenario: quinn-transport/udpsender-implementation/quinn-sends-a-datagram-via-shared-memory
+// scenario: quinn-transport/udpsender-implementation/quinn-polls-for-received-datagrams
+// scenario: quinn-transport/stream-framing-separated-from-datagram-transport/bridge-guest-composes-datagram-transport-stream-transport
+// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/client-grade-connection
+// scenario: quic-connector/opaque-byte-stream-forwarding/arbitrary-payload-round-trips-byte-identical
+// scenario: quic-connector/sni-based-discovery-route-resolution/connection-routed-to-registered-guest
+// scenario: quic-connector/zero-network-grant-app-guests/app-guest-serves-with-no-network-grant
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the discovery, connector and demo guests built for wasm32-unknown-unknown"]
 #[expect(
@@ -294,6 +307,7 @@ async fn echo_round_trip(connection: &quinn::Connection, payload: Vec<u8>) -> Ve
     reason = "the warm-up and payload round-trips intentionally run inline for deterministic join semantics"
 )]
 async fn external_quinn_client_echoes_through_wasm_connector_guest() {
+    let _port = spine_common::SpinePortGuard::acquire();
     let state = spine_common::StateRoot::new("quic-spine");
     let runtime = spine_common::runtime_in_state_root(&state);
     seed_tls_blob_store(&runtime);
@@ -376,9 +390,6 @@ async fn external_quinn_client_echoes_through_wasm_connector_guest() {
             panic!("handshake timed out; recent guest logs: {snapshot:#?}");
         }
     };
-    stop_collector.store(true, std::sync::atomic::Ordering::Relaxed);
-    collector.join().expect("collector thread");
-
     let connection = client.connection().clone();
 
     // Warm-up: the TLS handshake runs on an interpreter, so its crypto
@@ -444,20 +455,21 @@ async fn external_quinn_client_echoes_through_wasm_connector_guest() {
 
     // Guest-side assertions: one accepted stream per QUIC stream the client
     // opened (warm-up round trips included) and one full-size echo per
-    // payload stream, and no error logged anywhere in the relay path. The
-    // wait helper returns exactly what it drained, so the counts below
-    // cover the whole connection instead of racing the guest with a second
-    // drain.
+    // payload stream, and no error logged anywhere in the relay path. Combine
+    // the collector's records with a final drain so the counts cover the whole
+    // connection without racing a second collector.
+    stop_collector.store(true, std::sync::atomic::Ordering::Relaxed);
+    collector.join().expect("collector thread");
     let echo_needle = format!("echoed {PAYLOAD_LEN} bytes");
-    let demo_logs = wait_for_logs(
-        &runtime,
-        demo,
-        &[
-            ("accepted stream", WARMUP_ROUNDS + 2),
-            (echo_needle.as_str(), 2),
-        ],
-        OBSERVATION_BOUND,
-    );
+    let demo_prefix = format!("pid {demo}:");
+    let mut demo_logs: Vec<String> = collected
+        .lock()
+        .expect("collector lock")
+        .iter()
+        .filter(|message| message.starts_with(&demo_prefix))
+        .cloned()
+        .collect();
+    demo_logs.extend(drain_logs(&runtime, demo));
     assert_eq!(
         demo_logs
             .iter()
@@ -475,13 +487,28 @@ async fn external_quinn_client_echoes_through_wasm_connector_guest() {
         "one full-size echo per payload stream: {demo_logs:?}"
     );
 
-    for (process_id, name) in [(discovery, "discovery"), (connector, "quic-connector")] {
-        let logs = drain_logs(&runtime, process_id);
-        assert!(
-            !logs.iter().any(|message| message.contains("failed")),
-            "{name} guest logged an error: {logs:?}"
-        );
-    }
+    let connector_prefix = format!("pid {connector}:");
+    let mut connector_logs: Vec<String> = collected
+        .lock()
+        .expect("collector lock")
+        .iter()
+        .filter(|message| message.starts_with(&connector_prefix))
+        .cloned()
+        .collect();
+    connector_logs.extend(drain_logs(&runtime, connector));
+    assert!(
+        !connector_logs
+            .iter()
+            .any(|message| message.contains("failed")),
+        "quic-connector guest logged an error: {connector_logs:?}"
+    );
+    let discovery_logs = drain_logs(&runtime, discovery);
+    assert!(
+        !discovery_logs
+            .iter()
+            .any(|message| message.contains("failed")),
+        "discovery guest logged an error: {discovery_logs:?}"
+    );
 
     runtime.stop_process(demo).expect("stop demo");
     runtime.stop_process(connector).expect("stop connector");

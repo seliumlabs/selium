@@ -56,6 +56,9 @@ pub enum RpcError {
     /// The ring buffer is empty.
     #[error("RPC buffer empty")]
     BufferEmpty,
+    /// A structured host/ABI failure preserved through the transport layers.
+    #[error("ABI error ({code:?}): {message}", code = .0.code, message = .0.message)]
+    Abi(selium_abi::AbiError),
     /// Encoding or decoding failed.
     #[error("serialisation error: {0}")]
     Serialisation(String),
@@ -100,6 +103,7 @@ impl From<Error> for RpcError {
                 Self::ConnectionClosed
             }
             Error::SerialisationFailed(msg) | Error::Guest(msg) => Self::Serialisation(msg),
+            Error::Abi(error) => Self::Abi(error),
             other => Self::Serialisation(other.to_string()),
         }
     }
@@ -157,7 +161,7 @@ where
             }
 
             if region_id != 0 {
-                crate::generation_wait(region_id, last_generation).await;
+                crate::generation_wait(&mut self.reply_reader, last_generation).await;
             }
         }
     }
@@ -271,7 +275,7 @@ where
             }
 
             if region_id != 0 {
-                crate::generation_wait(region_id, last_generation).await;
+                crate::generation_wait(&mut self.request_reader, last_generation).await;
             }
         }
     }
@@ -335,31 +339,7 @@ where
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-rpc` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-rpc/typed-rpc-client/client-sends-request-and-receives-reply
-// scenario: selium-rpc/typed-rpc-client/client-handles-disconnected-server
-// scenario: selium-rpc/typed-rpc-connection/server-receives-request-and-sends-reply
-// scenario: selium-rpc/typed-rpc-connection/server-detects-client-disconnect
-// scenario: selium-rpc/rpc-connection-handshake-via-rendezvous/client-connects-to-server-via-shm-rendezvous
-// scenario: selium-rpc/rpc-connection-handshake-via-rendezvous/server-accepts-client-connection-via-shm-rendezvous
-// scenario: selium-rpc/rpc-session-layout/client-and-server-agree-on-channel-layout-for-shm
-// scenario: selium-rpc/rpc-request-correlation/server-replies-to-a-specific-request
-// scenario: selium-rpc/server-streaming-rpc/ordered-reply-stream
-// scenario: selium-rpc/server-streaming-rpc/mid-stream-error
-// scenario: selium-rpc/bidi-streaming-rpc/half-close
-// scenario: selium-rpc/stream-cancellation/cancel-stops-production
-// scenario: selium-rpc/stream-cancellation/server-abandonment-notifies-client
-// scenario: selium-rpc/streaming-backpressure-honesty/slow-consumer
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `secure-rpc` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: secure-rpc/bidirectional-rpc-session-isolation/client-connects-to-server
-// scenario: secure-rpc/bidirectional-rpc-session-isolation/unauthorised-client-attempts-connection
-// scenario: secure-rpc/bidirectional-rpc-session-isolation/malicious-guest-cannot-access-another-tenant-s-session
-// scenario: secure-rpc/typed-request-reply-with-correlation/client-sends-typed-request-and-receives-typed-reply
-// scenario: secure-rpc/typed-request-reply-with-correlation/correlation-id-wraps-around
-// scenario: secure-rpc/one-reply-per-request-enforcement/server-replies-to-a-request
-// scenario: secure-rpc/one-reply-per-request-enforcement/server-attempts-to-reply-twice
-// scenario: secure-rpc/connection-close-detection/client-drops-rpcclient
-// scenario: secure-rpc/connection-close-detection/server-drops-rpcconnection
-// scenario: secure-rpc/frameheader-tag-field-for-rpc-correlation/client-matches-reply-to-request

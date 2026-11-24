@@ -32,6 +32,18 @@ pub fn internal_error_response() -> HttpResponse {
     )
 }
 
+/// Typed 400 response for malformed request framing.
+pub fn bad_request_response() -> HttpResponse {
+    HttpResponse::new(
+        400,
+        vec![HttpHeader::new(
+            "content-type".to_string(),
+            "text/plain".to_string(),
+        )],
+        b"Bad Request".to_vec(),
+    )
+}
+
 /// Typed 404-equivalent response for unmatched routes.
 pub fn not_found_response() -> HttpResponse {
     HttpResponse::new(

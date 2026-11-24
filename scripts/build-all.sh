@@ -26,6 +26,7 @@ if [[ "${1:-}" == "--atomics-only" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NIGHTLY="${SELIUM_NIGHTLY_TOOLCHAIN:-nightly}"
 cd "$ROOT"
 
 # Workspace package manifest paths, from cargo metadata. Used only for
@@ -137,16 +138,16 @@ build_atomics_guest() {
   # volume by scripts/test.sh); fall back to the workspace-local `target/`.
   local target_root="${CARGO_TARGET_DIR:-$ROOT/target}"
 
-  if ! rustc +nightly --version >/dev/null 2>&1; then
+  if ! rustc +"$NIGHTLY" --version >/dev/null 2>&1; then
     echo "error: the atomics guest build needs a nightly toolchain" >&2
-    echo "  rustup toolchain install nightly --component rust-src --target $target" >&2
+    echo "  rustup toolchain install '$NIGHTLY' --component rust-src --target $target" >&2
     exit 1
   fi
 
-  sysroot="$(rustc +nightly --print sysroot)"
+  sysroot="$(rustc +"$NIGHTLY" --print sysroot)"
   if [ ! -f "$sysroot/lib/rustlib/src/rust/library/Cargo.toml" ]; then
     echo "error: the atomics guest build needs the rust-src component (for -Zbuild-std)" >&2
-    echo "  rustup component add rust-src --toolchain nightly" >&2
+    echo "  rustup component add rust-src --toolchain '$NIGHTLY'" >&2
     exit 1
   fi
 
@@ -157,7 +158,7 @@ build_atomics_guest() {
   rm -f "$target_root/$target/debug/selium_net_demo.wasm"
 
   RUSTFLAGS="$ATOMICS_RUSTFLAGS" \
-    cargo +nightly build -Zbuild-std=std,panic_abort \
+    cargo +"$NIGHTLY" build -Zbuild-std=std,panic_abort \
       --target "$target" \
       -p selium-net-demo \
       --features selium-guest/nightly-wasm-atomics
@@ -191,9 +192,9 @@ build_mt_demo_guest() {
   local target="wasm32-unknown-unknown"
   local target_root="${CARGO_TARGET_DIR:-$ROOT/target}"
 
-  if ! rustc +nightly --version >/dev/null 2>&1; then
+  if ! rustc +"$NIGHTLY" --version >/dev/null 2>&1; then
     echo "error: the mt-demo atomics build needs a nightly toolchain" >&2
-    echo "  rustup toolchain install nightly --component rust-src --target $target" >&2
+    echo "  rustup toolchain install '$NIGHTLY' --component rust-src --target $target" >&2
     exit 1
   fi
 
@@ -201,7 +202,7 @@ build_mt_demo_guest() {
   rm -f "$target_root/$target/debug/selium_mt_demo.wasm"
 
   RUSTFLAGS="$ATOMICS_RUSTFLAGS -C link-arg=--export=__stack_pointer" \
-    cargo +nightly build -Zbuild-std=std,panic_abort \
+    cargo +"$NIGHTLY" build -Zbuild-std=std,panic_abort \
       --target "$target" \
       -p selium-mt-demo \
       --features selium-guest/nightly-wasm-atomics

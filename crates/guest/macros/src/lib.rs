@@ -448,33 +448,3 @@ fn unsupported_param_error(ty: &Type) -> syn::Error {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-guest-macros` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-guest-macros/guest-entrypoint-macro/macro-generated-entrypoint-glue
-// scenario: selium-guest-macros/guest-entrypoint-macro/macro-generated-entrypoint-glue-returns-i32-for-result
-// scenario: selium-guest-macros/result-entrypoint-error-type-validation/non-error-error-type-rejected
-// scenario: selium-guest-macros/result-entrypoint-error-type-validation/error-typed-error-type-accepted
-// scenario: selium-guest-macros/result-entrypoint-error-type-validation/thiserror-derived-error-type-accepted
-// scenario: selium-guest-macros/backward-compatible-entrypoint-return-types/existing-void-entrypoint-unchanged
-// scenario: selium-guest-macros/generated-pattern-metadata/messaging-interface-metadata-emitted
-// scenario: selium-guest-macros/bootstrap-aware-macro-integration/runtime-bootstraps-macro-based-guest
-// scenario: selium-guest-macros/context-aware-entrypoint-parameter/macro-injects-context-into-entrypoint
-// scenario: selium-guest-macros/context-aware-entrypoint-parameter/context-bootstrap-failure-propagates-for-result-entrypoints
-// scenario: selium-guest-macros/context-aware-entrypoint-parameter/context-bootstrap-failure-aborts-unit-entrypoints
-// scenario: selium-guest-macros/context-aware-entrypoint-parameter/macro-forwards-raw-u64-argument-into-entrypoint
-// scenario: selium-guest-macros/context-aware-entrypoint-parameter/macro-forwards-multiple-integer-arguments
-// scenario: selium-guest-macros/context-aware-entrypoint-parameter/macro-forwards-a-pointer-argument
-// scenario: selium-guest-macros/context-aware-entrypoint-parameter/context-combines-with-trailing-arguments
-// scenario: selium-guest-macros/context-aware-entrypoint-parameter/unsupported-parameter-type-rejected
-// scenario: selium-guest-macros/wire-parameter-on-schema-macro/wire-parameter-triggers-wire-type-generation
-// scenario: selium-guest-macros/wire-parameter-on-schema-macro/wire-parameter-is-optional
-// scenario: selium-guest-macros/generic-parameter-auto-detection-for-byte-fields/direct-generic-field-detection
-// scenario: selium-guest-macros/generic-parameter-auto-detection-for-byte-fields/option-wrapped-generic-field-detection
-// scenario: selium-guest-macros/generic-parameter-auto-detection-for-byte-fields/concrete-type-field-is-not-detected-as-generic
-// scenario: selium-guest-macros/bridge-encode-impl-for-generic-types/encode-serialises-generics-to-bytes
-// scenario: selium-guest-macros/bridge-encode-impl-for-generic-types/encode-handles-none-option-generics
-// scenario: selium-guest-macros/bridge-encode-impl-for-generic-types/encode-handles-none-option-scalars
-// scenario: selium-guest-macros/bridge-decode-impl-for-generic-types/decode-reconstructs-generics-from-bytes
-// scenario: selium-guest-macros/bridge-decode-impl-for-generic-types/decode-handles-empty-bytes-as-none
-// scenario: selium-guest-macros/bridge-decode-impl-for-generic-types/decode-handles-zero-sentinel-as-none
-// scenario: selium-guest-macros/poll-export-completion-signal/poll-export-reports-completion-code
-// scenario: selium-guest-macros/poll-export-completion-signal/poll-export-reports-running-while-parked
-// scenario: selium-guest-macros/poll-export-completion-signal/no-poll-export-in-native-builds

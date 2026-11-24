@@ -69,6 +69,8 @@ fn accounting_descriptor(
     }
 }
 
+// scenario: selium-accountant/per-second-metering-sampling/sample-covers-all-live-processes
+// scenario: selium-accountant/plan-and-overage-ceilings/hard-ceiling-preempted
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the discovery and accountant guests built for wasm32-unknown-unknown"]
 async fn accounting_loop_reaches_the_ledger_and_denies_over_ceiling() {

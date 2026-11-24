@@ -5,11 +5,9 @@
 
 use std::{
     pin::Pin,
-    sync::atomic::{Ordering, fence},
     task::{Context, Poll},
 };
 
-use selium_memory::FrameHeader;
 use selium_wire::error::{Error, Result};
 use tokio::io::{AsyncRead, ReadBuf};
 
@@ -371,44 +369,23 @@ impl AsyncRead for BlockingReader {
             return Poll::Ready(Err(std::io::Error::other(Error::Overwritten)));
         }
 
-        fence(Ordering::Acquire);
-
-        let header = match read_header(&self.region, self.pos, mask) {
-            Ok(h) => h,
+        let frame = match crate::layout::read_frame(
+            self.region.mapping().backend(),
+            self.pos,
+            mask,
+            capacity,
+        ) {
+            Ok(frame) => frame,
             Err(e) => return Poll::Ready(Err(std::io::Error::other(e))),
         };
-
-        if !header.is_ready() {
-            // Frame not yet committed; register for generation wake.
-            let cur_gen = self.region.load_generation().unwrap_or(0);
-            if !selium_memory::register_generation_wait(
-                self.region.region_id(),
-                cur_gen,
-                cx.waker(),
-            ) {
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-            // Check-after-register: the frame may have been committed
-            // between our readiness check and the registration.
-            if self.region.load_generation().ok() != Some(cur_gen) {
-                cx.waker().wake_by_ref();
-            }
+        let Some((header, payload)) = frame else {
+            park_uncommitted(&self.region, cx);
             return Poll::Pending;
-        }
+        };
 
         let frame_size = header.frame_size();
-        if frame_size > capacity {
-            return Poll::Ready(Err(std::io::Error::other(Error::InvalidFrame(format!(
-                "frame size {frame_size} exceeds capacity {capacity}"
-            )))));
-        }
-
-        // Read the full frame (header + payload) from the ring buffer.
-        let frame_bytes = match read_raw(&self.region, self.pos, frame_size, mask) {
-            Ok(b) => b,
-            Err(e) => return Poll::Ready(Err(std::io::Error::other(e))),
-        };
+        let mut frame_bytes = header.encode().to_vec();
+        frame_bytes.extend_from_slice(&payload);
 
         if let Err(e) = self.advance(frame_size) {
             return Poll::Ready(Err(std::io::Error::other(e)));
@@ -552,43 +529,23 @@ impl AsyncRead for Reader {
             return Poll::Ready(Err(std::io::Error::other(Error::Overwritten)));
         }
 
-        fence(Ordering::Acquire);
-
-        let header = match read_header(&self.region, self.pos, mask) {
-            Ok(h) => h,
+        let frame = match crate::layout::read_frame(
+            self.region.mapping().backend(),
+            self.pos,
+            mask,
+            capacity,
+        ) {
+            Ok(frame) => frame,
             Err(e) => return Poll::Ready(Err(std::io::Error::other(e))),
         };
-
-        if !header.is_ready() {
-            let cur_gen = self.region.load_generation().unwrap_or(0);
-            if !selium_memory::register_generation_wait(
-                self.region.region_id(),
-                cur_gen,
-                cx.waker(),
-            ) {
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-            // Check-after-register: the frame may have been committed
-            // between our readiness check and the registration.
-            if self.region.load_generation().ok() != Some(cur_gen) {
-                cx.waker().wake_by_ref();
-            }
+        let Some((header, payload)) = frame else {
+            park_uncommitted(&self.region, cx);
             return Poll::Pending;
-        }
+        };
 
         let frame_size = header.frame_size();
-        if frame_size > capacity {
-            return Poll::Ready(Err(std::io::Error::other(Error::InvalidFrame(format!(
-                "frame size {frame_size} exceeds capacity {capacity}"
-            )))));
-        }
-
-        // Read the full frame (header + payload) from the ring buffer.
-        let frame_bytes = match read_raw(&self.region, self.pos, frame_size, mask) {
-            Ok(b) => b,
-            Err(e) => return Poll::Ready(Err(std::io::Error::other(e))),
-        };
+        let mut frame_bytes = header.encode().to_vec();
+        frame_bytes.extend_from_slice(&payload);
 
         self.pos = match self.pos.checked_add(frame_size) {
             Some(p) => p,
@@ -646,44 +603,17 @@ impl WeakReader {
     }
 }
 
-pub(crate) fn read_raw(region: &ChannelRegion, pos: u64, len: u64, mask: u64) -> Result<Vec<u8>> {
-    if len == 0 {
-        return Ok(Vec::new());
+fn park_uncommitted(region: &ChannelRegion, cx: &mut Context<'_>) {
+    let generation = region.load_generation().unwrap_or(0);
+    if !selium_memory::register_generation_wait(region.region_id(), generation, cx.waker()) {
+        cx.waker().wake_by_ref();
+        return;
     }
-    if len > region.capacity() {
-        return Err(Error::InvalidFrame(format!(
-            "read length {len} exceeds ring capacity {}",
-            region.capacity()
-        )));
+    // Check-after-register: the frame may have committed between the
+    // canonical readiness check and wait registration.
+    if region.load_generation().ok() != Some(generation) {
+        cx.waker().wake_by_ref();
     }
-
-    let raw_pos = region.data_offset() + (pos & mask);
-    let ring_end = region.data_offset() + region.capacity();
-    let wrap = raw_pos + len > ring_end;
-    if !wrap {
-        return region.mapping().read(raw_pos, len).map_err(Error::from);
-    }
-
-    let tail_len = ring_end.saturating_sub(raw_pos);
-    let head_len = len - tail_len;
-    let mut buf = Vec::with_capacity(len as usize);
-    if tail_len > 0 {
-        let part = region.mapping().read(raw_pos, tail_len)?;
-        buf.extend_from_slice(&part);
-    }
-    if head_len > 0 {
-        let part = region.mapping().read(region.data_offset(), head_len)?;
-        buf.extend_from_slice(&part);
-    }
-    Ok(buf)
-}
-
-fn read_header(region: &ChannelRegion, pos: u64, mask: u64) -> Result<FrameHeader> {
-    let header_bytes = read_raw(region, pos, FrameHeader::ENCODED_SIZE as u64, mask)?;
-    FrameHeader::decode(&header_bytes).map_err(|e| match e {
-        selium_memory::MemoryError::CorruptedHeader => Error::TornFrame { position: pos },
-        other => Error::InvalidFrame(other.to_string()),
-    })
 }
 
 #[cfg(test)]

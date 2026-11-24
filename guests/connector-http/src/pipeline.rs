@@ -36,7 +36,7 @@ use tracing::warn;
 use crate::{
     resolve::ResolverHandle,
     wire_out::{
-        bad_gateway_response, internal_error_response, not_found_response,
+        bad_gateway_response, bad_request_response, internal_error_response, not_found_response,
         payload_too_large_response, write_chunk, write_response, write_stream_end,
         write_stream_head,
     },
@@ -386,6 +386,17 @@ async fn dispatch_loop<R, F>(
                         break;
                     }
                     Err(CodecError::PartialClosed) => break,
+                    Err(CodecError::MalformedRequest) => {
+                        // Invalid framing cannot be parsed or safely skipped:
+                        // reject and close rather than reinterpret the
+                        // remaining bytes as another request.
+                        let tag = next_seq;
+                        next_seq += 1;
+                        drop(reply_tx
+                            .send((tag, ReplyEvent::Complete(bad_request_response())))
+                            .await);
+                        break;
+                    }
                     Err(CodecError::Io(error)) => {
                         warn!("http-connector: read error: {error}");
                         let tag = next_seq;

@@ -97,6 +97,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
             ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
+            ),
         ],
         tenant: None,
         discovery_service: true,
@@ -175,6 +179,11 @@ fn probe_descriptor(route: &str, mode: u64) -> SystemGuestDescriptor {
     }
 }
 
+// scenario: guest-context/boot-time-service-convergence/consumer-converges-on-a-service-that-publishes-later
+// scenario: guest-context/boot-time-service-convergence/provider-never-appears
+// scenario: guest-context/boot-time-service-convergence/a-genuine-miss-is-not-retried-on-the-request-path
+// scenario: guest-context/context-lookup-convenience-method/guest-resolves-an-unknown-uri-via-lookup
+// scenario: guest-context/context-register-convenience-method/guest-registers-a-uri-via-context
 /// A consumer started before its provider converges on the later registration.
 #[test]
 #[ignore = "requires the discovery and discovery-probe guests built for wasm32-unknown-unknown"]
@@ -248,6 +257,3 @@ fn spawn_provider(runtime: &Runtime, route: &str) -> u64 {
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: guest-context/boot-time-service-convergence/consumer-converges-on-a-service-that-publishes-later
-// scenario: guest-context/boot-time-service-convergence/provider-never-appears
-// scenario: guest-context/boot-time-service-convergence/a-genuine-miss-is-not-retried-on-the-request-path

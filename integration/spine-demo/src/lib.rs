@@ -7,10 +7,8 @@
 
 use anyhow::Context as _;
 use selium_guest::entrypoint;
-use selium_shm::{Channel, ChannelBackpressure, transport::ShmTransport};
-use selium_wire::{
-    framed::{FramedRead, FramedWrite},
-    pubsub::{Publisher, Subscriber},
+use selium_guest::{
+    Channel, ChannelBackpressure, FramedRead, FramedWrite, Publisher, ShmTransport, Subscriber,
 };
 
 /// Channel capacity for the pub/sub round trip.

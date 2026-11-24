@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use selium_abi::{ActivityEvent, Capability, CapabilityGrant, ResourceIdentity, ResourceSelector};
 use selium_shm::{Channel, ChannelBackpressure, transport::ShmTransport};
@@ -32,6 +35,28 @@ pub(crate) struct LoadedGuest {
     pub(crate) entrypoint_results: Vec<WasmValue>,
 }
 
+/// Validates the passive module declaration before instantiation, start
+/// functions, entrypoints, or hostcall request decoding can run.
+pub(crate) fn negotiate_abi_version(probe: &crate::module_probe::ModuleProbe) -> Result<()> {
+    use crate::module_probe::AbiVersionDeclaration;
+
+    if !probe.uses_hostcalls {
+        return Ok(());
+    }
+    match probe.abi_version {
+        AbiVersionDeclaration::Version(selium_abi::SELIUM_ABI_VERSION) => Ok(()),
+        AbiVersionDeclaration::Version(guest) => Err(Error::AbiVersionMismatch {
+            host: selium_abi::SELIUM_ABI_VERSION,
+            guest,
+        }),
+        AbiVersionDeclaration::Missing | AbiVersionDeclaration::Invalid => {
+            Err(Error::MissingAbiNegotiation {
+                host: selium_abi::SELIUM_ABI_VERSION,
+            })
+        }
+    }
+}
+
 impl Runtime {
     /// Boots all configured system guests in declaration order, in a single
     /// pass.
@@ -58,8 +83,9 @@ impl Runtime {
             .metering_ticker_started
             .swap(true, std::sync::atomic::Ordering::SeqCst)
         {
-            let runtime = self.clone();
-            std::thread::Builder::new()
+            let runtime = self.background_handle();
+            let stop = Arc::clone(&self.metering_ticker_stop);
+            let handle = std::thread::Builder::new()
                 .name("selium-metering-ticker".to_string())
                 .spawn(move || {
                     // The CPU budget refresh runs on the same ticker: each live
@@ -69,12 +95,25 @@ impl Runtime {
                     // *window* itself re-anchors only when the wall-clock
                     // minute rolls (see `refresh_cpu_budgets`).
                     loop {
-                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        let mut stopped = stop.0.lock();
+                        if *stopped {
+                            break;
+                        }
+                        stop.1
+                            .wait_for(&mut stopped, std::time::Duration::from_secs(1));
+                        if *stopped {
+                            break;
+                        }
+                        drop(stopped);
+                        let Some(runtime) = runtime.upgrade() else {
+                            break;
+                        };
                         runtime.metering_tick();
                         runtime.refresh_cpu_budgets();
                     }
                 })
                 .map_err(|error| Error::Host(format!("metering ticker spawn failed: {error}")))?;
+            *self.metering_ticker_handle.lock() = Some(handle);
         }
         let (discovery_feed_region_id, discovery_listener_shared_id) = if config.start_discovery {
             let (feed_region_id, listener_shared_id) = self.setup_discovery()?;
@@ -173,7 +212,8 @@ impl Runtime {
     /// the feed region id and listener shared id so bootstrap can wire them into
     /// the discovery guest descriptor.
     fn setup_discovery(&self) -> Result<(u64, u64)> {
-        let feed_channel = Channel::create_with_backpressure(
+        let feed_channel = Channel::create_with_provider(
+            self.region_provider.as_ref(),
             64 * 1024,
             ChannelBackpressure::Drop,
             selium_abi::ResourceKind::PubSubTopic,
@@ -234,12 +274,33 @@ impl Runtime {
             selium_abi::ResourceClass::Process,
             process.local_id,
         );
+        if descriptor.discovery_service
+            && let Some(listener_shared_id) = self.discovery_listener_shared_id()
+        {
+            // The host minted the bootstrap listener before the guest existed.
+            // Assign its shared ownership before the entrypoint publishes it,
+            // so discovery's normal host-authority and route-claim checks have
+            // a real owner to admit rather than a guest-side bypass.
+            self.claim_shared_resource(
+                process.local_id,
+                selium_abi::ResourceClass::HostQueue,
+                listener_shared_id,
+            );
+            self.resource_tenants.lock().insert(
+                (selium_abi::ResourceClass::HostQueue, listener_shared_id),
+                String::new(),
+            );
+        }
 
         // Shared-page fast-path detection: probe the guest's module bytes
         // once at spawn (shared memory declaration + atomic notify
         // opcodes). Region attach consumes the result; no user-facing
         // configuration exists (see the shared-page-fastpath spec).
         let fastpath = crate::module_probe::probe(&descriptor.module_bytes);
+        if let Err(error) = negotiate_abi_version(&fastpath) {
+            self.cleanup_failed_process(process.local_id)?;
+            return Err(error);
+        }
         self.record_process_fastpath(process.local_id, fastpath.fast_path_capable());
         // Multithreaded execution is opt-in per guest via the module: a guest
         // exporting the worker entry runs on a dedicated worker pool (AOT);
@@ -526,6 +587,8 @@ mod tests {
         drop(std::fs::remove_dir_all(&dir));
     }
 
+    // scenario: selium-runtime/state-root-boot/usage-reconstructed-at-boot
+    // scenario: selium-abi/tenant-volume-usage-hostcall/reading-survives-a-restart
     #[test]
     fn resident_volume_bytes_seed_the_tenant_usage_at_boot() {
         let dir = temp_state_dir("usage-seed");
@@ -576,6 +639,8 @@ mod tests {
         .expect("compile runtime bridge wat")
     }
 
+    // scenario: selium-runtime/wasmtiny-backed-guest-execution/runtime-starts-a-guest-module
+    // scenario: selium-kernel/primitive-process-lifecycle/runtime-starts-configured-guest-process
     #[test]
     fn runtime_bootstraps_guests_from_config() {
         let runtime = Runtime::default();
@@ -611,6 +676,7 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/entrypoint-failure-detection/void-entrypoint-no-return-value-proceeds-normally
     #[test]
     fn declaration_order_is_the_boot_order() {
         // Guests spawn in declaration order in a single pass; there is no
@@ -686,6 +752,7 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/protocol-handler-route-claims/handler-claim-is-host-provisioned
     #[test]
     fn handler_schemes_provision_route_claims() {
         let runtime = Runtime::default();
@@ -738,6 +805,7 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/entrypoint-failure-detection/zero-exit-code-proceeds-normally
     #[test]
     fn guest_with_i32_zero_entrypoint_result_bootstraps_normally() {
         let runtime = Runtime::default();
@@ -772,6 +840,7 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/entrypoint-failure-detection/non-zero-exit-code-fails-bootstrap
     #[test]
     fn guest_with_i32_one_entrypoint_result_fails_with_entrypoint_failed() {
         let runtime = Runtime::default();
@@ -803,6 +872,8 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/discovery-enabled-bootstrap/readiness-is-per-guest
+    // scenario: route-watch/health-is-published-state/missing-health-is-not-a-boot-failure
     #[test]
     fn bootstrap_does_not_gate_on_readiness() {
         // A guest that never registers a serving route still boots: there is

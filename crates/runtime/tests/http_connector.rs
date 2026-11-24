@@ -30,6 +30,7 @@ use selium_runtime::{Runtime, RuntimeConfig, SystemGuestDescriptor};
 ///   can create a listener and receive forwarded connections.
 /// - A guest without a resolve basis (no discovery recording) is denied
 ///   attach to the connection region.
+// scenario: http-connector/zero-network-grant-app-guests/app-guest-serves-with-no-network-grant
 #[test]
 fn app_guest_without_network_grants() {
     let runtime = Runtime::default();
@@ -212,6 +213,8 @@ fn app_guest_without_network_grants() {
 /// buffering without bound. The connector-level behaviour this produces —
 /// pausing socket reads until capacity frees — is asserted in
 /// `selium-connector-http`'s pipeline tests.
+// scenario: selium-guest/strong-writer-backpressure-via-asyncwrite/writer-buffer-full
+// scenario: http-connector/edge-backpressure-honesty/slow-app-guest
 #[tokio::test]
 async fn full_ring_parks_writes_until_consumed() {
     drop(selium_memory::set_region_provider(Box::new(
@@ -263,11 +266,12 @@ async fn full_ring_parks_writes_until_consumed() {
             )
             .await
     });
-    let parked = tokio::time::timeout(std::time::Duration::from_millis(100), &mut write_handle)
-        .await
-        .is_err();
+    // Let the spawned writer reach its first await. On this current-thread
+    // runtime, completion would now be observable; no wall-clock grace period
+    // is needed to distinguish a parked write from a finished one.
+    tokio::task::yield_now().await;
     assert!(
-        parked,
+        !write_handle.is_finished(),
         "a write past ring capacity must park, not complete or overflow"
     );
 
@@ -316,6 +320,9 @@ async fn full_ring_parks_writes_until_consumed() {
 ///    region id through the queue.
 /// 4. App guest receives the region id and attaches to the region.
 /// 5. Both guests communicate through the shared region.
+// scenario: connector-channel-forwarding/route-resolution-to-typed-session/forwarded-request-reaches-registered-guest
+// scenario: http-connector/discovery-based-route-resolution/request-routed-to-registered-guest
+// scenario: guest-context/context-lookup-convenience-method/guest-resolves-a-known-uri-via-lookup
 #[test]
 fn http_connector_golden_path() {
     let runtime = Runtime::default();
@@ -491,6 +498,7 @@ fn http_connector_golden_path() {
 /// correlation map relies on to emit responses in request order; the
 /// wire-level ordering and distinct-tag behaviour is asserted in
 /// `selium-connector-http`'s pipeline tests.
+// scenario: http-connector/typed-forwarding-with-tag-correlation/concurrent-keep-alive-requests
 #[test]
 fn keep_alive_ordering_preserved() {
     let runtime = Runtime::default();
@@ -659,6 +667,11 @@ fn spawn_guest(runtime: &Runtime, name: &str, grants: Vec<CapabilityGrant>) -> P
 /// handoff) nor holds an `ExplicitResource` grant for it. That is the
 /// guarantee that keeps connector-served channels private to exactly
 /// {connector, app guest}.
+// scenario: secure-rpc/bidirectional-rpc-session-isolation/malicious-guest-cannot-access-another-tenant-s-session
+// scenario: connector-channel-forwarding/route-resolution-to-typed-session/session-establishment-contacts-only-the-resolved-guest
+// scenario: connector-channel-forwarding/queue-derived-receiver-rights/zero-grant-serving-guest-attaches-session-region
+// scenario: connector-channel-forwarding/queue-derived-receiver-rights/third-party-cannot-claim-handoff-rights
+// scenario: http-connector/zero-network-grant-app-guests/ungranted-third-party-cannot-intercept
 #[test]
 fn ungranted_region_attach_denied() {
     let runtime = Runtime::default();
@@ -824,16 +837,3 @@ fn ungranted_region_attach_denied() {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `http-connector` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: http-connector/edge-termination-of-http-1-1-over-tls/browser-grade-request
-// scenario: http-connector/edge-termination-of-http-1-1-over-tls/missing-certificate-material
-// scenario: http-connector/discovery-based-route-resolution/request-routed-to-registered-guest
-// scenario: http-connector/discovery-based-route-resolution/request-routed-via-a-registered-domain
-// scenario: http-connector/discovery-based-route-resolution/apex-request-routed-to-the-root-service
-// scenario: http-connector/discovery-based-route-resolution/no-route-registered
-// scenario: http-connector/typed-forwarding-with-tag-correlation/concurrent-keep-alive-requests
-// scenario: http-connector/zero-network-grant-app-guests/app-guest-serves-with-no-network-grant
-// scenario: http-connector/zero-network-grant-app-guests/ungranted-third-party-cannot-intercept
-// scenario: http-connector/edge-backpressure-honesty/slow-app-guest
-// scenario: http-connector/streaming-bodies-via-server-streaming-rpc/chunked-response-streamed-to-the-wire
-// scenario: http-connector/streaming-bodies-via-server-streaming-rpc/oversized-request-rejected-at-the-edge
-// scenario: http-connector/raw-path-coexistence/byo-framework-alongside-connector

@@ -4,9 +4,9 @@
 `selium-guest` SHALL provide safe, ergonomic handle types over the shared memory ABI primitives (`alloc_region`, `free_region`, `attach_region`, `alloc_slot`, `write_slot`, `free_slot`) so guest code does not manipulate raw hostcall payloads directly for common operations.
 
 The architecture SHALL layer region management as follows:
-- `SharedRegion` (in `memory.rs`) SHALL be the canonical region lifecycle manager, wrapping `alloc_region`, `attach_region`, and `free_region` hostcalls. It SHALL provide `allocate()`, `attach()`, `free()`, and `mapping()` methods.
-- `RegionMapping` (in `memory.rs`) SHALL be the low-level memory access layer, providing typed read/write/atomic operations on a raw pointer derived from a `SharedRegion`.
-- `ChannelRegion` (in `io/region.rs`) SHALL wrap a `SharedRegion` and `RegionMapping` to provide ring-buffer coordination fields (generation counter, `next_tail`, reader/writer slots). It SHALL retain the underlying `SharedRegion` via `shared_region()` accessor so that hostcall-mediated slot operations can be delegated.
+- `SharedRegion` (in `crates/memory/src/lib.rs`) SHALL be the canonical region lifecycle manager, wrapping `alloc_region`, `attach_region`, and `free_region` hostcalls. It SHALL provide `allocate()`, `attach()`, `free()`, and `mapping()` methods.
+- `RegionMapping` (in `crates/memory/src/lib.rs`) SHALL be the low-level memory access layer, providing typed read/write/atomic operations on a raw pointer derived from a `SharedRegion`.
+- `ChannelRegion` (in `crates/shm/src/region.rs`) SHALL wrap a `SharedRegion` and `RegionMapping` to provide ring-buffer coordination fields (generation counter, `next_tail`, reader/writer slots). It SHALL retain the underlying `SharedRegion` via `shared_region()` accessor so that hostcall-mediated slot operations can be delegated.
 
 Reader handles (`Reader`, `BlockingReader`, `FramedRead<R>`) SHALL update their reader position through `ChannelRegion::write_table_slot` which delegates to `SharedRegion::write_table_slot` and ultimately to hostcalls. The handle types SHALL be unaware of whether slot writes are direct or hostcall-mediated.
 
@@ -30,6 +30,26 @@ Reader handles (`Reader`, `BlockingReader`, `FramedRead<R>`) SHALL update their 
 #### Scenario: Consumer weak reader upgrades to strong
 - **WHEN** a consumer calls `WeakReader::upgrade()`
 - **THEN** a new reader slot SHALL be allocated via `alloc_slot` hostcall with the current tail position, and a `Reader` with the allocated slot index SHALL be returned
+
+#### Scenario: Strong reader downgrades to weak
+- **WHEN** a caller invokes `reader.downgrade()`
+- **THEN** the reader slot SHALL be released (set to 0 in shared `reader_slots`) and a `WeakReader` at the same position SHALL be returned
+
+
+#### Scenario: Weak reader upgrades to strong
+- **WHEN** a caller invokes `weak_reader.upgrade()`
+- **THEN** a new reader slot SHALL be allocated at the current position and a `Reader` SHALL be returned
+
+
+#### Scenario: Strong writer downgrades to weak
+- **WHEN** a caller invokes `writer.downgrade()`
+- **THEN** the writer count SHALL be decremented and a `WeakWriter` with the same writer ID SHALL be returned
+
+
+#### Scenario: Weak writer upgrades to strong
+- **WHEN** a caller invokes `weak_writer.upgrade()`
+- **THEN** the writer count SHALL be incremented and a `Writer` with the same writer ID SHALL be returned
+
 
 ## ADDED Requirements
 

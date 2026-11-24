@@ -14,6 +14,7 @@ use selium_runtime::Runtime;
 mod common;
 mod failure_common;
 
+// scenario: verification-gate/pack-exclusions-are-explicit-and-narrow/crash-versus-graceful-failure-test-runs-in-the-pack
 #[test]
 #[ignore = "requires the discovery and discovery-probe guests built for wasm32-unknown-unknown"]
 fn crash_and_graceful_exit_both_revoke_the_registration() {

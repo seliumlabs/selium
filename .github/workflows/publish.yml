@@ -9,9 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  crates-io:
-    name: Publish to crates.io
+  # The same Linux gate that merge requires. Publication never runs from an
+  # untested tree: a tag that cannot pass the gate produces no release.
+  gate:
+    name: Release gate
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
@@ -20,18 +23,55 @@ jobs:
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: nightly
+          components: rust-src
+          targets: wasm32-unknown-unknown
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - name: install wasm-tools
+        run: cargo install wasm-tools --locked --no-default-features --features print
+        env:
+          RUSTFLAGS: ""
+      - name: install OpenSpec (pinned)
+        run: npm install -g @fission-ai/openspec
+      - name: verification gate
+        run: scripts/gate.sh
+
+  crates-io:
+    name: Publish to crates.io
+    needs: gate
+    runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.99.1
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - name: cargo login
         run: echo ${{ secrets.CRATES_TOKEN }} | cargo login
 
-      - name: cargo publish
-        run: cargo publish --workspace --keep-going
+      # Ordered, stop-on-failure publication, gated on the release gate above.
+      # Kept disabled until tasks 12.1-12.5 in harden-platform-foundations are
+      # satisfied (the workspace still has repository-only patches for the
+      # wasmtiny engine and the web-time fork).
+      - name: publish (ordered)
+        if: false
+        run: scripts/publish.sh "$GITHUB_REF_NAME" --gate-passed
 
   artifacts:
-    name: Publish release artifacts
+    name: Package and smoke (${{ matrix.target }})
+    needs: gate
     runs-on: ${{ matrix.os }}
     strategy:
+      # One target failing must not hide the others: every row reports its own
+      # result, and the support-matrix job below withholds the release claim.
       fail-fast: false
       matrix:
         include:
@@ -50,6 +90,9 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - uses: actions/checkout@v7
+      # The checkout's `rust-toolchain.toml` selects 1.99.1. Install the host
+      # cross target and wasm32 for the packaged, target-independent smoke
+      # guest; the smoke itself never builds from the checkout.
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
           toolchain: stable
@@ -59,35 +102,92 @@ jobs:
       - name: cargo build
         run: cargo build --release -p selium-runtime --target ${{ matrix.target }}
 
+      - name: build the packaged smoke guest
+        run: cargo build --target wasm32-unknown-unknown -p selium-spine-demo
+
       - name: package artifact (nix)
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           target_dir="target/${{ matrix.target }}/release"
           bin="selium-runtime"
-          out="selium-runtime-${{ matrix.target }}"
+          out="selium-runtime-component-${{ matrix.target }}"
           mkdir -p dist
           cp "${target_dir}/${bin}" "dist/${bin}"
-          tar -C dist -czf "${out}.tar.gz" "${bin}"
+          cp target/wasm32-unknown-unknown/debug/selium_spine_demo.wasm dist/
+          tar -C dist -czf "${out}.tar.gz" "${bin}" selium_spine_demo.wasm
 
       - name: package artifact (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $targetDir = "target\\${{ matrix.target }}\\release"
+          $targetDir = "target\${{ matrix.target }}\release"
           $bin = "selium-runtime.exe"
-          $out = "selium-runtime-${{ matrix.target }}"
+          $out = "selium-runtime-component-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item "$targetDir\\$bin" "dist\\$bin"
+          Copy-Item "$targetDir\$bin" "dist\$bin"
+          Copy-Item "target\wasm32-unknown-unknown\debug\selium_spine_demo.wasm" "dist\"
           Push-Location dist
-          Compress-Archive -Path "$bin" -DestinationPath "..\\$out.zip"
+          Compress-Archive -Path "$bin","selium_spine_demo.wasm" -DestinationPath "..\$out.zip"
           Pop-Location
 
-      - name: upload release assets
+      # Startup plus a real guest bootstrap, not just `--version`: this is the
+      # support claim for the target.
+      - name: smoke the packaged artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -x dist/selium-runtime ]; then
+            bin=dist/selium-runtime
+          else
+            bin=dist/selium-runtime.exe
+          fi
+          scripts/smoke-artifact.sh "$bin"
+
+      # Stage only: no GitHub release asset is uploaded from a matrix row. The
+      # aggregate release job below publishes assets after every target passes.
+      - name: stage verified artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            selium-runtime-component-*.tar.gz
+            selium-runtime-component-*.zip
+          if-no-files-found: error
+
+  # A failed target withholds the release's support claim while the matrix
+  # above still reports every other target accurately.
+  support-matrix:
+    name: Release support matrix
+    needs: artifacts
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every advertised target built and smoked
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.artifacts.result }}" != "success" ]; then
+            echo "artifact matrix failed: at least one advertised target did not build or smoke, so the release's support claim is withheld" >&2
+            exit 1
+          fi
+          echo "every advertised target built, started, and bootstrapped a guest"
+
+  release-assets:
+    name: Upload the complete release
+    needs: support-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: download every staged target artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: upload release assets only after the whole matrix passed
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            selium-runtime-*.tar.gz
-            selium-runtime-*.zip
+            dist/selium-runtime-component-*.tar.gz
+            dist/selium-runtime-component-*.zip

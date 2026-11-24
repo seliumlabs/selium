@@ -95,10 +95,20 @@ pub struct QuicStream {
 pub enum QuicServeError {
     /// Failed to accept an incoming stream.
     #[error("accept: {0}")]
-    Accept(String),
+    Accept(#[from] GuestError),
     /// The remote (connector) closed the listener.
     #[error("listener closed")]
     Closed,
+}
+
+impl QuicServeError {
+    /// Returns the structured ABI code when acceptance failed in the host.
+    pub fn abi_code(&self) -> Option<selium_abi::AbiErrorCode> {
+        match self {
+            Self::Accept(error) => error.abi_code(),
+            Self::Closed => None,
+        }
+    }
 }
 
 impl QuicServe {
@@ -126,8 +136,7 @@ impl QuicServe {
     /// A guest running in the root/system tenant (an empty tenant label)
     /// additionally requires a host-issued route claim to serve.
     pub async fn bind(ctx: &mut Context, path: &str) -> Result<Self, GuestError> {
-        let mut listener = ResourceListener::create()
-            .map_err(|e| GuestError::Host(format!("create listener: {e}")))?;
+        let mut listener = ResourceListener::create()?;
         super::pin_to_scheme_handler(ctx, &mut listener, QUIC_SCHEME).await?;
 
         let target = quic_target(&listener);
@@ -148,14 +157,8 @@ impl QuicServe {
     /// channel. The connector delivers one region per accepted bidirectional
     /// QUIC stream.
     pub async fn accept(&mut self) -> Result<QuicStream, QuicServeError> {
-        let incoming = self
-            .listener
-            .recv()
-            .await
-            .map_err(|e| QuicServeError::Accept(format!("recv: {e}")))?;
-
-        let stream = ByteStream::attach_blocking(incoming.shared_id)
-            .map_err(|e| QuicServeError::Accept(format!("attach stream: {e}")))?;
+        let incoming = self.listener.recv().await?;
+        let stream = ByteStream::attach_blocking(incoming.shared_id)?;
 
         Ok(QuicStream { inner: stream })
     }
@@ -245,6 +248,23 @@ mod tests {
         drop(selium_memory::set_region_provider(Box::new(
             selium_memory::HeapRegionProvider::new(),
         )));
+    }
+
+    #[test]
+    fn accept_errors_keep_their_structured_abi_code() {
+        let error = QuicServeError::from(GuestError::Hostcall {
+            code: selium_abi::AbiErrorCode::PermissionDenied,
+            message: "attach denied".to_string(),
+        });
+        assert_eq!(
+            error.abi_code(),
+            Some(selium_abi::AbiErrorCode::PermissionDenied)
+        );
+        assert!(matches!(
+            &error,
+            QuicServeError::Accept(GuestError::Hostcall { message, .. })
+                if message == "attach denied"
+        ));
     }
 
     #[test]

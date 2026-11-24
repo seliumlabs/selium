@@ -66,6 +66,7 @@ async fn awaiting_peer_read_only_transport_parks_before_attachment() {
     };
     assert!(!closed, "an unattached peer is not a closed peer");
 }
+// scenario: channel-wake-wait/wakeable-channel-writes-park-backpressure/parked-writer-resumes-after-reader-advance
 
 #[tokio::test]
 async fn bidi_stream_backpressure_no_spin_no_loss() {
@@ -355,6 +356,14 @@ fn expect_write_error(transport: &mut ShmTransport) -> std::io::Error {
         }
     }
 }
+// scenario: transport-abstraction/messagetransport-trait/transport-signals-data-available
+// scenario: transport-abstraction/frame-format-transport-independent/frame-written-over-shm-is-readable-over-shm
+// scenario: framed-io/framedread-type/read-a-complete-frame
+// scenario: framed-io/framedwrite-type/write-a-framed-payload
+// scenario: framed-io/framedread-framedwrite-generic-over-transport/framedread-wraps-an-shm-transport
+// scenario: framed-io/messagetransport-composes-asyncread-asyncwrite/frame-codec-reads-header-via-asyncread
+// scenario: framed-io/messagetransport-composes-asyncread-asyncwrite/frame-codec-writes-payload-via-asyncwrite
+// scenario: framed-io/waker-honest-async-read-path/generation-tracked-read-is-unchanged
 
 #[test]
 fn framed_write_read_round_trip_over_shm_transport() {
@@ -399,6 +408,8 @@ fn make_park_channel(capacity: u64) -> Channel {
     .expect("create park channel")
 }
 
+// scenario: selium-guest/pub-sub-generation-change-detection/normal-publishing-within-capacity
+// scenario: transport-abstraction/patterns-generic-over-messagetransport/publisher-is-instantiated-with-shm-transport
 #[tokio::test]
 async fn pubsub_round_trip_over_shm_transport() {
     install_heap_provider();
@@ -477,6 +488,7 @@ async fn rpc_round_trip_over_shm_transport() {
     server_handle.await.expect("server task");
 }
 
+// scenario: secure-rpc/directional-session-membership/server-closes-gracefully
 #[tokio::test]
 async fn server_drop_sends_cancel_to_client() {
     install_heap_provider();
@@ -551,6 +563,7 @@ async fn server_drop_sends_cancel_to_client() {
     server_handle.await.expect("server task");
 }
 
+// scenario: selium-rpc/streaming-backpressure-honesty/slow-consumer
 #[tokio::test]
 async fn server_stream_backpressure_small_ring_no_item_loss() {
     install_heap_provider();
@@ -610,6 +623,7 @@ async fn server_stream_backpressure_small_ring_no_item_loss() {
     server_handle.await.expect("server task");
 }
 
+// scenario: selium-rpc/stream-cancellation/cancel-stops-production
 #[tokio::test]
 async fn server_stream_cancel_stops_production() {
     install_heap_provider();
@@ -743,6 +757,7 @@ async fn server_stream_drop_cancels() {
     server_handle.await.expect("server task");
 }
 
+// scenario: selium-rpc/server-streaming-rpc/mid-stream-error
 #[tokio::test]
 async fn server_stream_error_mid_stream() {
     install_heap_provider();
@@ -997,6 +1012,9 @@ async fn stale_cancel_frame_skipped_for_next_request() {
     server_handle.await.expect("server task");
 }
 
+// scenario: transport-abstraction/messagetransport-trait/transport-signals-peer-closed
+// scenario: transport-abstraction/transport-error-abstraction/rpcerror-from-transport-error
+// scenario: secure-rpc/directional-session-membership/client-closes-gracefully
 #[tokio::test]
 async fn streaming_client_drop_closes_the_server_session() {
     install_heap_provider();
@@ -1028,6 +1046,7 @@ async fn streaming_client_drop_closes_the_server_session() {
         .expect("server task");
 }
 
+// scenario: secure-rpc/directional-session-membership/live-idle-peer-remains-connected
 #[tokio::test]
 async fn streaming_live_idle_peer_remains_connected() {
     install_heap_provider();
@@ -1098,6 +1117,7 @@ fn streaming_pair(
     (client, server)
 }
 
+// scenario: secure-rpc/streaming-receive-observes-peer-closure/streaming-server-drops-without-an-end-frame
 #[tokio::test]
 async fn streaming_server_drop_without_terminal_item_ends_the_stream() {
     install_heap_provider();
@@ -1224,7 +1244,3 @@ async fn streams_never_report_overwritten() {
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: secure-rpc/directional-session-membership/client-closes-gracefully
-// scenario: secure-rpc/directional-session-membership/server-closes-gracefully
-// scenario: secure-rpc/directional-session-membership/live-idle-peer-remains-connected
-// scenario: secure-rpc/streaming-receive-observes-peer-closure/streaming-server-drops-without-an-end-frame

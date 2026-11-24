@@ -121,6 +121,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
             ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
+            ),
         ],
         tenant: None,
         discovery_service: true,
@@ -149,6 +153,9 @@ fn drain_logs(runtime: &Runtime, process_id: u64) -> Vec<String> {
 // The connector's resolve timeout uses the guest `Timer` (a `Sleep` hostcall),
 // whose host-side wake is driven by `tokio::spawn`, so the test provides a
 // Tokio runtime.
+// scenario: guest-networking/tcp-stream-via-shared-memory-ring-buffer/guest-connects-to-remote-tcp-endpoint
+// scenario: guest-context/attachability-precedes-route-publication/consumer-attaches-on-first-route-appearance
+// scenario: dns-connector/typed-egress-resolution/successful-resolution
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the discovery, connector and demo guests built for wasm32-unknown-unknown"]
 async fn guest_resolves_via_connector_then_connects_by_literal() {
@@ -332,4 +339,3 @@ fn wait_for_logs(
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: guest-context/attachability-precedes-route-publication/consumer-attaches-on-first-route-appearance

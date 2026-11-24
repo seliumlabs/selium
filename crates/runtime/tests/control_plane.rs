@@ -66,7 +66,19 @@ fn bootstrap_one(
         })
         .expect("bootstrap extra guest")
 }
+// scenario: selium-store/store-guest-crate/store-bootstraps-from-descriptor
+// scenario: selium-store/served-typed-store-surface/serving-route-registered
 
+// scenario: control-plane/control-plane-guest-crate/control-plane-bootstraps-from-descriptor
+// scenario: control-plane/served-typed-control-surface/serving-route-registered
+// scenario: control-plane/resource-catalogue-ownership/catalogue-rebuilt-on-boot
+// scenario: resource-catalogue/anonymous-allocation-is-not-catalogued/scratch-region-without-the-catalogue
+// scenario: resource-catalogue/anonymous-allocation-is-not-catalogued/catalogue-unreachable
+// scenario: guest-context/serve-based-route-registration/claimed-root-name-is-served
+// scenario: guest-context/context-resource-operations/named-region-creation
+// scenario: guest-context/context-resource-operations/name-resolution
+// scenario: guest-context/context-resource-operations/allocation-without-the-catalogue
+// scenario: guest-context/context-health-reporting/guest-publishes-health
 #[test]
 #[ignore = "requires the control-plane, discovery, store and probe guests built for wasm32-unknown-unknown"]
 fn control_plane_bootstrap_slice_end_to_end() {
@@ -126,7 +138,10 @@ fn control_plane_bootstrap_slice_end_to_end() {
             ("catalogue unreachable", 1),
             ("anonymous allocation succeeded", 1),
         ],
-        spine_common::OBSERVATION_BOUND,
+        // The probe waits the guest SDK's service-ready bound for the
+        // control route before reporting it unreachable, so this observation
+        // must outlast that bound.
+        spine_common::CONVERGENCE_BOUND + std::time::Duration::from_secs(60),
     );
     assert!(
         logs.iter()
@@ -247,6 +262,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
             ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
+            ),
         ],
         tenant: None,
         discovery_service: true,
@@ -271,30 +290,3 @@ fn find(report: &BootstrapReport, name: &str) -> selium_abi::ProcessId {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `control-plane` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: control-plane/control-plane-guest-crate/control-plane-bootstraps-from-descriptor
-// scenario: control-plane/served-typed-control-surface/serving-route-registered
-// scenario: control-plane/served-typed-control-surface/external-client-reaches-the-served-surface
-// scenario: control-plane/typed-wire-protocol/typed-request-and-reply
-// scenario: control-plane/typed-wire-protocol/no-text-grammar-for-control
-// scenario: control-plane/user-facing-desired-state-ownership/deployment-update-recorded
-// scenario: control-plane/user-facing-desired-state-ownership/desired-state-read-reflects-accepted-updates
-// scenario: control-plane/user-facing-desired-state-ownership/pipeline-binding-recorded
-// scenario: control-plane/narrow-delegation/placement-delegated-to-scheduler
-// scenario: control-plane/narrow-delegation/resolution-delegated-to-discovery
-// scenario: control-plane/narrow-delegation/recovery-delegated-to-supervisor
-// scenario: control-plane/capability-enforced-access/privileged-client-reaches-the-control-surface
-// scenario: control-plane/capability-enforced-access/unprivileged-client-is-refused
-// scenario: control-plane/capability-enforced-access/session-with-unresolvable-tenant-refused
-// scenario: control-plane/requestor-tenant-derivation/tenant-scoped-deliverer-scoped-to-its-tenant
-// scenario: control-plane/requestor-tenant-derivation/root-deliverer-scoped-as-root
-// scenario: control-plane/requestor-tenant-derivation/external-client-scoped-through-its-bridge-channel
-// scenario: control-plane/module-upload-to-the-durable-store/upload-stores-a-module
-// scenario: control-plane/module-upload-to-the-durable-store/deploy-references-a-stored-module
-// scenario: control-plane/module-upload-to-the-durable-store/uploaded-module-survives-a-restart
-// scenario: control-plane/delegation-error-propagation/delegated-failure-carries-step-and-context
-// scenario: control-plane/flatbuffers-desired-state-log-records/deployment-intent-is-recorded-as-flatbuffers
-// scenario: control-plane/flatbuffers-desired-state-log-records/projection-rebuilds-from-flatbuffers-replay
-// scenario: control-plane/flatbuffers-desired-state-log-records/desired-state-types-live-in-the-service-crate
-// scenario: control-plane/resource-catalogue-ownership/registration-recorded-durably
-// scenario: control-plane/resource-catalogue-ownership/lookup-is-tenant-scoped
-// scenario: control-plane/resource-catalogue-ownership/catalogue-rebuilt-on-boot

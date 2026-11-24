@@ -62,6 +62,7 @@ impl From<RpcError> for Error {
             RpcError::LayoutMismatch => Error::Wire(selium_wire::Error::LayoutMismatch),
             RpcError::BufferFull => Error::Wire(selium_wire::Error::BufferFull),
             RpcError::BufferEmpty => Error::Wire(selium_wire::Error::BufferEmpty),
+            RpcError::Abi(error) => Error::Wire(selium_wire::Error::Abi(error)),
         }
     }
 }

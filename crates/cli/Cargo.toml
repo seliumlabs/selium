@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive", "help", "std"] }
+quinn.workspace = true
 selium-client.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

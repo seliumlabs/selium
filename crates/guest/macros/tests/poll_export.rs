@@ -15,6 +15,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[error("{0}")]
 struct TestError(String);
+// scenario: selium-guest-macros/poll-export-completion-signal/poll-export-reports-completion-code
+// scenario: selium-guest-macros/poll-export-completion-signal/poll-export-reports-running-while-parked
 
 #[test]
 fn poll_export_reports_completion_code() {

@@ -67,6 +67,7 @@ fn class_only_network_grant_retains_allow_all_endpoints() {
 fn empty_module() -> Vec<u8> {
     wat::parse_str("(module (func (export \"boot\")))").expect("compile wat")
 }
+// scenario: guest-networking/literals-only-network-addresses/literal-connect-accepted
 
 #[test]
 fn ip_literal_passes_validation() {
@@ -142,6 +143,7 @@ fn tcp_bind_rejects_hostname() {
         "hostname bind",
     );
 }
+// scenario: guest-networking/literals-only-network-addresses/hostname-connect-rejected
 
 #[test]
 fn tcp_connect_rejects_hostname() {
@@ -169,6 +171,7 @@ fn tcp_connect_rejects_hostname() {
     );
 }
 
+// scenario: udp-transport/udp-socket-binding-via-hostcall/guest-binds-with-an-invalid-address
 #[test]
 fn udp_bind_rejects_hostname() {
     let runtime = Runtime::default();
@@ -195,6 +198,8 @@ fn udp_bind_rejects_hostname() {
     );
 }
 
+// scenario: capability-enforcement/network-endpoint-uris-in-scope-contexts/connect-evaluated-against-uri-grant
+// scenario: capability-enforcement/network-endpoint-uris-in-scope-contexts/denial-names-the-uri
 #[test]
 fn uri_prefix_grant_allows_loopback_denies_other_hosts() {
     let runtime = Runtime::default();

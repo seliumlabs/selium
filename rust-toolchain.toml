@@ -1,0 +1,6 @@
+# Pinned verification toolchain. CI installs these exact versions; an
+# intentional bump updates this file and the workflow pins together.
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]

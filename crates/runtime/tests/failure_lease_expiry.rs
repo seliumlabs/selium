@@ -24,6 +24,7 @@ const LAPSED_LEASES: usize = 3;
 /// Safety margin past the TTL so the next sweep tick certainly sees the lapse.
 const TTL_MARGIN_MS: u64 = 5_000;
 
+// scenario: guest-context/discovery-client-in-context/guest-resolves-a-uri
 #[test]
 #[ignore = "requires the discovery and discovery-probe guests built for wasm32-unknown-unknown"]
 fn a_lapsed_lease_is_expired_under_load() {

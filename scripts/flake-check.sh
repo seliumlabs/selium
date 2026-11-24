@@ -21,13 +21,14 @@
 #
 # The pack is the documented one:
 #   cargo test -p selium-runtime --tests --no-fail-fast -- --ignored \
-#       --skip soak_ --skip crash_truncation_ --skip crash_corruption_ \
-#       --skip crash_before_
+#       --skip soak_ --skip format_truncation_ --skip format_corrupt_ \
+#       --skip format_torn_
 # The soak and crash lanes are long-running and belong to the scheduled lane
 # (see scripts/gate.sh --soak), not to every merge gate. The crash lane is
-# skipped by its test names, not by a `crash_` prefix: that would also skip the
-# failure-injection test `crash_and_graceful_exit_both_revoke_the_registration`,
-# which is part of this pack.
+# skipped by its `format_` test names, not by a `crash_` prefix: that would
+# also skip the failure-injection test
+# `crash_and_graceful_exit_both_revoke_the_registration`, which is part of this
+# pack.
 #
 # Written for bash 3.2 (macOS `/bin/bash`): no associative arrays, no mapfile.
 
@@ -79,8 +80,8 @@ run_pack() {
   local binary_file="$3"
 
   cargo test -p selium-runtime --tests --no-fail-fast -- \
-    --ignored --skip soak_ --skip crash_truncation_ --skip crash_corruption_ \
-    --skip crash_before_ 2>&1 | tee "$log"
+    --ignored --skip soak_ --skip format_truncation_ --skip format_corrupt_ \
+    --skip format_torn_ 2>&1 | tee "$log"
   local status="${PIPESTATUS[0]}"
 
   # A failing test prints `test <name> ... FAILED` under the `Running

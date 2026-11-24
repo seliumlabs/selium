@@ -94,7 +94,8 @@ fn attach_feed_subscriber(runtime: &Runtime) -> Subscriber<DiscoveryRequest, Shm
     let feed_region_id = runtime
         .discovery_feed_region_id()
         .expect("discovery feed region id");
-    let channel = Channel::attach(feed_region_id).expect("attach to discovery feed");
+    let channel = Channel::attach_with_provider(runtime.region_provider().as_ref(), feed_region_id)
+        .expect("attach to discovery feed");
     let capacity = channel.ring().capacity();
     let transport = ShmTransport::new_replay(&channel, &channel).expect("feed transport");
     Subscriber::new(FramedRead::new(transport), Some(capacity))
@@ -137,6 +138,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
             CapabilityGrant::new(
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
+            ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
             ),
         ],
         tenant: None,
@@ -385,6 +390,11 @@ fn settle(runtime: &Runtime) {
     // reports the values.
 }
 
+// scenario: resource-handshake/host-mediated-connection-queue-resourcesender-resourcelistener/last-handle-releases-the-queue
+// scenario: resource-handshake/host-mediated-connection-queue-resourcesender-resourcelistener/discovery-listener-queue-is-released-when-discovery-stops
+// scenario: sleep-hostcall/teardown-releases-pending-sleeps/stopped-guest-leaves-no-pending-timer
+// scenario: sleep-hostcall/teardown-releases-pending-sleeps/a-stopped-discovery-guest-drains-its-sweep-sleep
+// scenario: verification-gate/soak-and-crash-consistency-coverage/resource-growth-is-detected
 #[test]
 #[ignore = "soak lane: repeated spawn/stop cycles, run nightly via scripts/gate.sh --soak"]
 fn soak_repeated_spawns_timers_and_registrations_leave_bounded_host_state() {

@@ -322,6 +322,8 @@ async fn concurrent_connections_are_served_independently() {
     handle_b.await.expect("connection handler task b");
 }
 
+// scenario: connector-channel-forwarding/stale-route-failure-semantics/revoked-route-fails-loudly
+// scenario: connector-channel-forwarding/stale-route-failure-semantics/failed-forward-does-not-poison-the-connector
 #[tokio::test]
 async fn connect_failure_yields_502_and_evicts_route() {
     let (mut client, server_side) = tokio::io::duplex(64 * 1024);
@@ -440,6 +442,7 @@ async fn full_window_stops_socket_reads_and_resumes_without_loss() {
     handle.await.expect("connection handler task");
 }
 
+// scenario: connector-channel-forwarding/route-resolution-to-typed-session/forwarded-request-reaches-registered-guest
 #[tokio::test]
 async fn golden_path_http_request_to_typed_forward_and_back() {
     let (mut client, server_side) = tokio::io::duplex(64 * 1024);

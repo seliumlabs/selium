@@ -43,9 +43,21 @@ pub struct FramedRead<M> {
 
 /// A framed writer that wraps a [`MessageTransport`] to provide frame-level
 /// write operations with [`FrameHeader`] encoding.
+///
+/// # Cancellation
+///
+/// Cancelling a write after its frame was buffered in the transport leaves the
+/// previous flush in flight. A later write with a different payload first
+/// completes that older flush and then sends its own payload; only then does it
+/// report success. A failure completing the older flush is surfaced, and the
+/// new payload is not published.
 pub struct FramedWrite<M> {
     inner: TokioFramedWrite<M, FrameCodec>,
     write_state: WriteState,
+    /// The payload accepted by `start_send` whose flush is in flight. It lets a
+    /// retry of the same write complete the interrupted flush, while a
+    /// different payload is not acknowledged by that flush.
+    pending: Option<(Vec<u8>, u32, u8)>,
 }
 
 /// State of an in-flight frame write across async polls.
@@ -220,6 +232,7 @@ impl<M: MessageTransport> FramedWrite<M> {
         Self {
             inner: TokioFramedWrite::new(transport, FrameCodec),
             write_state: WriteState::Idle,
+            pending: None,
         }
     }
 
@@ -305,19 +318,36 @@ impl<M: MessageTransport> FramedWrite<M> {
             ))));
         }
 
-        // Complete an in-flight frame's flush first. Crucially, completing it
-        // finishes THIS write: the frame was already buffered by start_send,
-        // so we must not fall through and buffer it a second time.
+        // Complete an in-flight frame's flush first. Completing it must not
+        // acknowledge the payload supplied to THIS call: after the older frame
+        // flushes successfully, continue and send the current payload.
         if self.write_state == WriteState::Flushing {
-            self.write_state = WriteState::Idle;
-            return match Pin::new(&mut self.inner).poll_flush(cx) {
-                Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-                Poll::Ready(Err(e)) => Poll::Ready(Err(map_transport_error(e))),
+            // A retry of the very same write completes the old flush; a
+            // different payload must still be sent before this call succeeds.
+            let same_write =
+                self.pending
+                    .as_ref()
+                    .is_some_and(|(pending, pending_tag, pending_flags)| {
+                        pending == payload && *pending_tag == tag && *pending_flags == flags
+                    });
+            match Pin::new(&mut self.inner).poll_flush(cx) {
+                Poll::Ready(Ok(())) => {
+                    self.write_state = WriteState::Idle;
+                    self.pending = None;
+                    if same_write {
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+                Poll::Ready(Err(e)) => {
+                    self.write_state = WriteState::Idle;
+                    self.pending = None;
+                    return Poll::Ready(Err(map_transport_error(e)));
+                }
                 Poll::Pending => {
                     self.write_state = WriteState::Flushing;
-                    Poll::Pending
+                    return Poll::Pending;
                 }
-            };
+            }
         }
 
         // Reserve capacity on the transport. On a Park channel with a full
@@ -330,11 +360,18 @@ impl<M: MessageTransport> FramedWrite<M> {
 
         // Encode the item into the internal buffer.
         Pin::new(&mut self.inner).start_send((payload.to_vec(), tag, flags))?;
+        self.pending = Some((payload.to_vec(), tag, flags));
 
         // Flush to the underlying transport.
         match Pin::new(&mut self.inner).poll_flush(cx) {
-            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_transport_error(e))),
+            Poll::Ready(Ok(())) => {
+                self.pending = None;
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(e)) => {
+                self.pending = None;
+                Poll::Ready(Err(map_transport_error(e)))
+            }
             Poll::Pending => {
                 self.write_state = WriteState::Flushing;
                 Poll::Pending
@@ -363,15 +400,3 @@ where
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `framed-io` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: framed-io/framedread-type/read-a-complete-frame
-// scenario: framed-io/framedread-type/no-frame-ready
-// scenario: framed-io/framedread-type/underlying-transport-returns-overwrite-error
-// scenario: framed-io/framedwrite-type/write-a-framed-payload
-// scenario: framed-io/framedwrite-type/payload-too-large-for-frame
-// scenario: framed-io/framedread-framedwrite-generic-over-transport/framedread-wraps-an-shm-transport
-// scenario: framed-io/framedread-framedwrite-generic-over-transport/framedread-wraps-a-quic-transport
-// scenario: framed-io/framedread-exposes-generation-counter/read-generation-counter
-// scenario: framed-io/messagetransport-composes-asyncread-asyncwrite/frame-codec-reads-header-via-asyncread
-// scenario: framed-io/messagetransport-composes-asyncread-asyncwrite/frame-codec-writes-payload-via-asyncwrite
-// scenario: framed-io/waker-honest-async-read-path/native-read-parks-instead-of-spinning
-// scenario: framed-io/waker-honest-async-read-path/generation-tracked-read-is-unchanged

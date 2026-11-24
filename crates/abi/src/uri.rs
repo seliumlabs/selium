@@ -386,6 +386,7 @@ mod tests {
         assert!(!is_dns_safe_label("under_score"));
     }
 
+    // scenario: addressing/advisory-domain-to-tenant-table/synthetic-tenant-label-always-resolves
     #[test]
     fn resolve_wire_name_uses_synthetic_tenant_label() {
         let domains = DomainTable::new();
@@ -401,6 +402,7 @@ mod tests {
         assert_eq!(resolve_wire_name("", &domains), None);
     }
 
+    // scenario: addressing/path-label-reversal/root-route-projects-to-a-bare-name
     /// Root-namespace (platform-tenant) wire names project to the bare
     /// reversed path with no tenant domain suffix: `bridge` → `sel:///bridge`,
     /// `control` → `sel:///control`.

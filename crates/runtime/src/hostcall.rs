@@ -1,7 +1,7 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::Read,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use selium_abi::{
@@ -15,8 +15,18 @@ use wasmtiny::{RegionProt as WasmProt, runtime::SharedMemory};
 
 use crate::{SystemGuestDescriptor, error::kernel_error, runtime::Runtime};
 
+/// Maximum operation records one process may retain before back-pressuring new
+/// hostcalls. A guest that never polls or drops completions cannot grow host
+/// memory without bound; other processes retain their own independent budget.
+pub(crate) const MAX_OPERATIONS_PER_PROCESS: usize = 1024;
+
+mod network;
+mod signing;
+mod time;
+
 #[derive(Debug, Clone)]
 pub(crate) enum HostOperationState {
+    Dispatching,
     Ready(HostcallOutput),
     Failed(AbiError),
     HostQueueRecvWait { local_id: u64, deadline: Instant },
@@ -30,20 +40,127 @@ pub(crate) struct HostOperation {
     pub(crate) state: HostOperationState,
 }
 
-/// The delegation scope implied by an authority's `DelegateGrants` grants:
-/// root-wide (a `Namespace::Root` selector), or tenant-scoped (the named
-/// tenants from `Tenant`/`Namespace::Tenant` selectors).
-enum DelegationScope {
-    Root,
-    Tenants(HashSet<String>),
+/// Whether one `DelegateGrants` grant admits delegation in `tenant`.
+///
+/// Every tenant-scoping selector in the grant intersects: `Namespace::Root` is
+/// the wildcard and a `Tenant`/`Namespace::Tenant` narrows it. A grant carrying
+/// both `Root` and `Tenant("acme")` admits only `acme`.
+fn grant_delegates_tenant(grant: &CapabilityGrant, tenant: &str) -> bool {
+    if grant.capability != Capability::DelegateGrants {
+        return false;
+    }
+    let mut scoped = false;
+    for selector in &grant.selectors {
+        match selector {
+            ResourceSelector::Tenant(name)
+            | ResourceSelector::Namespace(Namespace::Tenant(name)) => {
+                scoped = true;
+                if name != tenant {
+                    return false;
+                }
+            }
+            ResourceSelector::Namespace(Namespace::Root) => scoped = true,
+            _ => {}
+        }
+    }
+    scoped
 }
 
-impl DelegationScope {
-    /// Returns whether this scope admits a child spawn in `tenant`.
-    fn admits_tenant(&self, tenant: &str) -> bool {
-        match self {
-            Self::Root => true,
-            Self::Tenants(tenants) => tenants.contains(tenant),
+/// Whether any single grant (never a synthesis of several grants) admits
+/// delegation in `tenant`.
+fn grants_delegate_tenant(grants: &[CapabilityGrant], tenant: &str) -> bool {
+    grants
+        .iter()
+        .any(|grant| grant_delegates_tenant(grant, tenant))
+}
+
+/// Whether a child grant is wholly within the parent's delegation authority.
+fn child_grant_within_delegation(
+    parent_grants: &[CapabilityGrant],
+    child: &CapabilityGrant,
+) -> bool {
+    let mut child_tenants = child
+        .selectors
+        .iter()
+        .filter_map(|selector| match selector {
+            ResourceSelector::Tenant(name)
+            | ResourceSelector::Namespace(Namespace::Tenant(name)) => Some(name.as_str()),
+            _ => None,
+        });
+    let Some(first) = child_tenants.next() else {
+        return false;
+    };
+    if child_tenants.any(|tenant| tenant != first) {
+        return false;
+    }
+    parent_grants
+        .iter()
+        .any(|parent| grant_delegates_tenant(parent, first))
+}
+
+/// A quota reservation that releases its bytes on drop unless committed.
+pub(crate) struct QuotaReservation {
+    kernel: selium_kernel::Kernel,
+    tenant: String,
+    class: ResourceClass,
+    amount: u64,
+    committed: bool,
+}
+
+impl QuotaReservation {
+    pub(crate) fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for QuotaReservation {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.kernel
+                .quota()
+                .release(&self.tenant, self.class.clone(), self.amount);
+        }
+    }
+}
+
+/// A region allocation reservation: quota, kernel region, and ownership
+/// records, rewritten unless the allocation commits.
+struct RegionReservation<'a> {
+    runtime: &'a Runtime,
+    process_id: ProcessId,
+    quota: QuotaReservation,
+    shared_id: Option<u64>,
+    committed: bool,
+}
+
+impl RegionReservation<'_> {
+    fn commit(mut self) {
+        self.quota.commit();
+        self.committed = true;
+    }
+}
+
+impl Drop for RegionReservation<'_> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        if let Some(shared_id) = self.shared_id.take() {
+            self.runtime
+                .resource_tenants
+                .lock()
+                .remove(&(ResourceClass::SharedRegion, shared_id));
+            let _reclaimed = self.runtime.release_shared_resource(
+                self.process_id,
+                &ResourceClass::SharedRegion,
+                shared_id,
+            );
+            drop(
+                self.runtime
+                    .kernel
+                    .memory()
+                    .destroy_shared_region(shared_id),
+            );
         }
     }
 }
@@ -65,6 +182,32 @@ impl Runtime {
         task_id: Option<TaskId>,
         guest_memory: Option<SharedMemory>,
     ) -> (u32, OperationId) {
+        // Reserve the bounded per-process slot before dispatch. Multithreaded
+        // guests can enter concurrently, so checking only after dispatch would
+        // both exceed the bound and perform side effects for a request whose
+        // completion could not be recorded.
+        let operation_id = {
+            let mut operations = self.operations.lock();
+            if operations
+                .values()
+                .filter(|operation| operation.process_id == process_id)
+                .count()
+                >= MAX_OPERATIONS_PER_PROCESS
+            {
+                return (selium_abi::HOSTCALL_STATUS_FAILED, 0);
+            }
+            let operation_id = self.next_operation_id(&operations);
+            operations.insert(
+                operation_id,
+                HostOperation {
+                    process_id,
+                    task_id,
+                    state: HostOperationState::Dispatching,
+                },
+            );
+            operation_id
+        };
+
         // Extract WaitRegister fields before dispatch consumes the request.
         let wait_register = match &request {
             HostcallRequest::WaitRegister {
@@ -79,11 +222,21 @@ impl Runtime {
             Err(error) => HostOperationState::Failed(error),
         };
         let status = match state {
+            HostOperationState::Dispatching => selium_abi::HOSTCALL_STATUS_PENDING,
             HostOperationState::Ready(_) => selium_abi::HOSTCALL_STATUS_READY,
             HostOperationState::Failed(_) => selium_abi::HOSTCALL_STATUS_FAILED,
             HostOperationState::HostQueueRecvWait { .. } => selium_abi::HOSTCALL_STATUS_PENDING,
             HostOperationState::SleepWait { .. } => selium_abi::HOSTCALL_STATUS_PENDING,
         };
+        {
+            let mut operations = self.operations.lock();
+            let Some(operation) = operations.get_mut(&operation_id) else {
+                // Concurrent process teardown reclaimed the reservation. The
+                // caller is exiting too, so no completion can be delivered.
+                return (selium_abi::HOSTCALL_STATUS_DROPPED, 0);
+            };
+            operation.state = state.clone();
+        }
 
         // Register the wait if the guest parked on a host-writable ring.
         // This is a fire-and-forget registration: the hostcall returns
@@ -94,17 +247,6 @@ impl Runtime {
         {
             self.register_wait(process_id, tid, region_id, generation);
         }
-
-        let mut operations = self.operations.lock();
-        let operation_id = self.next_operation_id(&operations);
-        operations.insert(
-            operation_id,
-            HostOperation {
-                process_id,
-                task_id,
-                state: state.clone(),
-            },
-        );
 
         // Hand the guest's sleep deadline to the runtime's timer driver, which
         // owns the deadline queue and delivers the completion wake through the
@@ -124,6 +266,40 @@ impl Runtime {
         }
 
         (status, operation_id)
+    }
+
+    /// Registers a rejected hostcall as a failed operation.
+    ///
+    /// Create-time rejections (oversized envelope, invalid memory range,
+    /// missing/incompatible ABI preamble, undecodable request) still return a
+    /// failed status, but they also carry an operation id so the guest can
+    /// poll the structured [`AbiError`] and drop it. Without this the guest
+    /// sees only a status code and cannot report the host's diagnosis — for
+    /// example which ABI versions disagreed.
+    pub(crate) fn reject_hostcall(
+        &self,
+        process_id: ProcessId,
+        error: AbiError,
+    ) -> (u32, OperationId) {
+        let mut operations = self.operations.lock();
+        if operations
+            .values()
+            .filter(|operation| operation.process_id == process_id)
+            .count()
+            >= MAX_OPERATIONS_PER_PROCESS
+        {
+            return (selium_abi::HOSTCALL_STATUS_FAILED, 0);
+        }
+        let operation_id = self.next_operation_id(&operations);
+        operations.insert(
+            operation_id,
+            HostOperation {
+                process_id,
+                task_id: None,
+                state: HostOperationState::Failed(error),
+            },
+        );
+        (selium_abi::HOSTCALL_STATUS_FAILED, operation_id)
     }
 
     /// Polls a hostcall operation for completion.
@@ -147,6 +323,7 @@ impl Runtime {
         }
 
         match operation.state.clone() {
+            HostOperationState::Dispatching => CompletionState::Pending { operation_id },
             HostOperationState::Ready(output) => CompletionState::Ready(output.clone()),
             HostOperationState::Failed(error) => CompletionState::Failed(error.clone()),
             HostOperationState::HostQueueRecvWait { local_id, deadline } => {
@@ -209,15 +386,19 @@ impl Runtime {
     /// Drops a hostcall operation if it belongs to the supplied process.
     pub fn drop_hostcall(&self, process_id: ProcessId, operation_id: OperationId) -> bool {
         let mut operations = self.operations.lock();
-        if operations
-            .get(&operation_id)
-            .is_some_and(|operation| operation.process_id == process_id)
-        {
-            operations.remove(&operation_id);
-            true
-        } else {
-            false
+        let Some(operation) = operations.get(&operation_id) else {
+            return false;
+        };
+        if operation.process_id != process_id {
+            return false;
         }
+        let was_sleep = matches!(operation.state, HostOperationState::SleepWait { .. });
+        operations.remove(&operation_id);
+        drop(operations);
+        if was_sleep && let Some(driver) = self.timer_driver.get() {
+            driver.cancel_operation(operation_id);
+        }
+        true
     }
 
     /// Authorises a principal-provenance allocation for the supplied
@@ -306,7 +487,15 @@ impl Runtime {
                 // Quota primitives cap extent independently of grants: reserve
                 // the byte size against the serving tenant's shared-memory
                 // ceiling before any region is allocated.
-                self.enforce_quota(&principal, ResourceClass::SharedRegion, size_bytes)?;
+                let quota =
+                    self.reserve_quota(&principal, ResourceClass::SharedRegion, size_bytes)?;
+                let mut reservation = RegionReservation {
+                    runtime: self,
+                    process_id,
+                    quota,
+                    shared_id: None,
+                    committed: false,
+                };
 
                 // Allocate region in the shared registry (standalone, no guest mapping yet).
                 let (shared_id, _len) = self
@@ -314,6 +503,7 @@ impl Runtime {
                     .memory()
                     .allocate_shared_region(size_u32)
                     .map_err(kernel_error)?;
+                reservation.shared_id = Some(shared_id);
 
                 // Note: we do NOT auto-attach here. The allocating process must
                 // call `AttachRegion` to map the region into its linear memory.
@@ -333,12 +523,24 @@ impl Runtime {
                 // Record which ledger the reservation was charged against, so the
                 // release path credits the serving tenant rather than
                 // re-deriving one from the freeing process.
+                if self
+                    .faults
+                    .region_allocation_failure
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return Err(AbiError::new(
+                        AbiErrorCode::Internal,
+                        "injected region allocation failure",
+                    ));
+                }
+
                 self.kernel.quota().note_reservation(
                     ResourceClass::SharedRegion,
                     shared_id,
                     &principal,
                     size_bytes,
                 );
+                reservation.commit();
 
                 Ok(HostOperationState::Ready(HostcallOutput::RegionAlloc(
                     selium_abi::RegionAllocation {
@@ -595,108 +797,11 @@ impl Runtime {
                     selium_abi::RegionAttachment { page_offset, len },
                 )))
             }
-            HostcallRequest::TcpBind { address } => {
-                let addr: std::net::SocketAddr = address.parse().map_err(|_e| {
-                    AbiError::new(
-                        AbiErrorCode::MalformedPayload,
-                        format!("address must be an IP literal, got: {address}"),
-                    )
-                })?;
-                let uri = format!("tcp://{addr}");
-                self.require_with_uri(
-                    process_id,
-                    Capability::Network,
-                    ResourceClass::TcpListener,
-                    None,
-                    uri,
-                )?;
-                let descriptor = crate::network::tcp_bind(self, process_id, address)
-                    .map_err(|e| AbiError::new(AbiErrorCode::Internal, e.to_string()))?;
-                self.claim_local_handle(
-                    process_id,
-                    ResourceClass::TcpListener,
-                    descriptor.local_id,
-                );
-                // The descriptor doubles as a connection queue: HostQueueRecv
-                // checks ownership under the HostQueue class, so claim both.
-                self.claim_local_handle(process_id, ResourceClass::HostQueue, descriptor.local_id);
-                self.claim_shared_resource(
-                    process_id,
-                    ResourceClass::TcpListener,
-                    descriptor.shared_id,
-                );
-                Ok(HostOperationState::Ready(HostcallOutput::HostQueue(
-                    descriptor,
-                )))
-            }
+            HostcallRequest::TcpBind { address } => self.hostcall_tcp_bind(process_id, address),
             HostcallRequest::TcpConnect { address } => {
-                let addr: std::net::SocketAddr = address.parse().map_err(|_e| {
-                    AbiError::new(
-                        AbiErrorCode::MalformedPayload,
-                        format!("address must be an IP literal, got: {address}"),
-                    )
-                })?;
-                let uri = format!("tcp://{addr}");
-                self.require_with_uri(
-                    process_id,
-                    Capability::Network,
-                    ResourceClass::TcpStream,
-                    None,
-                    uri,
-                )?;
-                let descriptor = crate::network::tcp_connect(self, process_id, address)
-                    .map_err(|e| AbiError::new(AbiErrorCode::Internal, e.to_string()))?;
-                self.claim_local_handle(process_id, ResourceClass::TcpStream, descriptor.shared_id);
-                self.claim_shared_resource(
-                    process_id,
-                    ResourceClass::TcpStream,
-                    descriptor.shared_id,
-                );
-                // The guest attaches the stream's ring region via AttachRegion,
-                // whose authorisation is keyed on SharedRegion ownership.
-                self.claim_shared_resource(
-                    process_id,
-                    ResourceClass::SharedRegion,
-                    descriptor.shared_id,
-                );
-                Ok(HostOperationState::Ready(HostcallOutput::SharedRegion(
-                    descriptor,
-                )))
+                self.hostcall_tcp_connect(process_id, address)
             }
-            HostcallRequest::UdpBind { address } => {
-                let addr: std::net::SocketAddr = address.parse().map_err(|_e| {
-                    AbiError::new(
-                        AbiErrorCode::MalformedPayload,
-                        format!("address must be an IP literal, got: {address}"),
-                    )
-                })?;
-                let uri = format!("udp://{addr}");
-                self.require_with_uri(
-                    process_id,
-                    Capability::Network,
-                    ResourceClass::UdpSocket,
-                    None,
-                    uri,
-                )?;
-                let descriptor = crate::network::udp_bind(self, address)
-                    .map_err(|e| AbiError::new(AbiErrorCode::Internal, e.to_string()))?;
-                self.claim_local_handle(process_id, ResourceClass::UdpSocket, descriptor.shared_id);
-                self.claim_shared_resource(
-                    process_id,
-                    ResourceClass::UdpSocket,
-                    descriptor.shared_id,
-                );
-                // The guest attaches the socket's ring region via AttachRegion,
-                // whose authorisation is keyed on SharedRegion ownership.
-                self.claim_shared_resource(
-                    process_id,
-                    ResourceClass::SharedRegion,
-                    descriptor.shared_id,
-                );
-                Ok(HostOperationState::Ready(HostcallOutput::SharedRegion(
-                    descriptor,
-                )))
-            }
+            HostcallRequest::UdpBind { address } => self.hostcall_udp_bind(process_id, address),
             HostcallRequest::VolumeOpen {
                 name,
                 serving_tenant,
@@ -748,12 +853,23 @@ impl Runtime {
                 // the host writes anything. A denial writes no bytes.
                 let tenant = self.volume_serving_tenant(process_id, local_id);
                 let appended = bytes.len() as u64;
-                self.enforce_quota(&tenant, ResourceClass::Volume, appended)?;
+                let mut quota = self.reserve_quota(&tenant, ResourceClass::Volume, appended)?;
+                if self
+                    .faults
+                    .volume_append_failure
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return Err(AbiError::new(
+                        AbiErrorCode::Internal,
+                        "injected volume append failure",
+                    ));
+                }
                 let offset = self
                     .kernel
                     .volumes()
                     .append(local_id, &bytes)
                     .map_err(kernel_error)?;
+                quota.commit();
                 Ok(HostOperationState::Ready(HostcallOutput::U64(offset)))
             }
             HostcallRequest::VolumeReadAt {
@@ -823,6 +939,16 @@ impl Runtime {
                     ResourceClass::Volume,
                     local_id,
                 )?;
+                if self
+                    .faults
+                    .volume_sync_failure
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return Err(AbiError::new(
+                        AbiErrorCode::Internal,
+                        "injected volume sync failure",
+                    ));
+                }
                 self.kernel.volumes().sync(local_id).map_err(kernel_error)?;
                 Ok(HostOperationState::Ready(HostcallOutput::Empty))
             }
@@ -1040,7 +1166,7 @@ impl Runtime {
                 // Pipe quotas meter queued *items*, not queue count: a queue
                 // costs nothing to create and each pending entry reserves one
                 // slot against the queue owner's (serving) tenant — released
-                // when the entry is received. See `charge_queue_item`.
+                // when the entry is received. See `reserve_queue_item`.
                 let queues = self.kernel.queues();
                 let memory = self.kernel.memory();
                 let descriptor = queues.create_host_queue(&memory);
@@ -1210,52 +1336,67 @@ impl Runtime {
                 self.grant_attach_basis(client_process_id, &resource_class, resource_id)?;
                 Ok(HostOperationState::Ready(HostcallOutput::Empty))
             }
+            HostcallRequest::DiscoveryListener => {
+                self.require(
+                    process_id,
+                    Capability::HostQueue,
+                    ResourceClass::HostQueue,
+                    None,
+                )?;
+                let resource_id = self.discovery_listener_shared_id().ok_or_else(|| {
+                    AbiError::new(
+                        AbiErrorCode::NotFound,
+                        "discovery listener is not currently available",
+                    )
+                })?;
+                // This is the bootstrap form of resolution: the old discovery
+                // service cannot answer a lookup for its own replacement. Keep
+                // the same owner-declaration and tenant-scope enforcement as
+                // RecordResolvedResourceFor before recording the attach basis.
+                let scope = self
+                    .attachable_by_resolution
+                    .lock()
+                    .get(&(ResourceClass::HostQueue, resource_id))
+                    .cloned()
+                    .ok_or_else(|| {
+                        AbiError::new(
+                            AbiErrorCode::NotFound,
+                            "discovery listener has not declared resolution attachability",
+                        )
+                    })?;
+                let tenant = self.process_tenant(process_id);
+                let admitted = match &scope {
+                    AttachDeclarationScope::Any => true,
+                    AttachDeclarationScope::Tenant(expected) => {
+                        tenant.as_deref() == Some(expected.as_str())
+                    }
+                };
+                if !admitted {
+                    return Err(AbiError::new(
+                        AbiErrorCode::PermissionDenied,
+                        "discovery listener resolution is outside the caller's tenant scope",
+                    ));
+                }
+                self.grant_attach_basis(process_id, &ResourceClass::HostQueue, resource_id)?;
+                Ok(HostOperationState::Ready(HostcallOutput::SharedId(
+                    resource_id,
+                )))
+            }
             HostcallRequest::SignTenantCa { tenant } => {
-                self.require_capability(process_id, Capability::MintCertificate)?;
-                let mut keyring = self.keyring.lock();
-                let keyring = keyring.as_mut().ok_or_else(|| {
-                    AbiError::new(
-                        AbiErrorCode::Internal,
-                        "certificate signing keyring is not initialised",
-                    )
-                })?;
-                let cert_der = keyring
-                    .sign_tenant_ca(&tenant)
-                    .map_err(|error| AbiError::new(AbiErrorCode::Internal, error.to_string()))?;
-                Ok(HostOperationState::Ready(HostcallOutput::Certificate(
-                    cert_der,
-                )))
+                self.hostcall_sign_tenant_ca(process_id, tenant)
             }
+            HostcallRequest::CommitTenantCa {
+                tenant,
+                ca_cert_der,
+            } => self.hostcall_commit_tenant_ca(process_id, tenant, ca_cert_der),
+            HostcallRequest::RollbackTenantCa {
+                tenant,
+                ca_cert_der,
+            } => self.hostcall_rollback_tenant_ca(process_id, tenant, ca_cert_der),
             HostcallRequest::SignUserCert { tenant, spki_der } => {
-                self.require_capability(process_id, Capability::MintCertificate)?;
-                let keyring = self.keyring.lock();
-                let keyring = keyring.as_ref().ok_or_else(|| {
-                    AbiError::new(
-                        AbiErrorCode::Internal,
-                        "certificate signing keyring is not initialised",
-                    )
-                })?;
-                let cert_der = keyring
-                    .sign_user_cert(&tenant, &spki_der)
-                    .map_err(|error| AbiError::new(AbiErrorCode::Internal, error.to_string()))?;
-                Ok(HostOperationState::Ready(HostcallOutput::Certificate(
-                    cert_der,
-                )))
+                self.hostcall_sign_user_cert(process_id, tenant, spki_der)
             }
-            HostcallRequest::RevokeCa { tenant } => {
-                self.require_capability(process_id, Capability::MintCertificate)?;
-                let mut keyring = self.keyring.lock();
-                let keyring = keyring.as_mut().ok_or_else(|| {
-                    AbiError::new(
-                        AbiErrorCode::Internal,
-                        "certificate signing keyring is not initialised",
-                    )
-                })?;
-                keyring
-                    .revoke_ca(&tenant)
-                    .map_err(|error| AbiError::new(AbiErrorCode::Internal, error.to_string()))?;
-                Ok(HostOperationState::Ready(HostcallOutput::Empty))
-            }
+            HostcallRequest::RevokeCa { tenant } => self.hostcall_revoke_ca(process_id, tenant),
             HostcallRequest::SelfInfo => Ok(HostOperationState::Ready(HostcallOutput::SelfInfo {
                 process_id,
                 tenant: self.process_tenant(process_id),
@@ -1376,11 +1517,24 @@ impl Runtime {
                 )?;
                 // A queued item reserves one pipe slot against the queue
                 // owner's tenant; it is released when the item is received.
-                self.charge_queue_item(shared_id)?;
+                let mut slot = self.reserve_queue_item(shared_id)?;
+                if self
+                    .faults
+                    .queue_send_failure
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return Err(AbiError::new(
+                        AbiErrorCode::Internal,
+                        "injected queue send failure",
+                    ));
+                }
                 self.kernel
                     .queues()
                     .host_queue_send(local_id, process_id, value, metadata)
                     .map_err(kernel_error)?;
+                if let Some(mut reservation) = slot.take() {
+                    reservation.commit();
+                }
                 self.wake_host_queue_waiters(shared_id);
                 Ok(HostOperationState::Ready(HostcallOutput::Empty))
             }
@@ -1485,24 +1639,9 @@ impl Runtime {
                     logs,
                 )))
             }
-            HostcallRequest::TimeNow => {
-                let nanos = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or(Duration::ZERO)
-                    .as_nanos() as u64;
-                let nanos = nanos.saturating_add(self.guest_clock_offset_nanos());
-                Ok(HostOperationState::Ready(HostcallOutput::U64(nanos)))
-            }
-            HostcallRequest::TimeMonotonic => {
-                static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-                let nanos = EPOCH.get_or_init(Instant::now).elapsed().as_nanos() as u64;
-                let nanos = nanos.saturating_add(self.guest_clock_offset_nanos());
-                Ok(HostOperationState::Ready(HostcallOutput::U64(nanos)))
-            }
-            HostcallRequest::Sleep { millis } => {
-                let deadline = Instant::now() + Duration::from_millis(millis);
-                Ok(HostOperationState::SleepWait { deadline })
-            }
+            HostcallRequest::TimeNow => self.hostcall_time_now(process_id),
+            HostcallRequest::TimeMonotonic => self.hostcall_time_monotonic(process_id),
+            HostcallRequest::Sleep { millis } => self.hostcall_sleep(process_id, millis),
             HostcallRequest::GuestLogRegister { shared_id } => {
                 // Validate that shared_id belongs to the calling process.
                 let owns = self
@@ -1659,6 +1798,23 @@ impl Runtime {
             .map_err(|error| AbiError::new(AbiErrorCode::QuotaExceeded, error.to_string()))
     }
 
+    /// Reserves quota and returns a guard that releases it unless committed.
+    fn reserve_quota(
+        &self,
+        tenant: &str,
+        class: ResourceClass,
+        amount: u64,
+    ) -> std::result::Result<QuotaReservation, AbiError> {
+        self.enforce_quota(tenant, class.clone(), amount)?;
+        Ok(QuotaReservation {
+            kernel: self.kernel.clone(),
+            tenant: tenant.to_string(),
+            class,
+            amount,
+            committed: false,
+        })
+    }
+
     /// Returns the tenant whose pipe quota meters a queue: the tenant of the
     /// process that owns the queue. Items pending in a tenant's queues count
     /// against that tenant, whoever sent them.
@@ -1674,11 +1830,16 @@ impl Runtime {
     /// Reserves one pipe slot against the queue owner's (serving) tenant for
     /// an item enqueued onto `shared_id`, denying the enqueue when the
     /// tenant's ceiling is exhausted.
-    pub(crate) fn charge_queue_item(&self, shared_id: u64) -> std::result::Result<(), AbiError> {
-        if let Some(tenant) = self.queue_owner_tenant(shared_id) {
-            self.enforce_quota(&tenant, ResourceClass::HostQueue, 1)?;
+    pub(crate) fn reserve_queue_item(
+        &self,
+        shared_id: u64,
+    ) -> std::result::Result<Option<QuotaReservation>, AbiError> {
+        match self.queue_owner_tenant(shared_id) {
+            Some(tenant) => self
+                .reserve_quota(&tenant, ResourceClass::HostQueue, 1)
+                .map(Some),
+            None => Ok(None),
         }
-        Ok(())
     }
 
     /// Releases the pipe slot reserved for a delivered (dequeued) item: the
@@ -2006,83 +2167,21 @@ impl Runtime {
             )
         })?;
 
-        // `DelegateGrants` is bootstrap-provisioned only: it can never be
-        // conferred on a child process, not even by a parent that holds it.
-        // Without this, a delegator could spawn further delegators and chain
-        // the exception to authority monotonicity arbitrarily.
-        if grants
+        // Some capabilities are bootstrap-provisioned only: the host mints
+        // them for the system guest that owns the resource (the bridge, the
+        // identity guest, the accountant, the registry), and a spawn can never
+        // confer them on a child. One vocabulary drives the check so a new
+        // bootstrap-provisioned capability cannot be forgotten here.
+        if let Some(grant) = grants
             .iter()
-            .any(|grant| grant.capability == Capability::DelegateGrants)
+            .find(|grant| grant.capability.is_bootstrap_provisioned())
         {
             return Err(AbiError::new(
                 AbiErrorCode::PermissionDenied,
-                "DelegateGrants cannot be delegated to child processes",
-            ));
-        }
-
-        // `MintCertificate` mirrors `DelegateGrants`: it is bootstrap-
-        // provisioned only. A spawn that confers it on a child is denied even
-        // when the parent itself holds the capability, so mint authority can
-        // never be reproduced outside the identity guest.
-        if grants
-            .iter()
-            .any(|grant| grant.capability == Capability::MintCertificate)
-        {
-            return Err(AbiError::new(
-                AbiErrorCode::PermissionDenied,
-                "MintCertificate cannot be delegated to child processes",
-            ));
-        }
-
-        // `QuotaWrite` mirrors `MintCertificate` and `DelegateGrants`: it is
-        // bootstrap-provisioned only. A spawn that confers it on a child is
-        // denied even when the parent itself holds the capability, so quota
-        // authorship stays with the accounting guest.
-        if grants
-            .iter()
-            .any(|grant| grant.capability == Capability::QuotaWrite)
-        {
-            return Err(AbiError::new(
-                AbiErrorCode::PermissionDenied,
-                "QuotaWrite cannot be delegated to child processes",
-            ));
-        }
-
-        // `ProcessProbe` mirrors `QuotaWrite`: it is bootstrap-provisioned
-        // only. A spawn that confers it on a child is denied even when the
-        // parent itself holds the capability, so grant-state probing stays
-        // with the bootstrap-provisioned registry.
-        if grants
-            .iter()
-            .any(|grant| grant.capability == Capability::ProcessProbe)
-        {
-            return Err(AbiError::new(
-                AbiErrorCode::PermissionDenied,
-                "ProcessProbe cannot be delegated to child processes",
-            ));
-        }
-
-        // `DomainWrite` mirrors `ProcessProbe`: bootstrap-provisioned only.
-        if grants
-            .iter()
-            .any(|grant| grant.capability == Capability::DomainWrite)
-        {
-            return Err(AbiError::new(
-                AbiErrorCode::PermissionDenied,
-                "DomainWrite cannot be delegated to child processes",
-            ));
-        }
-
-        // A route claim is non-delegable: only the host may designate the
-        // process that owns a reserved name, so a parent can never confer
-        // (and thereby duplicate) a claim on a child.
-        if grants
-            .iter()
-            .any(|grant| grant.capability == Capability::RouteClaim)
-        {
-            return Err(AbiError::new(
-                AbiErrorCode::PermissionDenied,
-                "RouteClaim cannot be conferred on child processes",
+                format!(
+                    "{} cannot be conferred on child processes",
+                    grant.capability.name()
+                ),
             ));
         }
 
@@ -2095,25 +2194,9 @@ impl Runtime {
         // check: admitting it under delegation would escape the tenant fence.
         // This is the deliberate, tenant-fenced exception to authority
         // monotonicity (see the `rebuild-guest-bridge` design, D7).
-        let delegating = match delegation_scope(&authority.grants) {
-            Some(DelegationScope::Root) => grants.iter().all(|grant| {
-                grant.selectors.iter().any(|selector| {
-                    matches!(
-                        selector,
-                        ResourceSelector::Tenant(_)
-                            | ResourceSelector::Namespace(Namespace::Tenant(_))
-                    )
-                })
-            }),
-            Some(DelegationScope::Tenants(tenants)) => grants.iter().all(|grant| {
-                grant.selectors.iter().any(|selector| match selector {
-                    ResourceSelector::Tenant(t) => tenants.contains(t),
-                    ResourceSelector::Namespace(Namespace::Tenant(t)) => tenants.contains(t),
-                    _ => false,
-                })
-            }),
-            None => false,
-        };
+        let delegating = grants
+            .iter()
+            .all(|grant| child_grant_within_delegation(&authority.grants, grant));
 
         if delegating {
             return Ok(());
@@ -2180,48 +2263,13 @@ impl Runtime {
                 format!("unknown process authority {process_id}"),
             )
         })?;
-        if delegation_scope(&authority.grants).is_some_and(|scope| scope.admits_tenant(requested)) {
+        if grants_delegate_tenant(&authority.grants, requested) {
             return Ok(Some(requested.to_string()));
         }
         Err(AbiError::new(
             AbiErrorCode::PermissionDenied,
             format!("spawn tenant {requested:?} requires an in-scope DelegateGrants grant"),
         ))
-    }
-}
-
-/// Extracts the delegation scope from an authority's grants: `Root` when any
-/// `DelegateGrants` grant carries a `Namespace::Root` selector, the tenant set
-/// from `Tenant`/`Namespace::Tenant` selectors, and `None` when no
-/// `DelegateGrants` grant carries a tenant-scoping selector.
-fn delegation_scope(grants: &[CapabilityGrant]) -> Option<DelegationScope> {
-    let mut tenants = HashSet::new();
-    let mut root = false;
-    for grant in grants
-        .iter()
-        .filter(|grant| grant.capability == Capability::DelegateGrants)
-    {
-        for selector in &grant.selectors {
-            match selector {
-                ResourceSelector::Tenant(tenant) => {
-                    tenants.insert(tenant.clone());
-                }
-                ResourceSelector::Namespace(Namespace::Tenant(tenant)) => {
-                    tenants.insert(tenant.clone());
-                }
-                ResourceSelector::Namespace(Namespace::Root) => {
-                    root = true;
-                }
-                _ => {}
-            }
-        }
-    }
-    if root {
-        Some(DelegationScope::Root)
-    } else if tenants.is_empty() {
-        None
-    } else {
-        Some(DelegationScope::Tenants(tenants))
     }
 }
 
@@ -2341,6 +2389,70 @@ mod tests {
         }
     }
 
+    /// A create-time rejection still names an operation, so the guest can poll
+    /// the structured reason (and, for a version mismatch, both versions)
+    /// instead of seeing only a failed status code.
+    #[test]
+    fn a_rejected_create_carries_its_structured_error() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants(&runtime, Vec::new());
+        let guest_version = selium_abi::SELIUM_ABI_VERSION + 1;
+        let error = selium_abi::HostcallPreambleError::VersionMismatch {
+            host: selium_abi::SELIUM_ABI_VERSION,
+            guest: guest_version,
+        }
+        .to_abi_error();
+
+        let (status, operation) = runtime.reject_hostcall(guest.process_id, error);
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        match runtime.poll_hostcall(guest.process_id, operation) {
+            CompletionState::Failed(error) => {
+                assert_eq!(error.code, AbiErrorCode::MalformedPayload);
+                assert!(
+                    error
+                        .message
+                        .contains(&selium_abi::SELIUM_ABI_VERSION.to_string()),
+                    "the host version is named: {}",
+                    error.message
+                );
+                assert!(
+                    error.message.contains(&guest_version.to_string()),
+                    "the guest version is named: {}",
+                    error.message
+                );
+            }
+            other => panic!("expected a structured failure, got {other:?}"),
+        }
+        assert!(
+            runtime.drop_hostcall(guest.process_id, operation),
+            "the failed operation is reclaimed on drop"
+        );
+    }
+
+    #[test]
+    fn non_cooperative_rejections_cannot_exceed_the_process_operation_budget() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants(&runtime, Vec::new());
+        let error = AbiError::new(AbiErrorCode::MalformedPayload, "hostile request");
+
+        for _ in 0..MAX_OPERATIONS_PER_PROCESS {
+            let (status, operation_id) = runtime.reject_hostcall(guest.process_id, error.clone());
+            assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+            assert_ne!(operation_id, 0);
+        }
+        assert_eq!(runtime.operations.lock().len(), MAX_OPERATIONS_PER_PROCESS);
+
+        // The guest never polls or drops any completion. Further malformed
+        // requests fail immediately without allocating another host record.
+        for _ in 0..32 {
+            assert_eq!(
+                runtime.reject_hostcall(guest.process_id, error.clone()),
+                (selium_abi::HOSTCALL_STATUS_FAILED, 0)
+            );
+        }
+        assert_eq!(runtime.operations.lock().len(), MAX_OPERATIONS_PER_PROCESS);
+    }
+
     fn spawn_with_grants(
         runtime: &Runtime,
         grants: Vec<CapabilityGrant>,
@@ -2437,6 +2549,8 @@ mod tests {
         assert_eq!(first_id, OperationId::MAX);
         assert_eq!(second_id, 1);
     }
+    // scenario: selium-abi/volume-hostcall-variants/bytes-round-trip
+    // scenario: selium-abi/volume-hostcall-variants/append-never-rewrites-earlier-bytes
 
     #[test]
     fn volume_hostcalls_cover_the_byte_container_lifecycle() {
@@ -2555,6 +2669,7 @@ mod tests {
         );
     }
 
+    // scenario: capability-enforcement/volume-hostcall-authorisation/capability-required
     #[test]
     fn volume_open_requires_the_storage_capability() {
         let runtime = Runtime::default();
@@ -2574,6 +2689,7 @@ mod tests {
         assert_eq!(error.code, AbiErrorCode::PermissionDenied);
     }
 
+    // scenario: capability-enforcement/volume-hostcall-authorisation/cross-tenant-open-denied
     #[test]
     fn volume_open_for_a_foreign_tenant_requires_delegation() {
         let runtime = Runtime::default();
@@ -2601,6 +2717,8 @@ mod tests {
         assert_eq!(error.code, AbiErrorCode::PermissionDenied);
     }
 
+    // scenario: selium-runtime/principal-provenance-allocation/volume-minted-under-the-serving-tenant
+    // scenario: capability-enforcement/volume-hostcall-authorisation/root-serves-a-tenant
     #[test]
     fn root_principal_opens_a_volume_under_a_named_tenant() {
         let runtime = Runtime::default();
@@ -2655,6 +2773,7 @@ mod tests {
     /// `UriPrefix` scopes a `Storage` grant over volume *names*: a prefix-scoped
     /// grant admits the volumes under it and refuses the rest, both when opening a
     /// volume and when spawning from a durable slice on one.
+    // scenario: capability-enforcement/grant-time-evaluatable-honesty-for-uriprefix/volume-name-prefix-admitted
     #[test]
     fn a_volume_name_prefix_scopes_the_storage_grant_at_use_time() {
         let runtime = Runtime::default();
@@ -2737,6 +2856,8 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/volume-hostcall-enforcement/append-beyond-the-ceiling-denied
+    // scenario: selium-accountant/quota-enforcement-at-allocation/append-over-volume-quota-denied
     #[test]
     fn append_beyond_the_volume_ceiling_writes_no_bytes() {
         let runtime = Runtime::default();
@@ -2803,7 +2924,10 @@ mod tests {
             0
         );
     }
+    // scenario: selium-abi/volume-resource-class/volume-is-the-storage-quota-dimension
+    // scenario: selium-abi/tenant-volume-usage-hostcall/removal-releases-usage
 
+    // scenario: selium-runtime/volume-hostcall-enforcement/removal-releases-usage
     #[test]
     fn removing_a_volume_releases_its_usage() {
         let runtime = Runtime::default();
@@ -2978,6 +3102,8 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/guestlogregister-hostcall-validation/guestlogregister-accepted-for-own-region
+    // scenario: selium-runtime/guestlogregister-hostcall-validation/guestlogregister-rejected-for-foreign-region
     #[test]
     fn guest_log_register_valid_and_foreign() {
         let runtime = Runtime::default();
@@ -3037,6 +3163,8 @@ mod tests {
         ));
     }
 
+    // scenario: selium-runtime/grant-admission-and-evaluation/errors-attribute-correctly
+    // scenario: capability-enforcement/evaluatable-scope-contexts/tenant-isolation-enforces
     #[test]
     fn tenant_scoped_grant_enforces_isolation() {
         let runtime = Runtime::default();
@@ -3123,6 +3251,8 @@ mod tests {
         }
     }
 
+    // scenario: capability-enforcement/evaluatable-scope-contexts/selector-admission-at-grant-time
+    // scenario: capability-enforcement/grant-time-evaluatable-honesty-for-uriprefix/uriprefix-on-non-network-class-rejected
     #[test]
     fn unevaluatable_selector_rejected_at_spawn() {
         let runtime = Runtime::default();
@@ -3151,6 +3281,7 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/grant-admission-and-evaluation/accept-then-deny-is-impossible
     #[test]
     fn accept_then_deny_trap_is_impossible() {
         let runtime = Runtime::default();
@@ -3197,6 +3328,7 @@ mod tests {
         }
     }
 
+    // scenario: capability-enforcement/scoped-grant-delegation/delegator-spawns-within-tenant
     #[test]
     fn delegator_within_tenant_spawns_child_with_extra_grants() {
         let runtime = Runtime::default();
@@ -3247,6 +3379,7 @@ mod tests {
         ));
     }
 
+    // scenario: capability-enforcement/scoped-grant-delegation/non-delegator-out-of-scope-child-denied
     #[test]
     fn non_delegator_out_of_scope_child_denied() {
         let runtime = Runtime::default();
@@ -3288,6 +3421,7 @@ mod tests {
         ));
     }
 
+    // scenario: capability-enforcement/scoped-grant-delegation/delegation-outside-tenant-denied
     #[test]
     fn delegation_outside_tenant_denied() {
         let runtime = Runtime::default();
@@ -3335,6 +3469,7 @@ mod tests {
         ));
     }
 
+    // scenario: capability-enforcement/scoped-grant-delegation/unscoped-grant-not-conferable-under-delegation
     #[test]
     fn delegation_denies_unscoped_child_grant() {
         let runtime = Runtime::default();
@@ -3393,6 +3528,7 @@ mod tests {
     /// whose grants the root delegator does not itself hold: the root
     /// namespace is greater than any tenant, so any tenant-scoped child grant
     /// is admitted.
+    // scenario: capability-enforcement/scoped-grant-delegation/root-delegator-spawns-for-any-tenant
     #[test]
     fn root_delegator_spawns_tenant_scoped_child() {
         let runtime = Runtime::default();
@@ -3585,6 +3721,7 @@ mod tests {
         ));
     }
 
+    // scenario: capability-enforcement/delegategrants-is-not-conferable/re-delegation-denied
     #[test]
     fn delegate_grants_cannot_be_conferred_on_children() {
         let runtime = Runtime::default();
@@ -3632,6 +3769,8 @@ mod tests {
         ));
     }
 
+    // scenario: route-claims/host-issued-route-claims/claim-is-not-delegable
+    // scenario: capability-enforcement/routeclaim-is-not-conferable/child-cannot-receive-a-route-claim
     #[test]
     fn route_claim_cannot_be_conferred_on_children() {
         let runtime = Runtime::default();
@@ -3675,6 +3814,8 @@ mod tests {
         ));
     }
 
+    // scenario: route-claims/host-issued-route-claims/exact-match-only
+    // scenario: capability-enforcement/routeclaim-is-not-conferable/bootstrap-claim-admitted
     #[test]
     fn route_claim_requires_one_exact_root_uri() {
         let runtime = Runtime::default();
@@ -3740,6 +3881,7 @@ mod tests {
         );
     }
 
+    // scenario: capability-enforcement/mintcertificate-is-not-conferable/providing-mintcertificate-at-spawn-is-denied
     #[test]
     fn mint_certificate_cannot_be_conferred_on_children() {
         let runtime = Runtime::default();
@@ -3804,6 +3946,7 @@ mod tests {
         );
     }
 
+    // scenario: capability-enforcement/quotawrite-is-not-conferable/conferring-quotawrite-at-spawn-is-denied
     #[test]
     fn quota_write_cannot_be_conferred_on_children() {
         let runtime = Runtime::default();
@@ -3843,6 +3986,8 @@ mod tests {
         ));
     }
 
+    // scenario: selium-abi/quotawrite-capability-variant/quota-hostcall-requires-the-capability
+    // scenario: selium-accountant/sole-quota-authorship/non-accountant-quota-write-denied
     #[test]
     fn quota_hostcalls_deny_without_quota_write() {
         let runtime = Runtime::default();
@@ -3876,6 +4021,8 @@ mod tests {
         }
     }
 
+    // scenario: selium-accountant/quota-enforcement-at-allocation/allocation-over-quota-denied
+    // scenario: selium-accountant/quota-enforcement-at-allocation/quota-distinct-from-grant
     #[test]
     fn over_ceiling_shared_memory_allocation_is_denied() {
         let runtime = Runtime::default();
@@ -3941,6 +4088,8 @@ mod tests {
     /// costs nothing, each queued item reserves one slot against the queue
     /// owner's tenant, an over-ceiling send is denied with `QuotaExceeded`,
     /// and receiving releases the slot.
+    // scenario: selium-accountant/pipe-quotas-meter-queued-items/over-ceiling-send-denied
+    // scenario: selium-accountant/pipe-quotas-meter-queued-items/receiving-frees-the-slot
     #[test]
     fn pipe_quota_meters_queued_items_not_queue_count() {
         let runtime = Runtime::default();
@@ -4069,6 +4218,8 @@ mod tests {
     /// A dying process releases its live reservations: allocated regions'
     /// bytes return to the tenant's quota, and pipe slots held by items
     /// still queued in its queues are returned. Storage stays sticky.
+    // scenario: guest-shared-memory/mapping-release-on-process-teardown/guest-side-attachment-is-released-at-teardown
+    // scenario: selium-accountant/quota-enforcement-at-allocation/a-dying-process-releases-its-reservations
     #[test]
     fn process_teardown_releases_region_and_pipe_quota() {
         let runtime = Runtime::default();
@@ -4165,6 +4316,8 @@ mod tests {
     /// A handed-off region transfers: the sender's entry leaves its resource
     /// table (it can no longer free the region) and the receiver's gains it,
     /// with the quota reservation following the resource across tenants.
+    // scenario: capability-enforcement/ownership-checked-attach/queue-handoff-shares-ownership
+    // scenario: selium-accountant/handed-off-resources-transfer-ownership/cross-tenant-handoff-moves-the-reservation
     #[test]
     fn handoff_transfers_region_ownership_and_quota() {
         let runtime = Runtime::default();
@@ -4336,6 +4489,630 @@ mod tests {
         );
     }
 
+    // scenario: capability-enforcement/operation-target-certificate-authorisation/tenant-scoped-mint-cannot-cross-tenants
+    // scenario: capability-enforcement/operation-target-certificate-authorisation/authorised-target-succeeds
+    #[test]
+    fn tenant_scoped_mint_cannot_cross_tenants() {
+        use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256, PublicKeyData};
+
+        let runtime = Runtime::default();
+        runtime.generate_keyring().expect("generate keyring");
+        let root = spawn_with_grants(
+            &runtime,
+            vec![CapabilityGrant::new(
+                Capability::MintCertificate,
+                Vec::new(),
+            )],
+        );
+        let (_, op) = runtime.begin_hostcall(
+            root.process_id,
+            HostcallRequest::SignTenantCa {
+                tenant: "beta".to_string(),
+            },
+        );
+        assert!(matches!(
+            ready(&runtime, root.process_id, op),
+            HostcallOutput::Certificate(_)
+        ));
+
+        let acme = spawn_with_grants_and_tenant(
+            &runtime,
+            "acme-mint",
+            vec![CapabilityGrant::new(
+                Capability::MintCertificate,
+                vec![ResourceSelector::Tenant("acme".to_string())],
+            )],
+            Some("acme"),
+        );
+        let client_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).expect("client key");
+        let spki = client_key.subject_public_key_info();
+        for request in [
+            HostcallRequest::SignTenantCa {
+                tenant: "beta".to_string(),
+            },
+            HostcallRequest::SignUserCert {
+                tenant: "beta".to_string(),
+                spki_der: spki.clone(),
+            },
+            HostcallRequest::RevokeCa {
+                tenant: "beta".to_string(),
+            },
+        ] {
+            let (status, op) = runtime.begin_hostcall(acme.process_id, request);
+            assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+            assert!(matches!(
+                runtime.poll_hostcall(acme.process_id, op),
+                CompletionState::Failed(error) if error.code == AbiErrorCode::PermissionDenied
+            ));
+        }
+        let (_, op) = runtime.begin_hostcall(
+            root.process_id,
+            HostcallRequest::SignUserCert {
+                tenant: "beta".to_string(),
+                spki_der: spki,
+            },
+        );
+        assert!(matches!(
+            ready(&runtime, root.process_id, op),
+            HostcallOutput::Certificate(_)
+        ));
+        let (_, op) = runtime.begin_hostcall(
+            acme.process_id,
+            HostcallRequest::SignTenantCa {
+                tenant: "acme".to_string(),
+            },
+        );
+        assert!(matches!(
+            ready(&runtime, acme.process_id, op),
+            HostcallOutput::Certificate(_)
+        ));
+    }
+
+    // scenario: capability-enforcement/intersection-preserving-delegation/root-and-tenant-selectors-remain-conjunctive
+    #[test]
+    fn root_plus_tenant_selectors_stay_conjunctive() {
+        let runtime = Runtime::default();
+        let parent = spawn_with_grants_and_tenant(
+            &runtime,
+            "conjunctive-bridge",
+            vec![
+                CapabilityGrant::new(
+                    Capability::ProcessLifecycle,
+                    vec![ResourceSelector::ResourceClass(ResourceClass::Process)],
+                ),
+                CapabilityGrant::new(
+                    Capability::DelegateGrants,
+                    vec![
+                        ResourceSelector::Namespace(Namespace::Root),
+                        ResourceSelector::Tenant("acme".to_string()),
+                    ],
+                ),
+            ],
+            None,
+        );
+        let spawn = |tenant: &str| {
+            runtime.begin_hostcall(
+                parent.process_id,
+                HostcallRequest::ProcessStart {
+                    source: selium_abi::ModuleSource::Inline(module_with_entrypoint("main", "")),
+                    entrypoint: "main".to_string(),
+                    arguments: Vec::new(),
+                    grants: Vec::new(),
+                    tenant: Some(tenant.to_string()),
+                },
+            )
+        };
+        let (status, op) = spawn("acme");
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        drop(runtime.poll_hostcall(parent.process_id, op));
+        let (status, op) = spawn("beta");
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(parent.process_id, op),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::PermissionDenied
+        ));
+    }
+
+    // scenario: capability-enforcement/intersection-preserving-delegation/separate-grants-do-not-merge-authority
+    #[test]
+    fn separate_delegation_grants_do_not_merge_scope() {
+        let runtime = Runtime::default();
+        let parent = spawn_with_grants_and_tenant(
+            &runtime,
+            "split-bridge",
+            vec![
+                CapabilityGrant::new(
+                    Capability::ProcessLifecycle,
+                    vec![ResourceSelector::ResourceClass(ResourceClass::Process)],
+                ),
+                CapabilityGrant::new(
+                    Capability::DelegateGrants,
+                    vec![
+                        ResourceSelector::Namespace(Namespace::Root),
+                        ResourceSelector::Tenant("acme".to_string()),
+                    ],
+                ),
+                CapabilityGrant::new(
+                    Capability::DelegateGrants,
+                    vec![ResourceSelector::Tenant("beta".to_string())],
+                ),
+            ],
+            None,
+        );
+        let spawn = |tenant: &str| {
+            runtime.begin_hostcall(
+                parent.process_id,
+                HostcallRequest::ProcessStart {
+                    source: selium_abi::ModuleSource::Inline(module_with_entrypoint("main", "")),
+                    entrypoint: "main".to_string(),
+                    arguments: Vec::new(),
+                    grants: Vec::new(),
+                    tenant: Some(tenant.to_string()),
+                },
+            )
+        };
+        for tenant in ["acme", "beta"] {
+            let (status, op) = spawn(tenant);
+            assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+            drop(runtime.poll_hostcall(parent.process_id, op));
+        }
+        let (status, op) = spawn("gamma");
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(parent.process_id, op),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn child_grant_must_fit_one_parent_delegation_grant() {
+        let runtime = Runtime::default();
+        let parent = spawn_with_grants_and_tenant(
+            &runtime,
+            "fenced-bridge",
+            vec![
+                CapabilityGrant::new(
+                    Capability::ProcessLifecycle,
+                    vec![ResourceSelector::ResourceClass(ResourceClass::Process)],
+                ),
+                CapabilityGrant::new(
+                    Capability::DelegateGrants,
+                    vec![
+                        ResourceSelector::Namespace(Namespace::Root),
+                        ResourceSelector::Tenant("acme".to_string()),
+                    ],
+                ),
+            ],
+            None,
+        );
+        let spawn = |tenant: &str| {
+            runtime.begin_hostcall(
+                parent.process_id,
+                HostcallRequest::ProcessStart {
+                    source: selium_abi::ModuleSource::Inline(module_with_entrypoint("main", "")),
+                    entrypoint: "main".to_string(),
+                    arguments: Vec::new(),
+                    grants: vec![CapabilityGrant::new(
+                        Capability::Network,
+                        vec![
+                            ResourceSelector::Tenant(tenant.to_string()),
+                            ResourceSelector::ResourceClass(ResourceClass::TcpStream),
+                        ],
+                    )],
+                    tenant: None,
+                },
+            )
+        };
+        let (status, op) = spawn("beta");
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(parent.process_id, op),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::PermissionDenied
+        ));
+        let (status, op) = spawn("acme");
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        drop(runtime.poll_hostcall(parent.process_id, op));
+    }
+
+    #[test]
+    fn repeated_denied_hostcalls_are_reclaimed_after_poll_and_drop() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants(
+            &runtime,
+            vec![CapabilityGrant::new(
+                Capability::SharedMemory,
+                vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+            )],
+        );
+        let baseline = runtime.operations.lock().len();
+        let cases = [
+            (
+                HostcallRequest::VolumeOpen {
+                    name: "orders".to_string(),
+                    serving_tenant: None,
+                },
+                AbiErrorCode::PermissionDenied,
+            ),
+            (
+                HostcallRequest::RandomBytes { len: u32::MAX },
+                AbiErrorCode::MalformedPayload,
+            ),
+        ];
+        for _ in 0..32 {
+            for (request, expected) in &cases {
+                let (status, operation) = runtime.begin_hostcall(guest.process_id, request.clone());
+                assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+                assert!(matches!(
+                    runtime.poll_hostcall(guest.process_id, operation),
+                    CompletionState::Failed(error) if error.code == *expected
+                ));
+                assert!(runtime.drop_hostcall(guest.process_id, operation));
+            }
+        }
+        assert_eq!(runtime.operations.lock().len(), baseline);
+    }
+
+    // scenario: selium-runtime/failed-resource-operations-roll-back-reservations/region-allocation-fails-after-reservation
+    #[test]
+    fn injected_region_failure_rolls_back_quota_and_ownership() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants_and_tenant(
+            &runtime,
+            "rollback-region",
+            vec![CapabilityGrant::new(
+                Capability::SharedMemory,
+                vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+            )],
+            Some("acme"),
+        );
+        let quota = runtime.kernel().quota();
+        quota.set("acme", ResourceClass::SharedRegion, 1_000_000);
+        let baseline_used = quota.used("acme", ResourceClass::SharedRegion);
+        let baseline_regions = runtime.kernel().memory().live_shared_region_count();
+
+        runtime.inject_region_allocation_failure(true);
+        let (status, operation) = runtime.begin_hostcall(
+            guest.process_id,
+            HostcallRequest::AllocRegion {
+                pages: 1,
+                prot: selium_abi::RegionProt::ReadWrite,
+                purpose: selium_abi::ResourceKind::SharedMemory,
+                serving_tenant: None,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(guest.process_id, operation),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::Internal
+        ));
+        assert_eq!(
+            quota.used("acme", ResourceClass::SharedRegion),
+            baseline_used
+        );
+        assert_eq!(
+            runtime.kernel().memory().live_shared_region_count(),
+            baseline_regions
+        );
+        assert!(
+            !runtime
+                .shared_resource_owners
+                .lock()
+                .keys()
+                .any(|(class, _)| class == &ResourceClass::SharedRegion)
+        );
+        assert!(
+            !runtime
+                .resource_tenants
+                .lock()
+                .keys()
+                .any(|(class, _)| class == &ResourceClass::SharedRegion)
+        );
+
+        runtime.inject_region_allocation_failure(false);
+        let (status, operation) = runtime.begin_hostcall(
+            guest.process_id,
+            HostcallRequest::AllocRegion {
+                pages: 1,
+                prot: selium_abi::RegionProt::ReadWrite,
+                purpose: selium_abi::ResourceKind::SharedMemory,
+                serving_tenant: None,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        assert!(matches!(
+            runtime.poll_hostcall(guest.process_id, operation),
+            CompletionState::Ready(HostcallOutput::RegionAlloc(_))
+        ));
+        assert_eq!(
+            quota.used("acme", ResourceClass::SharedRegion),
+            baseline_used + 65_536
+        );
+    }
+
+    // scenario: selium-runtime/failed-resource-operations-roll-back-reservations/append-or-queue-send-fails
+    #[test]
+    fn injected_append_failure_rolls_back_volume_quota_without_writing() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants_and_tenant(
+            &runtime,
+            "rollback-append",
+            vec![CapabilityGrant::new(
+                Capability::Storage,
+                vec![ResourceSelector::ResourceClass(ResourceClass::Volume)],
+            )],
+            Some("acme"),
+        );
+        let quota = runtime.kernel().quota();
+        quota.set("acme", ResourceClass::Volume, 1_000_000);
+        let (status, open) = runtime.begin_hostcall(
+            guest.process_id,
+            HostcallRequest::VolumeOpen {
+                name: "orders".to_string(),
+                serving_tenant: None,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        let HostcallOutput::Volume(volume) = ready(&runtime, guest.process_id, open) else {
+            panic!("expected a volume descriptor");
+        };
+        let baseline_used = quota.used("acme", ResourceClass::Volume);
+        let baseline_len = runtime
+            .kernel()
+            .volumes()
+            .len(volume.local_id)
+            .expect("len");
+
+        runtime.inject_volume_append_failure(true);
+        let (status, operation) = runtime.begin_hostcall(
+            guest.process_id,
+            HostcallRequest::VolumeAppend {
+                local_id: volume.local_id,
+                bytes: b"data".to_vec(),
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(guest.process_id, operation),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::Internal
+        ));
+        assert_eq!(quota.used("acme", ResourceClass::Volume), baseline_used);
+        assert_eq!(
+            runtime
+                .kernel()
+                .volumes()
+                .len(volume.local_id)
+                .expect("len"),
+            baseline_len
+        );
+
+        runtime.inject_volume_append_failure(false);
+        let (status, operation) = runtime.begin_hostcall(
+            guest.process_id,
+            HostcallRequest::VolumeAppend {
+                local_id: volume.local_id,
+                bytes: b"data".to_vec(),
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        assert!(matches!(
+            ready(&runtime, guest.process_id, operation),
+            HostcallOutput::U64(_)
+        ));
+        assert_eq!(quota.used("acme", ResourceClass::Volume), baseline_used + 4);
+    }
+
+    #[test]
+    fn injected_queue_send_failure_rolls_back_the_pipe_slot() {
+        let runtime = Runtime::default();
+        let owner = spawn_with_grants_and_tenant(
+            &runtime,
+            "rollback-queue",
+            vec![CapabilityGrant::new(
+                Capability::HostQueue,
+                vec![ResourceSelector::ResourceClass(ResourceClass::HostQueue)],
+            )],
+            Some("acme"),
+        );
+        let quota = runtime.kernel().quota();
+        quota.set("acme", ResourceClass::HostQueue, 10);
+        let (status, create) = runtime.begin_hostcall(
+            owner.process_id,
+            HostcallRequest::HostQueueCreate {
+                serving_tenant: None,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        let HostcallOutput::HostQueue(queue) = ready(&runtime, owner.process_id, create) else {
+            panic!("expected a queue descriptor");
+        };
+        let baseline_used = quota.used("acme", ResourceClass::HostQueue);
+        runtime.inject_queue_send_failure(true);
+        let (status, operation) = runtime.begin_hostcall(
+            owner.process_id,
+            HostcallRequest::HostQueueSend {
+                local_id: queue.local_id,
+                value: 1,
+                metadata: Vec::new(),
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(owner.process_id, operation),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::Internal
+        ));
+        assert_eq!(quota.used("acme", ResourceClass::HostQueue), baseline_used);
+        assert_eq!(
+            runtime
+                .kernel()
+                .queues()
+                .host_queue_pending(queue.local_id)
+                .expect("pending"),
+            0
+        );
+
+        runtime.inject_queue_send_failure(false);
+        let (status, _operation) = runtime.begin_hostcall(
+            owner.process_id,
+            HostcallRequest::HostQueueSend {
+                local_id: queue.local_id,
+                value: 1,
+                metadata: Vec::new(),
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        assert_eq!(
+            quota.used("acme", ResourceClass::HostQueue),
+            baseline_used + 1
+        );
+    }
+
+    // scenario: selium-runtime/dedicated-timer-driver/a-cancelled-sleep-is-not-woken
+    #[test]
+    fn dropping_a_pending_sleep_releases_its_timer() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants(
+            &runtime,
+            vec![CapabilityGrant::new(
+                Capability::SharedMemory,
+                vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+            )],
+        );
+        let baseline = runtime.operations.lock().len();
+        let (status, operation) = runtime.begin_hostcall_with_task(
+            guest.process_id,
+            HostcallRequest::Sleep { millis: 3_600_000 },
+            Some(1),
+            None,
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_PENDING);
+        assert_eq!(runtime.pending_timer_count(), 1);
+        assert!(runtime.drop_hostcall(guest.process_id, operation));
+        assert_eq!(runtime.pending_timer_count(), 0);
+        assert_eq!(runtime.operations.lock().len(), baseline);
+    }
+
+    #[test]
+    fn stopping_a_process_releases_its_pending_sleep() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants(
+            &runtime,
+            vec![CapabilityGrant::new(
+                Capability::SharedMemory,
+                vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+            )],
+        );
+        let (status, _operation) = runtime.begin_hostcall_with_task(
+            guest.process_id,
+            HostcallRequest::Sleep { millis: 3_600_000 },
+            Some(1),
+            None,
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_PENDING);
+        assert_eq!(runtime.pending_timer_count(), 1);
+        runtime
+            .stop_process(guest.process_id)
+            .expect("process teardown");
+        assert_eq!(runtime.pending_timer_count(), 0);
+    }
+
+    #[test]
+    fn failed_guest_attachment_leaves_no_mapping_and_teardown_reclaims_it() {
+        let runtime = Runtime::default();
+        let owner = spawn_with_grants(
+            &runtime,
+            vec![CapabilityGrant::new(
+                Capability::SharedMemory,
+                vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+            )],
+        );
+        let consumer = runtime
+            .spawn_system_guest(SystemGuestDescriptor {
+                name: "attachment-consumer".to_string(),
+                module_id: "attachment-consumer-module".to_string(),
+                module_bytes: wat::parse_str(r#"(module (memory 1) (func (export "boot")))"#)
+                    .expect("compile consumer module"),
+                entrypoint: "boot".to_string(),
+                arguments: Vec::new(),
+                grants: vec![CapabilityGrant::new(
+                    Capability::SharedMemory,
+                    vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+                )],
+                tenant: None,
+                discovery_service: false,
+                handlers: Vec::new(),
+            })
+            .expect("spawn consumer");
+        let (_, alloc_op) = runtime.begin_hostcall(
+            owner.process_id,
+            HostcallRequest::AllocRegion {
+                pages: 1,
+                prot: selium_abi::RegionProt::ReadWrite,
+                purpose: selium_abi::ResourceKind::SharedMemory,
+                serving_tenant: None,
+            },
+        );
+        let HostcallOutput::RegionAlloc(alloc) = ready(&runtime, owner.process_id, alloc_op) else {
+            panic!("expected region allocation");
+        };
+        let baseline_mappings = runtime.kernel().memory().live_shared_mapping_count();
+        let (status, _) = runtime.begin_hostcall(
+            consumer.process_id,
+            HostcallRequest::AttachRegion {
+                region_id: alloc.region_id,
+                reader_slot: None,
+                prot: selium_abi::RegionProt::ReadWrite,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert_eq!(
+            runtime.kernel().memory().live_shared_mapping_count(),
+            baseline_mappings
+        );
+        assert!(
+            !runtime
+                .guest_region_memories
+                .lock()
+                .contains_key(&(consumer.process_id, alloc.region_id))
+        );
+
+        let (status, _) = runtime.begin_hostcall(
+            owner.process_id,
+            HostcallRequest::DeclareAttachableByResolution {
+                resource_class: ResourceClass::SharedRegion,
+                resource_id: alloc.region_id,
+                scope: selium_abi::AttachDeclarationScope::Any,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        let (status, _) = runtime.begin_hostcall(
+            consumer.process_id,
+            HostcallRequest::RecordResolvedResourceFor {
+                resource_class: ResourceClass::SharedRegion,
+                resource_id: alloc.region_id,
+                client_process_id: consumer.process_id,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        let (status, attach_op) = runtime.begin_hostcall(
+            consumer.process_id,
+            HostcallRequest::AttachRegion {
+                region_id: alloc.region_id,
+                reader_slot: None,
+                prot: selium_abi::RegionProt::ReadWrite,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        assert!(matches!(
+            runtime.poll_hostcall(consumer.process_id, attach_op),
+            CompletionState::Ready(HostcallOutput::RegionAttach(_))
+        ));
+        runtime
+            .stop_process(consumer.process_id)
+            .expect("consumer teardown");
+        assert!(!runtime.resident_guest_ids().contains(&consumer.process_id));
+    }
+
+    // scenario: selium-abi/mintcertificate-capability-variant/signing-hostcall-requires-the-capability
     #[test]
     fn signing_hostcalls_deny_without_mint_certificate() {
         let runtime = Runtime::default();
@@ -4371,6 +5148,7 @@ mod tests {
             ));
         }
     }
+    // scenario: selium-identity/host-held-signing-oracle/signing-returns-certificates-never-keys
 
     #[test]
     fn signing_hostcalls_return_certificates_only() {
@@ -4459,6 +5237,9 @@ mod tests {
             CompletionState::Failed(error) if error.code == AbiErrorCode::Internal
         ));
     }
+    // scenario: selium-abi/owner-scoped-attach-authorisation/recorded-id-authorises-the-attach
+    // scenario: selium-abi/owner-declared-resolvable-attach/declared-resource-admits-a-resolver
+    // scenario: selium-abi/owner-declared-resolvable-attach/undeclared-resource-refuses-a-record
 
     #[test]
     fn record_resolved_region_grants_attach_authority() {
@@ -4563,6 +5344,7 @@ mod tests {
             CompletionState::Ready(HostcallOutput::RegionAttach(_))
         ));
     }
+    // scenario: resource-handshake/guest-self-identity/self-info
 
     #[test]
     fn self_info_returns_process_id_and_tenant() {
@@ -4580,6 +5362,7 @@ mod tests {
             other => panic!("expected SelfInfo output, got {other:?}"),
         }
     }
+    // scenario: resource-handshake/handoff-metadata/oversized-metadata-rejected
 
     #[test]
     fn host_queue_send_rejects_oversized_metadata() {
@@ -4702,6 +5485,8 @@ mod tests {
     /// Task 3.1: a spawn for a tenant at its process ceiling is denied with
     /// `QuotaExceeded` before the child is created, while a tenant-less (root)
     /// spawn is not metered.
+    // scenario: selium-runtime/process-spawn-quota/quota-distinct-from-lifecycle-grant
+    // scenario: selium-accountant/quota-enforcement-at-allocation/spawn-over-process-quota-denied
     #[test]
     fn process_start_enforces_tenant_process_quota_and_skips_root() {
         let runtime = Runtime::default();
@@ -4791,6 +5576,7 @@ mod tests {
 
     /// Task 3.2: the process-quota slot returns to the tenant when the child
     /// exits (is torn down), letting the tenant spawn again up to its ceiling.
+    // scenario: selium-runtime/process-spawn-quota/exited-process-returns-its-slot
     #[test]
     fn process_quota_slot_returns_to_tenant_on_exit() {
         let runtime = Runtime::default();
@@ -4898,6 +5684,8 @@ mod tests {
         assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
     }
 
+    // scenario: capability-enforcement/unguessable-resource-identities/guessing-is-not-viable
+    // scenario: capability-enforcement/ownership-checked-attach/no-implicit-sharing
     #[test]
     fn attach_isolation_prevents_guessing() {
         let runtime = Runtime::default();
@@ -5036,6 +5824,7 @@ mod tests {
         }
     }
 
+    // scenario: capability-enforcement/descendant-telemetry-reads/supervisor-reads-child-telemetry
     #[test]
     fn children_selector_allows_descendant_metering_read() {
         let runtime = Runtime::default();
@@ -5345,6 +6134,7 @@ mod tests {
         }
     }
 
+    // scenario: selium-runtime/network-hostcall-dispatch/guest-binds-tcp-listener-via-runtime
     #[tokio::test]
     async fn tcp_bind_succeeds_with_ip_literal() {
         let runtime = Runtime::default();
@@ -5378,6 +6168,9 @@ mod tests {
             other => panic!("expected HostQueue output, got {other:?}"),
         }
     }
+    // scenario: selium-abi/capability-probe-gated-by-authority/authorised-probe
+    // scenario: selium-abi/capability-probe-gated-by-authority/unauthorised-probe-denied
+    // scenario: selium-abi/capability-probe-scope/probe-requires-the-probe-authority
 
     #[test]
     fn process_capability_is_denied_without_probe_authority() {
@@ -5422,6 +6215,8 @@ mod tests {
             CompletionState::Ready(HostcallOutput::U64(0))
         ));
     }
+    // scenario: selium-abi/live-process-list/process-list-requires-the-probe-authority
+    // scenario: selium-abi/live-process-list/process-list-includes-a-silent-process
 
     /// Process membership is registry state and is gated on the
     /// bootstrap-provisioned probe authority, like capability probing.
@@ -5508,6 +6303,8 @@ mod tests {
             CompletionState::Ready(HostcallOutput::U64(0))
         ));
     }
+    // scenario: selium-abi/process-start-module-source/spawn-from-inline-bytes
+    // scenario: selium-abi/process-start-module-source/no-host-side-catalogue
 
     /// A process starts from inline bytes with no host-side module catalogue:
     /// the caller supplies the module source for every spawn.
@@ -5537,6 +6334,7 @@ mod tests {
         ));
     }
 
+    // scenario: selium-abi/process-start-module-source/spawn-from-a-durable-slice
     /// A durable slice is read through the runtime's own volume layer: a
     /// caller with storage authority starts from a slice it wrote.
     #[test]
@@ -5595,6 +6393,7 @@ mod tests {
         ));
     }
 
+    // scenario: selium-abi/process-start-module-source/slice-outside-the-caller-s-authority
     /// A slice on a volume the caller's storage authority does not cover is
     /// denied with a permission error, and no process is created.
     #[test]
@@ -5628,6 +6427,7 @@ mod tests {
         ));
     }
 
+    // scenario: selium-abi/waitregister-hostcall/wake-routed-via-envelope-task
     /// Task 1.1: a guest registering interest in a region through
     /// `WaitRegister` is recorded in the wait registry under
     /// `(process_id, region_id)`, so a later generation advance — from this
@@ -5703,43 +6503,181 @@ mod tests {
             "a delivered wake must not leave the registration behind"
         );
     }
+
+    // scenario: selium-abi/waitregister-hostcall/unattached-region-rejected
+    // scenario: channel-wake-wait/cross-process-wait-registration/registration-for-unattached-region
+    #[test]
+    fn wait_register_for_an_unattached_region_is_denied() {
+        let runtime = Runtime::default();
+        let shared_memory = || {
+            CapabilityGrant::new(
+                Capability::SharedMemory,
+                vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+            )
+        };
+        let owner = spawn_with_grants(&runtime, vec![shared_memory()]);
+        let stranger = spawn_with_grants(&runtime, vec![shared_memory()]);
+        let region_id = allocate_region(&runtime, owner.process_id);
+
+        // Holding the class grant is not enough: a wake registration requires a
+        // live mapping, otherwise a guest could probe for the existence of
+        // regions it never attached.
+        let (status, op) = runtime.begin_hostcall_with_task(
+            stranger.process_id,
+            HostcallRequest::WaitRegister {
+                region_id,
+                generation: 1,
+            },
+            Some(1),
+            None,
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(stranger.process_id, op),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::PermissionDenied
+        ));
+        assert!(
+            runtime.wait_registry.lock().is_empty(),
+            "a denied registration must leave no entry behind"
+        );
+    }
+
+    // scenario: selium-abi/expected-claims-and-process-list/another-process-s-expected-claims-require-the-probe-authority
+    #[test]
+    fn expected_claims_of_another_process_require_the_probe_authority() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants(&runtime, Vec::new());
+        let other = spawn_with_grants(&runtime, Vec::new());
+
+        // A process always sees its own expectation.
+        let (status, op) = runtime.begin_hostcall(
+            guest.process_id,
+            HostcallRequest::ExpectedClaims {
+                process_id: guest.process_id,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        assert!(matches!(
+            runtime.poll_hostcall(guest.process_id, op),
+            CompletionState::Ready(HostcallOutput::Claims(_))
+        ));
+
+        // Another process's expectation is registry state.
+        let (status, op) = runtime.begin_hostcall(
+            guest.process_id,
+            HostcallRequest::ExpectedClaims {
+                process_id: other.process_id,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(guest.process_id, op),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::PermissionDenied
+        ));
+
+        let prober = spawn_with_grants(
+            &runtime,
+            vec![CapabilityGrant::new(Capability::ProcessProbe, Vec::new())],
+        );
+        let (status, op) = runtime.begin_hostcall(
+            prober.process_id,
+            HostcallRequest::ExpectedClaims {
+                process_id: other.process_id,
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+        assert!(matches!(
+            runtime.poll_hostcall(prober.process_id, op),
+            CompletionState::Ready(HostcallOutput::Claims(_))
+        ));
+    }
+
+    // scenario: selium-abi/capability-probe-scope/route-claim-is-probed-in-the-uri-s-scope
+    #[test]
+    fn capability_probe_evaluates_a_route_claim_in_the_uri_scope() {
+        let runtime = Runtime::default();
+        let claimant = spawn_with_grants(
+            &runtime,
+            vec![CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///control".to_string())],
+            )],
+        );
+        let prober = spawn_with_grants(
+            &runtime,
+            vec![CapabilityGrant::new(Capability::ProcessProbe, Vec::new())],
+        );
+
+        let probe = |uri: &str| {
+            let (status, op) = runtime.begin_hostcall(
+                prober.process_id,
+                HostcallRequest::ProcessCapability {
+                    process_id: claimant.process_id,
+                    capability: Capability::RouteClaim,
+                    uri: Some(uri.to_string()),
+                },
+            );
+            assert_eq!(status, selium_abi::HOSTCALL_STATUS_READY);
+            match runtime.poll_hostcall(prober.process_id, op) {
+                CompletionState::Ready(HostcallOutput::U64(held)) => held,
+                other => panic!("expected U64 probe answer, got {other:?}"),
+            }
+        };
+
+        assert_eq!(probe("sel:///control"), 1, "claim holds in its URI scope");
+        assert_eq!(probe("sel:///other"), 0, "claim does not extend past it");
+    }
+
+    // scenario: selium-abi/tenant-volume-usage-hostcall/unauthorised-caller-denied
+    #[test]
+    fn volume_usage_requires_the_quota_write_authority() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants(&runtime, Vec::new());
+        let (status, op) = runtime.begin_hostcall(
+            guest.process_id,
+            HostcallRequest::VolumeUsage {
+                tenant: "acme".to_string(),
+            },
+        );
+        assert_eq!(status, selium_abi::HOSTCALL_STATUS_FAILED);
+        assert!(matches!(
+            runtime.poll_hostcall(guest.process_id, op),
+            CompletionState::Failed(error) if error.code == AbiErrorCode::PermissionDenied
+        ));
+    }
+
+    // scenario: selium-abi/cpu-resource-class/cpu-class-allocates-no-resource
+    // scenario: process-metering/cpu-ceiling-delivery-under-a-resource-class/cpu-class-allocates-nothing
+    #[test]
+    fn allocating_a_shared_region_leaves_the_cpu_class_untouched() {
+        let runtime = Runtime::default();
+        let guest = spawn_with_grants_and_tenant(
+            &runtime,
+            "cpu-class-guest",
+            vec![CapabilityGrant::new(
+                Capability::SharedMemory,
+                vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+            )],
+            Some("acme"),
+        );
+        let _region = allocate_region(&runtime, guest.process_id);
+
+        assert_eq!(
+            runtime.kernel.quota().used("acme", ResourceClass::Cpu),
+            0,
+            "allocating bytes must not consume the CPU class"
+        );
+        assert!(
+            runtime
+                .kernel
+                .quota()
+                .used("acme", ResourceClass::SharedRegion)
+                > 0,
+            "the allocation is charged to its own class"
+        );
+    }
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `capability-enforcement` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: capability-enforcement/evaluatable-scope-contexts/tenant-isolation-enforces
-// scenario: capability-enforcement/evaluatable-scope-contexts/selector-admission-at-grant-time
-// scenario: capability-enforcement/unguessable-resource-identities/guessing-is-not-viable
-// scenario: capability-enforcement/owner-scoped-resource-handoff/owner-authorises-attach
-// scenario: capability-enforcement/owner-scoped-resource-handoff/role-confers-nothing
-// scenario: capability-enforcement/ownership-checked-attach/queue-handoff-shares-ownership
-// scenario: capability-enforcement/ownership-checked-attach/owner-authorisation-admits-a-peer
-// scenario: capability-enforcement/ownership-checked-attach/no-implicit-sharing
-// scenario: capability-enforcement/descendant-telemetry-reads/supervisor-reads-child-telemetry
-// scenario: capability-enforcement/cleanup-preserves-co-owners/co-owner-survives-cleanup
-// scenario: capability-enforcement/network-endpoint-uris-in-scope-contexts/connect-evaluated-against-uri-grant
-// scenario: capability-enforcement/network-endpoint-uris-in-scope-contexts/denial-names-the-uri
-// scenario: capability-enforcement/exact-uri-selector/exact-uri-matches
-// scenario: capability-enforcement/exact-uri-selector/longer-name-does-not-match
-// scenario: capability-enforcement/exact-uri-selector/wire-name-is-normalised
-// scenario: capability-enforcement/component-aware-uri-prefix-matching/label-suffix-attack-rejected
-// scenario: capability-enforcement/component-aware-uri-prefix-matching/port-wildcard
-// scenario: capability-enforcement/component-aware-uri-prefix-matching/registry-prefix-respects-segment-boundaries
-// scenario: capability-enforcement/grant-time-evaluatable-honesty-for-uriprefix/uriprefix-on-non-network-class-rejected
-// scenario: capability-enforcement/grant-time-evaluatable-honesty-for-uriprefix/volume-name-prefix-admitted
-// scenario: capability-enforcement/namespace-selector-hierarchy/tenant-selector-admits-only-its-tenant
-// scenario: capability-enforcement/namespace-selector-hierarchy/root-selector-admits-the-root-namespace
-// scenario: capability-enforcement/scoped-grant-delegation/delegator-spawns-within-tenant
-// scenario: capability-enforcement/scoped-grant-delegation/root-delegator-spawns-for-any-tenant
-// scenario: capability-enforcement/scoped-grant-delegation/non-delegator-out-of-scope-child-denied
-// scenario: capability-enforcement/scoped-grant-delegation/delegation-outside-tenant-denied
-// scenario: capability-enforcement/scoped-grant-delegation/unscoped-grant-not-conferable-under-delegation
-// scenario: capability-enforcement/delegategrants-is-not-conferable/re-delegation-denied
-// scenario: capability-enforcement/mintcertificate-is-not-conferable/providing-mintcertificate-at-spawn-is-denied
-// scenario: capability-enforcement/quotawrite-is-not-conferable/conferring-quotawrite-at-spawn-is-denied
-// scenario: capability-enforcement/routeclaim-is-not-conferable/child-cannot-receive-a-route-claim
-// scenario: capability-enforcement/routeclaim-is-not-conferable/bootstrap-claim-admitted
-// scenario: capability-enforcement/volume-hostcall-authorisation/capability-required
-// scenario: capability-enforcement/volume-hostcall-authorisation/cross-tenant-open-denied
-// scenario: capability-enforcement/volume-hostcall-authorisation/root-serves-a-tenant

@@ -89,7 +89,9 @@ fn platform_guests() -> Vec<selium_runtime::SystemGuestDescriptor> {
         )),
     ]
 }
+// scenario: selium-store/store-owned-durability-policy/durable-acknowledgement-survives-a-power-cycle
 
+// scenario: control-plane/module-upload-to-the-durable-store/upload-stores-a-module
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the platform guests built for wasm32-unknown-unknown"]
 async fn platform_state_survives_a_power_cycle() {
@@ -207,6 +209,7 @@ async fn platform_state_survives_a_power_cycle() {
 /// The second lifetime: a fresh process booting against the directory the first
 /// left behind. Skipped when run standalone (the parent process sets
 /// [`STATE_ROOT_ENV`]).
+// scenario: control-plane/module-upload-to-the-durable-store/uploaded-module-survives-a-restart
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "driven by platform_state_survives_a_power_cycle in a fresh process"]
 async fn second_lifetime_asserts_survival() {

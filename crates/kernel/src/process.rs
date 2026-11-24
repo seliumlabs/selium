@@ -330,6 +330,8 @@ mod tests {
 
     use super::*;
 
+    // scenario: selium-kernel/activity-and-metering-hooks/guest-process-consumes-resources
+    // scenario: selium-kernel/sub-struct-architecture/sub-structs-are-independently-usable
     #[test]
     fn process_activity_and_metering_are_visible() {
         let kernel = Kernel::default();
@@ -378,23 +380,3 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-kernel` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-kernel/shared-memory-regions/shared-region-attached-to-two-guests
-// scenario: selium-kernel/protocol-neutral-network-primitives/kernel-tracks-listener-metadata
-// scenario: selium-kernel/protocol-neutral-network-primitives/kernel-does-not-spawn-threads
-// scenario: selium-kernel/kernel-consumes-the-shared-ring-implementation/network-proxy-uses-shared-primitives
-// scenario: selium-kernel/kernel-consumes-the-shared-ring-implementation/log-drain-uses-shared-frame-reader
-// scenario: selium-kernel/durable-volume-primitives/bytes-survive-a-kernel-restart
-// scenario: selium-kernel/durable-volume-primitives/contents-are-opaque
-// scenario: selium-kernel/primitive-process-lifecycle/runtime-starts-configured-guest-process
-// scenario: selium-kernel/activity-and-metering-hooks/guest-process-consumes-resources
-// scenario: selium-kernel/host-queue-primitives/runtime-sends-value-to-queue
-// scenario: selium-kernel/host-queue-primitives/sync-only-receive
-// scenario: selium-kernel/sub-struct-architecture/sub-structs-are-independently-usable
-// scenario: selium-kernel/sub-struct-architecture/no-cross-subsystem-field-access
-// scenario: selium-kernel/no-tokio-dependency/kernel-compiles-without-tokio
-// scenario: selium-kernel/shared-region-layout-header/two-guests-attach-the-same-region-and-agree-on-layout
-// scenario: selium-kernel/per-connection-rpc-session-isolation/unauthorised-guest-attempts-to-attach-a-session-region
-// scenario: selium-kernel/event-driven-network-poller/socket-data-reaches-the-inbound-ring-without-polling
-// scenario: selium-kernel/event-driven-network-poller/accept-is-event-driven
-// scenario: selium-kernel/poller-registration-hygiene/closed-connections-do-not-leak-registrations
-// scenario: selium-kernel/poller-registration-hygiene/callbacks-may-register-new-sockets

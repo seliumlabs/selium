@@ -1,3 +1,14 @@
+//! Channels are the byte-stream surface over a shared-memory ring.
+//!
+//! # Writing and shutdown
+//!
+//! Writers honour backpressure (`Park`) or drop (`Drop`) when the ring is
+//! full. [`poll_shutdown`](tokio::io::AsyncWrite::poll_shutdown) is a real
+//! close: it releases any blocking-writer registration (writer count and slot),
+//! bumps the ring generation so parked readers wake and drain committed bytes,
+//! and makes every later write fail with `BrokenPipe`. Dropping a
+//! [`BlockingWriter`] performs the same release.
+
 use selium_abi::ResourceKind;
 use selium_wire::error::Result;
 
@@ -94,8 +105,24 @@ impl Channel {
         backpressure: ChannelBackpressure,
         purpose: ResourceKind,
     ) -> Result<Self> {
+        #[cfg(test)]
+        crate::ensure_heap_provider();
+        let provider = selium_memory::region_provider()?;
+        Self::create_with_provider(provider, capacity, backpressure, purpose)
+    }
+
+    /// Creates a channel through an explicit region provider.
+    ///
+    /// Runtime-owned channels pass their own provider so coexisting runtimes do
+    /// not share the process-global guest provider.
+    pub fn create_with_provider(
+        provider: &dyn selium_memory::RegionProvider,
+        capacity: u64,
+        backpressure: ChannelBackpressure,
+        purpose: ResourceKind,
+    ) -> Result<Self> {
         let capacity = round_capacity(capacity)?;
-        let ring = RingBuf::create(capacity, purpose)?;
+        let ring = RingBuf::create_with_provider(provider, capacity, purpose)?;
         ring.region().store_backpressure(backpressure.to_u8())?;
         Ok(Self { ring, backpressure })
     }
@@ -104,9 +131,30 @@ impl Channel {
     ///
     /// Reads the backpressure strategy and capacity from the shared channel header.
     pub fn attach(region_id: u64) -> Result<Self> {
-        let ring = RingBuf::attach(region_id)?;
+        #[cfg(test)]
+        crate::ensure_heap_provider();
+        let provider = selium_memory::region_provider()?;
+        Self::attach_with_provider(provider, region_id)
+    }
+
+    /// Attaches a channel through an explicit region provider.
+    pub fn attach_with_provider(
+        provider: &dyn selium_memory::RegionProvider,
+        region_id: u64,
+    ) -> Result<Self> {
+        let ring = RingBuf::attach_with_provider(provider, region_id)?;
         let backpressure = ChannelBackpressure::from_u8(ring.region().load_backpressure()?);
         Ok(Self { ring, backpressure })
+    }
+
+    /// Creates another handle to the same attached ring without reattaching its
+    /// shared region to the caller's memory.
+    pub fn try_clone(&self) -> Result<Self> {
+        let ring = RingBuf::wrap_region(self.ring.region().clone())?;
+        Ok(Self {
+            ring,
+            backpressure: self.backpressure,
+        })
     }
 
     /// Creates a blocking writer for this channel.

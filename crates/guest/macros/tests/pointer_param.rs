@@ -8,6 +8,7 @@ fn metadata_name_is_preserved() {
 
 #[entrypoint]
 async fn pointer_entrypoint(_resolver: (u64, u64)) {}
+// scenario: selium-guest-macros/context-aware-entrypoint-parameter/macro-forwards-a-pointer-argument
 
 #[test]
 fn pointer_signature_exports_two_argument_slots() {

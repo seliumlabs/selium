@@ -217,6 +217,10 @@ impl DiscoveryStore {
         if let Some(process_id) = owner {
             self.route_owners.insert(target.uri.clone(), process_id);
         }
+        // Remove any prior label associations for this URI before indexing the
+        // replacement: retargeting must not leave labels from the old target
+        // resolvable to the new one.
+        self.remove_from_label_index(&target.uri);
         if uri::parse_typed(&target.uri).is_some() {
             for label in &target.labels {
                 self.label_index
@@ -226,6 +230,20 @@ impl DiscoveryStore {
             }
         }
         self.registrations.insert(target.uri.clone(), target);
+    }
+
+    /// Removes `uri` from every label reverse index, dropping empty entries.
+    fn remove_from_label_index(&mut self, uri: &str) {
+        let mut empty_labels = Vec::new();
+        for ((label_key, label_value), uris) in self.label_index.iter_mut() {
+            uris.remove(uri);
+            if uris.is_empty() {
+                empty_labels.push((label_key.clone(), label_value.clone()));
+            }
+        }
+        for label in empty_labels {
+            self.label_index.remove(&label);
+        }
     }
 
     /// Removes a registration by exact key, revoking any aliases that resolve
@@ -242,16 +260,7 @@ impl DiscoveryStore {
             }
         }
         // Drop label index entries referencing the removed target.
-        let mut empty_labels = Vec::new();
-        for ((label_key, label_value), uris) in self.label_index.iter_mut() {
-            uris.remove(key);
-            if uris.is_empty() {
-                empty_labels.push((label_key.clone(), label_value.clone()));
-            }
-        }
-        for label in empty_labels {
-            self.label_index.remove(&label);
-        }
+        self.remove_from_label_index(key);
         // Clean up the root-service designation if it pointed here.
         self.root_services.retain(|_, uri| uri != key);
         self.route_owners.remove(key);
@@ -698,7 +707,18 @@ impl DiscoveryStore {
             // `NotFound` behaviour correct.
             let canonical =
                 uri::resource_uri(mint_tenant, target.class.clone(), target.resource_id);
-            self.aliases.insert(uri_str.clone(), canonical.clone());
+            // Retargeting an alias moves it: remove the back-reference from
+            // its previous canonical target so revoking that target can no
+            // longer revoke an alias now pointing elsewhere.
+            if let Some(previous) = self.aliases.insert(uri_str.clone(), canonical.clone())
+                && previous != canonical
+                && let Some(backrefs) = self.alias_backrefs.get_mut(&previous)
+            {
+                backrefs.retain(|alias| alias != &uri_str);
+                if backrefs.is_empty() {
+                    self.alias_backrefs.remove(&previous);
+                }
+            }
             let backrefs = self.alias_backrefs.entry(canonical).or_default();
             if !backrefs.contains(&uri_str) {
                 backrefs.push(uri_str.clone());
@@ -874,8 +894,67 @@ fn create_route_table() -> selium_wire::Result<(u64, RouteTable)> {
     let read = ShmTransport::new(&channel, &channel)?;
     let publisher = Publisher::new(FramedWrite::new(write));
     let subscriber = Subscriber::new(FramedRead::new(read), None);
-    let table = LiveTable::new(publisher, subscriber)?;
+    let authority = selium_wire::TableWriterAuthority::claim("discovery.routes")?;
+    let table = LiveTable::new(authority, publisher, subscriber)?;
     Ok((region_id, table))
+}
+
+/// Publishes an owned listener/region directly into the registry. Discovery
+/// cannot call its own RPC listener from its entrypoint without self-joining
+/// its reactor, so it performs the same canonical-then-named admission steps
+/// locally, still mediated by host ownership and the exact route claim.
+fn publish_owned_route(
+    store: &mut DiscoveryStore,
+    class: ResourceClass,
+    resource_id: u64,
+    route: &str,
+) -> Result<(), String> {
+    let process_id = selium_guest::process_id();
+    let authority = selium_guest::resource_authority(process_id, class.clone(), resource_id)
+        .map_err(|error| format!("authority query failed for {route}: {error}"))?;
+    if !authority.owned {
+        return Err(format!(
+            "host authority does not assign {class:?} {resource_id} to discovery"
+        ));
+    }
+    let canonical = ResourceTarget {
+        uri: uri::resource_uri(
+            authority.tenant.as_deref().unwrap_or_default(),
+            class.clone(),
+            resource_id,
+        ),
+        host_id: String::new(),
+        resource_id,
+        interface: None,
+        tenant: authority.tenant.clone(),
+        class: class.clone(),
+        labels: Vec::new(),
+    };
+    let response = store.apply_register(process_id, None, canonical, &authority, false, false);
+    if !matches!(response, DiscoveryResponse::Registered) {
+        return Err(format!("canonical publication refused: {response:?}"));
+    }
+
+    let claim_held = selium_guest::process_capability_for_uri(
+        process_id,
+        Capability::RouteClaim,
+        Some(route.to_string()),
+    )
+    .map_err(|error| format!("route claim query failed for {route}: {error}"))?;
+    let target = ResourceTarget {
+        uri: route.to_string(),
+        host_id: String::new(),
+        resource_id,
+        interface: None,
+        tenant: None,
+        class,
+        labels: Vec::new(),
+    };
+    let response = store.apply_register(process_id, None, target, &authority, claim_held, false);
+    if !matches!(response, DiscoveryResponse::Registered) {
+        return Err(format!("named route publication refused: {response:?}"));
+    }
+    Ok(())
 }
 
 /// Response used when the caller's tenant scope could not be verified
@@ -917,6 +996,27 @@ async fn discovery_main(feed_region_id: u64, listener_shared_id: u64) -> anyhow:
     );
 
     let store = Arc::new(Mutex::new(DiscoveryStore::default()));
+
+    // Publish the RPC listener itself. Replacement clients learn the new queue
+    // from this route rather than retaining the bootstrap handle forever.
+    selium_guest::declare_attachable_by_resolution(
+        ResourceClass::HostQueue,
+        listener_shared_id,
+        AttachDeclarationScope::Any,
+    )
+    .with_context(|| "failed to declare the discovery listener attachable")?;
+    {
+        let mut store = store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        publish_owned_route(
+            &mut store,
+            ResourceClass::HostQueue,
+            listener_shared_id,
+            selium_guest::DISCOVERY_ROUTE,
+        )
+        .map_err(|error| anyhow::anyhow!(error))?;
+    }
 
     // The route-change table: consumers watch it to converge on providers.
     let (route_region, route_table) =
@@ -1377,7 +1477,10 @@ async fn lease_sweep_loop(store: Arc<Mutex<DiscoveryStore>>, route_table: Arc<Ro
                 continue;
             }
         };
-        selium_guest::Timer::new(deadline).await;
+        if let Err(error) = selium_guest::Timer::new(deadline).await {
+            selium_guest::warn!("discovery lease sweep sleep failed: {error}");
+            continue;
+        }
 
         let now_ms = selium_guest::time::now()
             .map(|nanos| nanos / 1_000_000)
@@ -1627,6 +1730,8 @@ mod tests {
         t
     }
 
+    // scenario: discovery-registration/deterministic-tenant-scoped-uri-schema/internal-address-is-typed-and-tenant-scoped
+    // scenario: discovery-registration/tenant-scoped-process-uri-resolution/cross-tenant-guest-cannot-resolve-process-uri
     #[test]
     fn typed_uri_resolves_within_tenant() {
         let mut store = DiscoveryStore::default();
@@ -1665,6 +1770,9 @@ mod tests {
         );
     }
 
+    // scenario: discovery-registration/leaf-aliases/alias-resolves-to-a-typed-target
+    // scenario: guest-context/serve-based-route-registration/guest-registers-its-own-route
+    // scenario: discovery-registration/serve-based-route-registration/guest-registers-its-own-route
     #[test]
     fn single_segment_route_resolves_to_the_serving_target() {
         let mut store = DiscoveryStore::default();
@@ -1685,6 +1793,8 @@ mod tests {
         );
     }
 
+    // scenario: addressing/single-serve-declaration/resolution-returns-the-registered-route-target
+    // scenario: discovery-registration/serve-based-route-registration/canonical-record-is-published-first
     #[test]
     fn single_segment_route_preserves_interface_metadata() {
         // A single-segment serve (e.g. `HttpServeStream::bind(ctx, "api")`)
@@ -1715,6 +1825,7 @@ mod tests {
         );
     }
 
+    // scenario: discovery-registration/leaf-aliases/revoking-a-target-revokes-its-aliases
     #[test]
     fn revoking_a_target_revokes_its_aliases() {
         let mut store = DiscoveryStore::default();
@@ -1746,6 +1857,7 @@ mod tests {
         );
     }
 
+    // scenario: discovery-registration/root-tenant-namespace/guest-cannot-register-the-root-namespace
     #[test]
     fn guest_cannot_register_in_root_namespace() {
         let mut store = DiscoveryStore::default();
@@ -1793,6 +1905,8 @@ mod tests {
         assert!(matches!(response, DiscoveryResponse::Forbidden));
     }
 
+    // scenario: discovery-bootstrap/tier-2-guest-registration/unowned-resource-registration-is-forbidden
+    // scenario: discovery-registration/guest-custom-uri-validation/guest-registration-rejected-for-unowned-resource
     #[test]
     fn guest_registration_requires_ownership() {
         let mut store = DiscoveryStore::default();
@@ -1869,6 +1983,97 @@ mod tests {
         assert!(matches!(response, DiscoveryResponse::Forbidden));
     }
 
+    // scenario: discovery-registration/replacement-maintains-secondary-indexes/labels-are-removed-on-retargeting
+    #[test]
+    fn retargeting_a_label_removes_the_old_index_entry() {
+        let mut store = DiscoveryStore::default();
+        store.store(process("acme", 123, vec![("app", "old")]), Some(123));
+        assert_eq!(store.resolve_labels("app", "old", Some("acme")).len(), 1);
+
+        store.store(process("acme", 123, vec![("app", "new")]), Some(123));
+        assert!(
+            store.resolve_labels("app", "old", Some("acme")).is_empty(),
+            "a replaced label must disappear from the reverse index"
+        );
+        assert_eq!(store.resolve_labels("app", "new", Some("acme")).len(), 1);
+    }
+
+    // scenario: discovery-registration/replacement-maintains-secondary-indexes/replacement-failure-leaves-prior-indexes-coherent
+    #[test]
+    fn a_rejected_replacement_leaves_the_previous_registration_and_indexes_intact() {
+        let mut store = DiscoveryStore::default();
+        let original = process("acme", 123, vec![("app", "old")]);
+        let original_uri = original.uri.clone();
+        store.store(original, Some(123));
+        assert_eq!(store.resolve_labels("app", "old", Some("acme")).len(), 1);
+
+        // A caller the host does not authorise for the resource attempts to
+        // replace the same URI with different labels.
+        let response = store.apply_register(
+            999,
+            Some("acme"),
+            process("acme", 123, vec![("app", "new")]),
+            &ResourceAuthority {
+                owned: false,
+                tenant: None,
+                other_classes: Vec::new(),
+            },
+            false,
+            false,
+        );
+        assert!(matches!(response, DiscoveryResponse::Forbidden));
+
+        // Neither half applied: the primary mapping and every secondary index
+        // still describe the old registration.
+        assert_eq!(store.resolve_labels("app", "old", Some("acme")).len(), 1);
+        assert!(
+            store.resolve_labels("app", "new", Some("acme")).is_empty(),
+            "a rejected replacement must not index its new labels"
+        );
+        assert!(store.resolve_exact(&original_uri, Some("acme")).is_some());
+    }
+
+    // scenario: discovery-registration/discovery-uri-registration/register-overwrites-existing-uri
+    // scenario: discovery-registration/replacement-maintains-secondary-indexes/alias-back-reference-follows-replacement
+    #[test]
+    fn alias_backreference_follows_retargeting() {
+        let mut store = DiscoveryStore::default();
+        let first = uri::resource_uri("acme", selium_abi::ResourceClass::SharedRegion, 7);
+        let second = uri::resource_uri("acme", selium_abi::ResourceClass::SharedRegion, 8);
+        store.store(region("acme", 7), Some(42));
+        store.store(region("acme", 8), Some(42));
+
+        for id in [7u64, 8u64] {
+            let response = admit(
+                &mut store,
+                42,
+                Some("acme"),
+                target(
+                    "sel://acme/alias",
+                    id,
+                    Some("acme"),
+                    selium_abi::ResourceClass::SharedRegion,
+                ),
+                false,
+                false,
+            );
+            assert!(matches!(response, DiscoveryResponse::Registered));
+        }
+
+        // The alias now points at resource 8; revoking 7 must not remove it.
+        store.revoke_key(&first);
+        assert!(
+            store.resolve_exact("alias.acme", Some("acme")).is_some(),
+            "revoking the previous target must not revoke a retargeted alias"
+        );
+        store.revoke_key(&second);
+        assert!(
+            store.resolve_exact("alias.acme", Some("acme")).is_none(),
+            "revoking the current target revokes the alias"
+        );
+    }
+
+    // scenario: discovery-registration/classification-labels/label-query-returns-matching-targets
     #[test]
     fn label_query_returns_matching_targets_only() {
         let mut store = DiscoveryStore::default();
@@ -1896,6 +2101,8 @@ mod tests {
         assert_eq!(store.resolve_labels("app", "web", Some("beta")).len(), 1);
     }
 
+    // scenario: discovery-registration/prefix-and-enumeration-queries/prefix-lists-a-tenant-s-resources
+    // scenario: discovery-registration/prefix-and-enumeration-queries/cross-tenant-enumeration-denied
     #[test]
     fn prefix_enumeration_lists_a_tenants_resources() {
         let mut store = DiscoveryStore::default();
@@ -1924,6 +2131,8 @@ mod tests {
         assert_eq!(results.len(), 2);
     }
 
+    // scenario: discovery-registration/external-name-resolution-through-addressing/wire-name-resolves-to-a-tenant-route
+    // scenario: addressing/path-label-reversal/bridge-route-projects-to-a-wire-name
     #[test]
     fn wire_name_resolves_through_addressing() {
         let mut store = DiscoveryStore::default();
@@ -1955,6 +2164,11 @@ mod tests {
         assert_eq!(store.resolve_exact("bridge.beta", Some("acme")), None);
     }
 
+    // scenario: discovery-registration/external-name-resolution-through-addressing/registered-domain-wire-name-resolves
+    // scenario: discovery-registration/advisory-domain-scoping/tenant-registers-within-its-domain
+    // scenario: discovery-registration/serve-based-route-registration/route-registration-derives-wire-name-from-the-domain-table
+    // scenario: guest-context/serve-based-route-registration/route-registration-derives-wire-name-from-the-domain-table
+    // scenario: addressing/advisory-domain-to-tenant-table/provisioned-domain-routes-to-its-tenant
     #[test]
     fn registered_domain_wire_name_resolves() {
         let mut store = DiscoveryStore::default();
@@ -2046,6 +2260,7 @@ mod tests {
         );
     }
 
+    // scenario: discovery-registration/advisory-domain-scoping/foreign-domain-registration-refused
     #[test]
     fn foreign_domain_registration_is_refused() {
         let mut store = DiscoveryStore::default();
@@ -2078,6 +2293,8 @@ mod tests {
     /// Admission succeeds from the host authority even when the projected
     /// store has never seen the resource: the canonical typed URI is a derived
     /// key, not a row that must have arrived.
+    // scenario: discovery-registration/host-authoritative-admission/admission-succeeds-before-the-feed-catches-up
+    // scenario: guest-context/canonical-typed-publication/owner-publishes-a-canonical-record
     #[test]
     fn admission_succeeds_before_the_projection_catches_up() {
         let mut store = DiscoveryStore::default();
@@ -2098,6 +2315,7 @@ mod tests {
 
     /// A projected record the authority does not attest cannot authorise a
     /// registration by itself.
+    // scenario: discovery-registration/host-authoritative-admission/projection-cannot-authorise
     #[test]
     fn the_projection_cannot_authorise_a_registration() {
         let mut store = DiscoveryStore::default();
@@ -2126,6 +2344,7 @@ mod tests {
         );
     }
 
+    // scenario: guest-context/canonical-typed-publication/cross-tenant-canonical-publication-refused
     #[test]
     fn cross_tenant_canonical_publication_is_refused() {
         let mut store = DiscoveryStore::default();
@@ -2164,6 +2383,9 @@ mod tests {
         assert!(matches!(response, DiscoveryResponse::Forbidden));
     }
 
+    // scenario: discovery-registration/discovery-uri-registration/caller-revokes-a-uri
+    // scenario: discovery-registration/guest-custom-uri-validation/guest-revokes-their-own-custom-uri
+    // scenario: discovery-registration/guest-revocation-authorisation/guest-revokes-own-external-name
     #[test]
     fn guest_revokes_their_own_custom_uri() {
         let mut store = DiscoveryStore::default();
@@ -2190,6 +2412,7 @@ mod tests {
         assert!(matches!(response, DiscoveryResponse::Forbidden));
     }
 
+    // scenario: discovery-registration/guest-revocation-authorisation/guest-cannot-revoke-a-typed-uri
     #[test]
     fn guest_cannot_revoke_typed_uris() {
         let mut store = DiscoveryStore::default();
@@ -2205,6 +2428,7 @@ mod tests {
         );
     }
 
+    // scenario: discovery-registration/guest-revocation-authorisation/guest-cannot-revoke-another-tenant-s-alias
     #[test]
     fn guest_cannot_revoke_another_tenants_alias() {
         let mut store = DiscoveryStore::default();
@@ -2234,6 +2458,7 @@ mod tests {
         );
     }
 
+    // scenario: discovery-registration/guest-revocation-authorisation/guest-cannot-revoke-a-registration-it-does-not-own
     #[test]
     fn guest_cannot_revoke_an_alias_it_does_not_own() {
         let mut store = DiscoveryStore::default();
@@ -2282,6 +2507,7 @@ mod tests {
         );
     }
 
+    // scenario: discovery-registration/guest-revocation-authorisation/revoking-an-unknown-key-returns-notfound
     #[test]
     fn revoking_an_unknown_uri_returns_not_found() {
         let mut store = DiscoveryStore::default();
@@ -2291,6 +2517,7 @@ mod tests {
         assert!(matches!(response, DiscoveryResponse::NotFound));
     }
 
+    // scenario: discovery-registration/guest-custom-uri-validation/guest-registration-rejected-for-class-mismatch
     #[test]
     fn guest_alias_class_must_match_the_owned_resource() {
         let mut store = DiscoveryStore::default();
@@ -2340,6 +2567,7 @@ mod tests {
         assert_eq!(store.resolve_exact("sel://acme/proxy", Some("acme")), None);
     }
 
+    // scenario: discovery-registration/tenant-scoped-process-uri-resolution/failed-tenant-lookup-fails-closed
     #[test]
     fn denied_response_fails_closed_per_variant() {
         use selium_service::ResourceTarget;
@@ -2393,6 +2621,13 @@ mod tests {
         ));
     }
 
+    // scenario: selium-runtime/owner-published-process-nodes/process-node-is-published-by-the-process
+    // scenario: discovery-registration/discovery-uri-registration/caller-registers-a-uri
+    // scenario: discovery-bootstrap/tier-2-guest-registration/owned-resource-registration-succeeds
+    // scenario: discovery-registration/guest-custom-uri-validation/guest-registers-custom-uri-for-owned-resource
+    // scenario: discovery-registration/tenant-scoped-process-uri-resolution/same-tenant-guest-resolves-process-uri
+    // scenario: discovery-registration/deterministic-tenant-scoped-uri-schema/process-address
+    // scenario: discovery-registration/process-node-addressing/a-process-without-resources-is-addressable
     #[test]
     fn end_to_end_discovery_lifecycle() {
         // Task 5.2 store-level golden path: spawn-node → allocate-region →
@@ -2459,6 +2694,8 @@ mod tests {
         );
     }
 
+    // scenario: addressing/process-keyed-revocation/guest-exit-revokes-its-routes
+    // scenario: discovery-registration/discovery-uri-registration/owner-revoked-on-exit
     #[test]
     fn owner_exit_revokes_owned_routes() {
         let mut store = DiscoveryStore::default();
@@ -2485,6 +2722,10 @@ mod tests {
         assert_eq!(store.resolve_exact("sel://acme/bridge", Some("acme")), None);
     }
 
+    // scenario: discovery-registration/root-registration-capability-gated/root-registration-requires-capability
+    // scenario: discovery-registration/root-registration-capability-gated/capability-holding-guest-registers-in-root
+    // scenario: guest-context/root-registration-capability-gated/root-registration-requires-capability
+    // scenario: guest-context/root-registration-capability-gated/capability-holding-guest-registers-in-root
     #[test]
     fn root_registration_requires_capability() {
         let mut store = DiscoveryStore::default();
@@ -2524,6 +2765,7 @@ mod tests {
         assert!(store.resolve_exact("sel:///dns/resolve", None).is_some());
     }
 
+    // scenario: addressing/apex-root-service-alias/domain-maps-directly-to-a-service
     #[test]
     fn root_service_designation_resolves_the_apex() {
         let mut store = DiscoveryStore::default();
@@ -2555,6 +2797,8 @@ mod tests {
             ))
         );
     }
+    // scenario: addressing/single-canonical-namespace/internal-path-is-canonical
+    // scenario: addressing/single-serve-declaration/one-declaration-yields-both-names
 
     #[test]
     fn wire_name_registration_produces_the_same_route_as_serve() {
@@ -2583,6 +2827,10 @@ mod tests {
         );
     }
 
+    // scenario: route-watch/route-change-generations/replacement-advances-the-generation
+    // scenario: discovery-registration/route-change-publication/registration-publishes-an-appearance
+    // scenario: discovery-registration/route-change-publication/replacement-advances-the-generation
+    // scenario: discovery-registration/route-change-publication/lease-expiry-publishes-a-revocation
     #[test]
     fn route_table_publishes_appear_replace_and_revoke() {
         drop(selium_memory::set_region_provider(Box::new(
@@ -2633,6 +2881,7 @@ mod tests {
         assert!(revoked.value.is_none(), "revocation is a tombstone");
     }
 
+    // scenario: route-watch/registration-leases/renewal-keeps-the-registration-live
     #[test]
     fn lease_renewal_keeps_a_registration_live() {
         let mut store = DiscoveryStore::default();
@@ -2648,6 +2897,7 @@ mod tests {
         );
     }
 
+    // scenario: route-watch/registration-leases/lapsed-lease-expires-the-registration
     #[test]
     fn lapsed_lease_expires_the_registration() {
         let mut store = DiscoveryStore::default();
@@ -2732,6 +2982,7 @@ mod tests {
         );
     }
 
+    // scenario: route-watch/health-is-published-state/guest-reports-health-as-state
     #[test]
     fn health_record_sets_resolves_and_clears() {
         // Health is published state: a tenant-scoped record a peer resolves.
@@ -2752,6 +3003,9 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/protocol-handler-route-claims/handler-guest-publishes-its-claim
+    // scenario: route-claims/well-known-names-are-claims/handler-guest-claims-its-scheme
+    // scenario: discovery-registration/root-tenant-namespace/system-guest-registers-under-root
     #[test]
     fn a_claimed_handler_route_resolves_and_is_revoked_by_owner() {
         let mut store = DiscoveryStore::default();
@@ -2774,6 +3028,8 @@ mod tests {
         assert_eq!(store.resolve_exact("sel:///handler/sel-quic", None), None);
     }
 
+    // scenario: route-claims/well-known-names-are-claims/another-guest-cannot-claim-a-scheme
+    // scenario: guest-context/serve-based-route-registration/unclaimed-root-name-is-refused
     #[test]
     fn a_guest_without_a_claim_cannot_register_a_handler_route() {
         // The handler namespace is claim-gated: a root-authorised guest without
@@ -2795,6 +3051,9 @@ mod tests {
         assert!(matches!(response, DiscoveryResponse::Forbidden));
     }
 
+    // scenario: route-claims/host-issued-route-claims/claim-holder-publishes-a-reserved-name
+    // scenario: route-claims/exclusive-live-claims/second-claimant-refused
+    // scenario: route-claims/exclusive-live-claims/claim-released-on-owner-exit
     #[test]
     fn a_second_claimant_gets_conflict_and_ownership_exit_releases_the_name() {
         let mut store = DiscoveryStore::default();
@@ -2831,6 +3090,7 @@ mod tests {
         ));
     }
 
+    // scenario: discovery-registration/host-authoritative-admission/authority-failure-fails-closed
     #[test]
     fn an_authority_read_failure_fails_closed() {
         let failed = admission_authority(Err(selium_guest::GuestError::Host(
@@ -2845,6 +3105,8 @@ mod tests {
         assert!(answered.is_some());
     }
 
+    // scenario: discovery-registration/guest-custom-uri-validation/guest-alias-admitted-while-the-projection-lags
+    // scenario: discovery-registration/leaf-aliases/alias-resolves-only-through-its-canonical-target
     #[test]
     fn a_leaf_alias_admitted_before_the_canonical_is_projected_resolves_after_it() {
         let mut store = DiscoveryStore::default();
@@ -2958,6 +3220,7 @@ mod tests {
         );
     }
 
+    // scenario: route-claims/expected-claim-reconciliation/unpublished-claim-is-visible-as-drift
     #[test]
     fn expected_claim_without_a_live_registration_is_reported_as_drift() {
         let store = DiscoveryStore::default();

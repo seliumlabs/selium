@@ -161,17 +161,3 @@ pub fn encode_udp_frame(addr: std::net::SocketAddr, payload: &[u8]) -> Vec<u8> {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `udp-transport` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: udp-transport/udp-socket-binding-via-hostcall/guest-binds-a-udp-socket
-// scenario: udp-transport/udp-socket-binding-via-hostcall/guest-binds-with-an-invalid-address
-// scenario: udp-transport/binary-datagram-frame-format/kernel-encodes-an-inbound-datagram
-// scenario: udp-transport/binary-datagram-frame-format/guest-encodes-an-outbound-datagram
-// scenario: udp-transport/binary-datagram-frame-format/quinn-adapter-compatibility
-// scenario: udp-transport/udp-datagram-receive-channel/guest-receives-a-datagram
-// scenario: udp-transport/udp-datagram-receive-channel/recv-channel-empty
-// scenario: udp-transport/udp-datagram-send-channel/guest-sends-a-datagram
-// scenario: udp-transport/udp-datagram-send-channel/send-channel-full
-// scenario: udp-transport/udp-socket-via-shared-memory-rings/guest-sends-with-full-send-ring
-// scenario: udp-transport/udp-socket-via-shared-memory-rings/guest-polls-an-empty-recv-ring
-// scenario: udp-transport/udp-socket-via-shared-memory-rings/guest-polls-a-closed-recv-ring
-// scenario: udp-transport/udp-resource-lifecycle/guest-closes-a-udp-socket
-// scenario: udp-transport/capability-gated-udp-access/guest-denied-udp-bind-without-capability

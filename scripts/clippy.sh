@@ -25,7 +25,7 @@
 #   scripts/clippy.sh -p selium-connector-http --all-targets -- -D warnings
 #
 # Environment overrides:
-#   RUST_IMAGE       Docker image tag (default: rust:1.98, CI's current stable series)
+#   RUST_IMAGE       Docker image tag (default: rust:latest, CI's current stable series)
 #   TOOLCHAIN        Pin a rustup toolchain inside the container (e.g. 1.98.1)
 #   DOCKER_PLATFORM  Emulate a platform (e.g. linux/amd64 to bit-match CI's x86_64
 #                    runners; slow under qemu — arm64 Linux already reproduces the

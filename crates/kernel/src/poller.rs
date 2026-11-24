@@ -94,6 +94,15 @@ impl Poller {
         *self.inner.generation_advance.lock() = Some(Arc::new(Box::new(f)));
     }
 
+    /// Clears the generation callback, releasing whatever it captured.
+    ///
+    /// Runtime shutdown calls this after stopping the poller: the callback may
+    /// hold a runtime handle, and keeping it in the kernel would form a
+    /// runtime → kernel → poller → runtime cycle.
+    pub fn clear_generation_advance(&self) {
+        *self.inner.generation_advance.lock() = None;
+    }
+
     fn alloc_token(&self) -> Token {
         let mut next = self.inner.next_token.lock();
         let token = Token(*next);
@@ -204,6 +213,23 @@ impl Poller {
                     self.handle_readable(event.token());
                 }
             }
+
+            // A UDP datagram left in the kernel buffer after the ring filled
+            // does not produce a fresh edge-triggered event. Retry registered
+            // UDP sockets on the poller's bounded 100 ms cadence so preserved
+            // datagrams resume when the guest advances its reader.
+            let udp_tokens: Vec<Token> = self
+                .inner
+                .entries
+                .lock()
+                .iter()
+                .filter_map(|(token, entry)| {
+                    matches!(entry, PollerEntry::UdpSocket { .. }).then_some(*token)
+                })
+                .collect();
+            for token in udp_tokens {
+                self.handle_readable(token);
+            }
         }
     }
 
@@ -272,7 +298,11 @@ impl Poller {
                                 )
                                 .map(|g| g.wrapping_add(1))
                                 .ok();
-                            running.store(false, Ordering::Relaxed);
+                            // A clean EOF half-closes only the remote's write
+                            // direction. Deregister this inbound socket, but
+                            // leave the shared running flag set so the outbound
+                            // drainer can deliver replies until the guest closes
+                            // its writer.
                             finished = true;
                             if let (Some(new_gen), Some(cb)) = (new_gen, advance.as_ref()) {
                                 cb(region_id, new_gen);
@@ -398,15 +428,38 @@ impl Poller {
                 let mut buf = vec![0u8; 65536];
                 let mut finished = false;
                 loop {
+                    // Peek first: a full ring must leave the datagram in the
+                    // kernel receive buffer. Reading it and only then finding
+                    // the ring full turns backpressure into packet loss.
+                    let (n, addr) = match socket.peek_from(&mut buf) {
+                        Ok(next) => next,
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(e) => {
+                            eprintln!("UDP peek error: {e}");
+                            running.store(false, Ordering::Relaxed);
+                            finished = true;
+                            break;
+                        }
+                    };
+                    let address_header = match addr {
+                        std::net::SocketAddr::V4(_) => 8,
+                        std::net::SocketAddr::V6(_) => 20,
+                    };
+                    if !recv_writer
+                        .has_capacity_for_frame((n + address_header) as u64)
+                        .unwrap_or(false)
+                    {
+                        break;
+                    }
                     match socket.recv_from(&mut buf) {
                         Ok((n, addr)) => {
                             let payload = buf.get(..n).unwrap_or(&[]);
                             let frame = crate::network::encode_udp_frame(addr, payload);
-                            if recv_writer.write_frame(&frame, 0, 0).is_err() {
-                                eprintln!(
-                                    "inbound ring full for region {region_id}; dropped datagram"
-                                );
-                            } else if let Some(cb) = advance.as_ref()
+                            recv_writer
+                                .write_frame(&frame, 0, 0)
+                                .expect("capacity was checked before consuming the datagram");
+                            if let Some(cb) = advance.as_ref()
                                 && let Ok(new_gen) = recv_writer.generation()
                             {
                                 // Wake (and inline-execute) the guest per datagram
@@ -471,6 +524,7 @@ mod tests {
     use std::net::TcpStream as StdClient;
     use std::time::Instant;
 
+    // scenario: selium-kernel/event-driven-network-poller/accept-is-event-driven
     #[test]
     fn listener_registration_delivers_accept_events() {
         let poller = Poller::new().expect("poller");
@@ -500,5 +554,49 @@ mod tests {
             accepted.load(Ordering::Relaxed),
             "accept callback never fired"
         );
+    }
+
+    #[test]
+    fn udp_full_ring_preserves_datagrams_and_resumes_after_drain() {
+        use selium_shm::layout::{self, RingReader};
+
+        let backend: Arc<dyn selium_memory::MappingBackend> = Arc::new(
+            selium_memory::PointerBackend::allocate(4096 + 256).expect("allocate UDP ring"),
+        );
+        layout::init_ring(backend.as_ref()).expect("initialise ring");
+        layout::store_capacity(backend.as_ref(), 256).expect("store capacity");
+        let writer = RingWriter::open(backend.clone(), 256).expect("writer");
+        let mut reader = RingReader::open(backend, 256, true).expect("blocking reader");
+
+        let socket = StdUdpSocket::bind("127.0.0.1:0").expect("bind receiver");
+        socket.set_nonblocking(true).expect("nonblocking receiver");
+        let address = socket.local_addr().expect("receiver address");
+        let poller = Poller::new().expect("poller");
+        poller
+            .register_udp_socket(socket, writer, 42, Arc::new(AtomicBool::new(true)))
+            .expect("register UDP");
+
+        let sender = StdUdpSocket::bind("127.0.0.1:0").expect("bind sender");
+        for _ in 0..3 {
+            sender.send_to(&[7u8; 128], address).expect("send burst");
+        }
+        poller.clone().start_background();
+
+        // The ring holds one 128-byte frame. The poller must not consume and
+        // drop the other two: they stay in the kernel receive buffer until the
+        // reader advances and capacity returns.
+        let start = Instant::now();
+        let mut received = 0;
+        while received < 3 {
+            if reader.read_frame().expect("read frame").is_some() {
+                received += 1;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "only {received}/3 datagrams survived ring backpressure"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        poller.shutdown();
     }
 }

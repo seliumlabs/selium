@@ -14,6 +14,11 @@ When a guest instance terminates, `selium-runtime` SHALL automatically call `fre
 - **WHEN** a consumer guest that has attached to shared regions and owns reader slots exits
 - **THEN** the runtime SHALL release all owned slots (zeroing each in shared memory and returning them to their free lists) before unmapping all shared regions from that guest's memory
 
+#### Scenario: Guest exits with attached regions
+- **WHEN** a guest that has attached to shared regions exits
+- **THEN** the runtime SHALL unmap all shared regions from that guest's memory before releasing the instance
+
+
 ## ADDED Requirements
 
 ### Requirement: Hostcall Slot Manager

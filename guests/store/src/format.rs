@@ -98,12 +98,26 @@ impl<'a> Reader<'a> {
 
 /// Content-derived blob id: the lowercase hex SHA-256 of the blob bytes.
 pub fn blob_id(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        push_hex(&mut out, byte);
+    hex_digest(Sha256::digest(bytes))
+}
+
+/// Finds the valid content-addressed prefix of a recovered blob volume.
+///
+/// Blob volumes are append-only, so an interrupted retry can leave a valid
+/// acknowledged blob followed by a torn or duplicate tail. Hashing each prefix
+/// incrementally recovers that acknowledged prefix without deleting it. The
+/// returned length is the longest prefix whose SHA-256 is `blob_id`; callers
+/// must never expose bytes beyond it.
+pub fn valid_blob_prefix(bytes: &[u8], blob_id: &str) -> Option<usize> {
+    let mut hasher = Sha256::new();
+    let mut valid = (hex_digest(hasher.clone().finalize()) == blob_id).then_some(0);
+    for (index, byte) in bytes.iter().enumerate() {
+        hasher.update([*byte]);
+        if hex_digest(hasher.clone().finalize()) == blob_id {
+            valid = Some(index + 1);
+        }
     }
-    out
+    valid
 }
 
 /// Volume name holding blob `blob_id` of blob store `store`.
@@ -361,6 +375,15 @@ fn is_unreserved(byte: u8) -> bool {
 
 fn log_segment_suffix(segment: u64) -> String {
     format!("{SEGMENT_SEP}{segment}")
+}
+
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    let digest = digest.as_ref();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        push_hex(&mut out, *byte);
+    }
+    out
 }
 
 /// Pushes one byte as two lowercase hex digits.

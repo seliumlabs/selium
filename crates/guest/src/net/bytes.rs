@@ -25,11 +25,10 @@ use std::{
 };
 
 use selium_abi::{RegionProt, SharedRegionDescriptor};
-use selium_memory::{FrameHeader, MultiMemoryHeader, Region};
+use selium_memory::{FrameHeader, Region};
 use selium_shm::{
-    Channel, ChannelBackpressure, ChannelRegion,
+    Channel,
     channels::{BlockingReader, BlockingWriter, Reader, Writer},
-    ring_buf::RingBuf,
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -68,12 +67,32 @@ pub enum PeerMode {
 /// ring (nothing ever frees or notifies capacity).
 pub struct ByteStreamReader {
     reader: StreamReader,
-    /// Buffered data from a partial frame read (header already stripped).
-    read_buf: Vec<u8>,
-    /// Offset into `read_buf` for the next copy.
-    read_offset: usize,
+    /// Incremental frame state: header bytes accumulate until complete, then
+    /// payload bytes are copied to the caller without buffering the whole
+    /// frame.
+    frame: FrameState,
     /// Keeps the parent shared region alive while the stream is in use.
     _region: Region,
+}
+
+/// How far through the current inbound frame the reader is.
+enum FrameState {
+    /// Accumulating the fixed 16-byte header.
+    Header {
+        bytes: [u8; FrameHeader::ENCODED_SIZE],
+        filled: usize,
+    },
+    /// Copying `remaining` payload bytes from the ring.
+    Payload { remaining: u64 },
+}
+
+impl Default for FrameState {
+    fn default() -> Self {
+        Self::Header {
+            bytes: [0; FrameHeader::ENCODED_SIZE],
+            filled: 0,
+        }
+    }
 }
 
 /// The ring reader underlying a [`ByteStreamReader`].
@@ -136,8 +155,7 @@ impl ByteStreamReader {
     pub fn new(reader: Reader, region: Region) -> Self {
         Self {
             reader: StreamReader::Plain(reader),
-            read_buf: Vec::new(),
-            read_offset: 0,
+            frame: FrameState::default(),
             _region: region,
         }
     }
@@ -150,8 +168,7 @@ impl ByteStreamReader {
     pub fn blocking(reader: BlockingReader, region: Region) -> Self {
         Self {
             reader: StreamReader::Blocking(reader),
-            read_buf: Vec::new(),
-            read_offset: 0,
+            frame: FrameState::default(),
             _region: region,
         }
     }
@@ -164,58 +181,111 @@ impl AsyncRead for ByteStreamReader {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-
-        // Drain any previously buffered payload bytes (header already stripped).
-        if this.read_offset < this.read_buf.len() {
-            let remaining = this.read_buf.get(this.read_offset..).unwrap_or(&[]);
-            let to_copy = remaining.len().min(buf.remaining());
-            buf.put_slice(remaining.get(..to_copy).unwrap_or(remaining));
-            this.read_offset += to_copy;
-            if this.read_offset >= this.read_buf.len() {
-                this.read_buf.clear();
-                this.read_offset = 0;
-            }
+        if buf.remaining() == 0 {
             return Poll::Ready(Ok(()));
         }
 
-        // Read a full frame into a temporary buffer, then strip the header.
-        let mut frame_buf = vec![0u8; 65536];
-        let mut inner_buf = ReadBuf::new(&mut frame_buf);
-
-        match Pin::new(&mut this.reader).poll_read_frame(cx, &mut inner_buf) {
-            Poll::Ready(Ok(())) => {
-                let filled = inner_buf.filled().len();
-                if filled == 0 {
-                    return Poll::Ready(Ok(())); // EOF
+        let mut state = std::mem::take(&mut this.frame);
+        // Bound the empty-frame skip so a ring full of zero-length frames
+        // cannot spin the reactor indefinitely.
+        for _ in 0..64 {
+            match &mut state {
+                FrameState::Payload { remaining } => {
+                    if *remaining == 0 {
+                        state = FrameState::default();
+                        continue;
+                    }
+                    let want = (*remaining).min(buf.remaining() as u64) as usize;
+                    let mut chunk = [0u8; 4096];
+                    let mut chunk_buf = ReadBuf::new(
+                        chunk
+                            .get_mut(..want.min(4096))
+                            .expect("chunk slice within the local buffer"),
+                    );
+                    match Pin::new(&mut this.reader).poll_read_frame(cx, &mut chunk_buf) {
+                        Poll::Ready(Ok(())) => {
+                            let filled = chunk_buf.filled().len();
+                            if filled == 0 {
+                                this.frame = state;
+                                return Poll::Ready(Err(std::io::Error::new(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                    "byte stream ended mid-frame",
+                                )));
+                            }
+                            buf.put_slice(chunk_buf.filled());
+                            *remaining -= filled as u64;
+                            if *remaining == 0 {
+                                state = FrameState::default();
+                            }
+                            this.frame = state;
+                            return Poll::Ready(Ok(()));
+                        }
+                        Poll::Ready(Err(error)) => {
+                            this.frame = state;
+                            return Poll::Ready(Err(error));
+                        }
+                        Poll::Pending => {
+                            this.frame = state;
+                            return Poll::Pending;
+                        }
+                    }
                 }
-                let header_size = FrameHeader::ENCODED_SIZE;
-                if filled <= header_size {
-                    return Poll::Ready(Ok(()));
+                FrameState::Header { bytes, filled } => {
+                    let mut header_buf = ReadBuf::new(bytes.get_mut(*filled..).unwrap_or(&mut []));
+                    match Pin::new(&mut this.reader).poll_read_frame(cx, &mut header_buf) {
+                        Poll::Ready(Ok(())) => {
+                            let read = header_buf.filled().len();
+                            if read == 0 {
+                                let eof = *filled == 0;
+                                this.frame = state;
+                                return if eof {
+                                    Poll::Ready(Ok(()))
+                                } else {
+                                    Poll::Ready(Err(std::io::Error::new(
+                                        std::io::ErrorKind::UnexpectedEof,
+                                        "byte stream ended mid-header",
+                                    )))
+                                };
+                            }
+                            *filled += read;
+                            if *filled < FrameHeader::ENCODED_SIZE {
+                                continue;
+                            }
+                            let header = match FrameHeader::decode(bytes) {
+                                Ok(header) => header,
+                                Err(error) => {
+                                    this.frame = state;
+                                    return Poll::Ready(Err(std::io::Error::other(
+                                        error.to_string(),
+                                    )));
+                                }
+                            };
+                            state = FrameState::Payload {
+                                remaining: u64::from(header.len),
+                            };
+                        }
+                        Poll::Ready(Err(error)) => {
+                            this.frame = state;
+                            return Poll::Ready(Err(error));
+                        }
+                        Poll::Pending => {
+                            this.frame = state;
+                            return Poll::Pending;
+                        }
+                    }
                 }
-                let payload = frame_buf.get(header_size..filled).unwrap_or(&[]).to_vec();
-
-                // Store stripped payload in read_buf for potential partial copy.
-                this.read_buf = payload;
-                this.read_offset = 0;
-
-                let to_copy = this.read_buf.len().min(buf.remaining());
-                buf.put_slice(this.read_buf.get(..to_copy).unwrap_or(&[]));
-                this.read_offset = to_copy;
-                if this.read_offset >= this.read_buf.len() {
-                    this.read_buf.clear();
-                    this.read_offset = 0;
-                }
-                Poll::Ready(Ok(()))
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
         }
+
+        // Many zero-length frames: yield and come back for more.
+        this.frame = state;
+        cx.waker().wake_by_ref();
+        Poll::Pending
     }
 }
 
 // SAFETY: see the `Send` impl on `ByteStream`.
 unsafe impl Send for ByteStreamReader {}
-
 impl StreamReader {
     fn poll_read_frame(
         mut self: Pin<&mut Self>,
@@ -262,7 +332,7 @@ impl AsyncWrite for ByteStreamWriter {
         };
         let header_bytes = header.encode();
 
-        // Build the framed buffer: [FrameHeader 12 bytes][user payload].
+        // Build the framed buffer: [FrameHeader 16 bytes][user payload].
         let mut write_buf = Vec::with_capacity(header_bytes.len() + buf.len());
         write_buf.extend_from_slice(&header_bytes);
         write_buf.extend_from_slice(buf);
@@ -294,7 +364,9 @@ impl ByteStream {
     /// Attaches to a two-ring stream region by `shared_id` as the "primary"
     /// peer: ring `0` is the inbound ring (read side) and ring `1` is the
     /// outbound ring (write side), matching `TcpStream`'s layout. Uses a
-    /// non-blocking writer.
+    /// non-blocking writer for host-proxy protocols that do not need close or
+    /// backpressure signalling. TCP uses [`attach_blocking`](Self::attach_blocking)
+    /// so its writer lifetime and Park backpressure are observable.
     pub fn attach(shared_id: u64) -> Result<Self> {
         Self::attach_inner(shared_id, false)
     }
@@ -373,25 +445,18 @@ impl ByteStream {
                 PeerMode::Attached => reader_channel.blocking_reader_from(0),
                 PeerMode::AwaitingFirstPeer => reader_channel.blocking_reader_from_awaiting_peer(0),
             }
-            .map_err(|e| GuestError::Host(format!("create blocking reader failed: {e}")))?;
+            .map_err(GuestError::from)?;
             ByteStreamReader::blocking(reader, region.clone())
         } else {
             ByteStreamReader::new(reader_channel.reader(), region.clone())
         };
         let writer = if blocking {
             ByteStreamWriter::blocking(
-                writer_channel
-                    .blocking_writer()
-                    .map_err(|e| GuestError::Host(format!("create blocking writer failed: {e}")))?,
+                writer_channel.blocking_writer().map_err(GuestError::from)?,
                 region,
             )
         } else {
-            ByteStreamWriter::plain(
-                writer_channel
-                    .writer()
-                    .map_err(|e| GuestError::Host(format!("create writer failed: {e}")))?,
-                region,
-            )
+            ByteStreamWriter::plain(writer_channel.writer().map_err(GuestError::from)?, region)
         };
         Ok((reader, writer))
     }
@@ -412,48 +477,13 @@ impl ByteStream {
     }
 
     fn attach_inner(shared_id: u64, blocking: bool) -> Result<Self> {
-        let region_provider = selium_memory::region_provider()
-            .map_err(|e| GuestError::Host(format!("region provider unavailable: {e}")))?;
+        let region_provider = selium_memory::region_provider()?;
+        let region = region_provider.attach(shared_id, None, RegionProt::ReadWrite)?;
 
-        let region = region_provider
-            .attach(shared_id, None, RegionProt::ReadWrite)
-            .map_err(|e| GuestError::Host(format!("attach region failed: {e}")))?;
-
-        let mapping = region.mapping();
-        let header = MultiMemoryHeader::parse(mapping.backend(), 0)
-            .map_err(|e| GuestError::Host(format!("parse header failed: {e}")))?;
-
-        let inbound = header
-            .entry(0)
-            .map_err(|e| GuestError::Host(format!("inbound entry missing: {e}")))?;
-        let outbound = header
-            .entry(1)
-            .map_err(|e| GuestError::Host(format!("outbound entry missing: {e}")))?;
-
-        let inbound_mapping = mapping
-            .sub_region(inbound.offset, inbound.length)
-            .map_err(|e| GuestError::Host(format!("inbound sub-region failed: {e}")))?;
-        let outbound_mapping = mapping
-            .sub_region(outbound.offset, outbound.length)
-            .map_err(|e| GuestError::Host(format!("outbound sub-region failed: {e}")))?;
-
-        // Ring data capacity = region length minus header overhead.
-        let ring_cap = inbound
-            .length
-            .saturating_sub(selium_shm::layout::DATA_OFFSET);
-
-        let inbound_region =
-            ChannelRegion::from_mapping_with_id(inbound_mapping, ring_cap, shared_id);
-        let outbound_region =
-            ChannelRegion::from_mapping_with_id(outbound_mapping, ring_cap, shared_id);
-
-        let inbound_ring = RingBuf::wrap_region(inbound_region)
-            .map_err(|e| GuestError::Host(format!("wrap inbound ring failed: {e}")))?;
-        let outbound_ring = RingBuf::wrap_region(outbound_region)
-            .map_err(|e| GuestError::Host(format!("wrap outbound ring failed: {e}")))?;
-
-        let inbound_channel = Channel::from_ring(inbound_ring, ChannelBackpressure::Park);
-        let outbound_channel = Channel::from_ring(outbound_ring, ChannelBackpressure::Park);
+        // Shared byte-channel geometry parser: each direction keeps its own
+        // declared capacity.
+        let (inbound_channel, outbound_channel) =
+            selium_shm::byte_channel::channels_from_region(&region)?;
 
         Self::from_ring_channels(&inbound_channel, &outbound_channel, region, blocking)
     }
@@ -491,3 +521,143 @@ impl AsyncWrite for ByteStream {
 // send across threads (they encapsulate shared memory regions backed by
 // process-level mappings).
 unsafe impl Send for ByteStream {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use selium_abi::ResourceKind;
+    use selium_memory::{HeapRegionProvider, set_region_provider};
+    use selium_shm::{Channel, ChannelBackpressure};
+
+    fn stream(capacity: u64) -> (ByteStreamReader, Channel) {
+        drop(set_region_provider(Box::new(HeapRegionProvider::new())));
+        let channel = Channel::create_with_backpressure(
+            capacity,
+            ChannelBackpressure::Park,
+            ResourceKind::SharedMemory,
+        )
+        .expect("create channel");
+        let region = selium_memory::region_provider()
+            .expect("provider")
+            .allocate(1, RegionProt::ReadWrite, ResourceKind::SharedMemory)
+            .expect("placeholder region");
+        let (reader, _writer) =
+            ByteStream::halves_from_channels(&channel, &channel, region, false).expect("halves");
+        (reader, channel)
+    }
+
+    fn queue_frame(channel: &Channel, payload: &[u8]) {
+        let frame_size = FrameHeader::ENCODED_SIZE as u64 + payload.len() as u64;
+        let pos = channel.ring().reserve(frame_size).expect("reserve");
+        channel
+            .ring()
+            .write_frame(pos, payload, 0, 0)
+            .expect("write frame");
+    }
+
+    fn read_bytes(reader: &mut ByteStreamReader, expected: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(expected);
+        let waker = std::task::Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while out.len() < expected {
+            assert!(std::time::Instant::now() < deadline, "stream stalled");
+            let mut chunk = [0u8; 4096];
+            let mut buf = ReadBuf::new(&mut chunk);
+            match Pin::new(&mut *reader).poll_read(&mut cx, &mut buf) {
+                Poll::Ready(Ok(())) => {
+                    let filled = buf.filled().len();
+                    assert!(filled > 0, "unexpected early EOF");
+                    out.extend_from_slice(buf.filled());
+                }
+                Poll::Ready(Err(error)) => panic!("read failed: {error}"),
+                Poll::Pending => panic!("stream unexpectedly pending"),
+            }
+        }
+        out
+    }
+
+    // scenario: guest-networking/arbitrary-frame-sizes-preserve-byte-streams/header-only-frame
+    #[test]
+    fn zero_length_frame_is_not_eof() {
+        let (mut reader, channel) = stream(4096);
+        queue_frame(&channel, b"");
+        queue_frame(&channel, b"abc");
+        assert_eq!(read_bytes(&mut reader, 3), b"abc");
+
+        // The stream is now drained: the next poll is EOF (Ready with no bytes).
+        let waker = std::task::Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut chunk = [0u8; 16];
+        let mut buf = ReadBuf::new(&mut chunk);
+        assert!(matches!(
+            Pin::new(&mut reader).poll_read(&mut cx, &mut buf),
+            Poll::Ready(Ok(()))
+        ));
+        assert!(buf.filled().is_empty());
+    }
+
+    #[test]
+    fn zero_length_frame_with_live_idle_peer_parks_instead_of_eof() {
+        drop(set_region_provider(Box::new(HeapRegionProvider::new())));
+        let channel = Channel::create_with_backpressure(
+            4096,
+            ChannelBackpressure::Park,
+            ResourceKind::SharedMemory,
+        )
+        .expect("channel");
+        let region = selium_memory::region_provider()
+            .expect("provider")
+            .allocate(1, RegionProt::ReadWrite, ResourceKind::SharedMemory)
+            .expect("placeholder");
+        let (mut reader, _live_writer) =
+            ByteStream::halves_from_channels(&channel, &channel, region, true).expect("halves");
+        queue_frame(&channel, b"");
+
+        let waker = std::task::Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut chunk = [0u8; 16];
+        let mut buf = ReadBuf::new(&mut chunk);
+        assert!(
+            Pin::new(&mut reader)
+                .poll_read(&mut cx, &mut buf)
+                .is_pending(),
+            "a header-only frame is not EOF while its writer remains attached"
+        );
+        assert!(buf.filled().is_empty());
+
+        queue_frame(&channel, b"abc");
+        assert_eq!(read_bytes(&mut reader, 3), b"abc");
+    }
+
+    #[tokio::test]
+    async fn public_asymmetric_attach_enforces_the_outbound_ring_capacity() {
+        use tokio::io::AsyncWriteExt as _;
+
+        drop(set_region_provider(Box::new(HeapRegionProvider::new())));
+        let (_inbound, _outbound, shared_id, _region) =
+            selium_shm::byte_channel::create(4096, 64).expect("asymmetric channel");
+        let mut stream = ByteStream::attach(shared_id).expect("public attach");
+        let error = stream
+            .write_all(&[0u8; 49])
+            .await
+            .expect_err("49 payload bytes plus the header exceed the 64-byte outbound ring");
+        assert!(error.to_string().contains("buffer full"));
+    }
+
+    // scenario: guest-networking/arbitrary-frame-sizes-preserve-byte-streams/payload-exceeds-64-kib
+    // scenario: guest-networking/tcp-stream-via-shared-memory-ring-buffer/frame-boundaries-are-not-messages
+    #[test]
+    fn large_frames_preserve_the_exact_byte_stream() {
+        for payload_len in [65_521usize, 1024 * 1024] {
+            let (mut reader, channel) = stream(4 * 1024 * 1024);
+            let payload: Vec<u8> = (0..payload_len).map(|index| (index % 251) as u8).collect();
+            queue_frame(&channel, &payload);
+            assert_eq!(
+                read_bytes(&mut reader, payload.len()),
+                payload,
+                "payload of {payload_len} bytes must survive reassembly"
+            );
+        }
+    }
+}

@@ -17,8 +17,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 selium-guest.workspace = true
-selium-shm.workspace = true
-selium-wire.workspace = true
 
 [lints]
 workspace = true

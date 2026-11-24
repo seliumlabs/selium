@@ -688,7 +688,7 @@ impl Runtime {
             .remove(&process_id)
             .unwrap_or_default();
         for shared_id in handed_off {
-            if let Ok(closed) = selium_shm::rpc::close_session(shared_id) {
+            if let Ok(closed) = self.close_handed_off_session(shared_id) {
                 self.note_generation_advance(closed.region_id, closed.generation);
             }
         }
@@ -1053,6 +1053,29 @@ impl Runtime {
                 format!(
                     "permission denied for capability {capability:?} (tenant: {tenant:?}, class: {:?}, identity: {resource_id:?})",
                     context.resource_class
+                ),
+            ))
+        }
+    }
+
+    pub(crate) fn require_capability_in_tenant(
+        &self,
+        process_id: ProcessId,
+        capability: Capability,
+        target_tenant: &str,
+    ) -> std::result::Result<(), selium_abi::AbiError> {
+        let caller_tenant = self.process_tenant(process_id);
+        let context = ScopeContext {
+            tenant: Some(target_tenant.to_string()),
+            ..ScopeContext::default()
+        };
+        if self.authorises(process_id, capability.clone(), &context) {
+            Ok(())
+        } else {
+            Err(selium_abi::AbiError::new(
+                selium_abi::AbiErrorCode::PermissionDenied,
+                format!(
+                    "permission denied for capability {capability:?} on tenant {target_tenant:?} (caller tenant: {caller_tenant:?})"
                 ),
             ))
         }
@@ -1777,6 +1800,7 @@ mod tests {
     /// Task 2.1: a spawned guest whose poll export reports entrypoint
     /// completion is removed from the process table with a `ProcessExited`
     /// event, while one reporting still-running stays resident.
+    // scenario: selium-runtime/entrypoint-completion-terminates-the-process/completed-entrypoint-reaps-the-process
     #[test]
     fn completed_entrypoint_poll_reaps_process() {
         let runtime = Runtime::default();
@@ -1823,6 +1847,7 @@ mod tests {
 
     /// Task 2.1 (counterpart): a parked entrypoint — the poll export reports
     /// still-running — keeps its process resident and must not be reaped.
+    // scenario: selium-runtime/entrypoint-completion-terminates-the-process/long-running-entrypoint-stays-resident
     #[test]
     fn parked_entrypoint_poll_keeps_process_resident() {
         let runtime = Runtime::default();
@@ -1862,6 +1887,7 @@ mod tests {
     /// Task 2.3: a wake delivered from another thread while the execution
     /// guard is held must not be lost — the mailbox flag stays set and the
     /// post-release re-check observes it.
+    // scenario: channel-wake-wait/cross-thread-wake-delivery/wake-racing-an-in-flight-poll-is-not-lost
     #[test]
     fn wake_while_guard_held_is_not_lost() {
         let runtime = Arc::new(Runtime::default());
@@ -1960,6 +1986,7 @@ mod tests {
             .expect("compile wat")
     }
 
+    // scenario: process-metering/instruction-unit-of-account/observation-carries-instructions
     #[test]
     fn activity_log_and_metering_are_projected() {
         let runtime = Runtime::default();
@@ -2005,6 +2032,11 @@ mod tests {
         );
     }
 
+    // scenario: process-metering/monotonic-per-process-counters/counter-never-decreases
+    // scenario: process-metering/committed-linear-memory-gauge/heap-growth-reflected-in-the-gauge
+    // scenario: process-metering/committed-linear-memory-gauge/shared-regions-excluded-from-the-gauge
+    // scenario: process-metering/tamper-evident-metering/guest-cannot-decrement-its-counter
+    // scenario: selium-accountant/metering-projection-by-the-host/observations-track-consumption
     #[test]
     fn metering_tick_projects_engine_instructions_and_linear_pages() {
         let runtime = Runtime::default();
@@ -2173,6 +2205,7 @@ mod tests {
     /// a ceiling change lands within one second. Raising the ceiling lets the
     /// guest run; lowering it below the remaining window work halts the guest
     /// on the next refresh.
+    // scenario: process-metering/cpu-ceiling-delivery-under-a-resource-class/ceiling-delivered-under-the-cpu-class
     #[test]
     fn tenant_cpu_ceiling_becomes_a_per_process_engine_budget() {
         let runtime = Runtime::default();
@@ -2215,6 +2248,7 @@ mod tests {
     /// The spawn-time anchor: a process spawned mid-window under a tenant with
     /// an already-authored CPU ceiling is bounded from its first instructions —
     /// no budget refresh is needed for the ceiling to apply.
+    // scenario: process-metering/per-minute-cpu-budget-enforcement/budget-applied-at-spawn
     #[test]
     fn spawn_anchors_the_tenant_cpu_ceiling_without_a_refresh() {
         let runtime = Runtime::default();
@@ -2241,6 +2275,7 @@ mod tests {
 
     /// The window anchor keeps a window's start count across refreshes within
     /// the same wall-clock minute, and re-anchors afresh on a new minute.
+    // scenario: process-metering/per-minute-cpu-budget-enforcement/budget-evaluated-per-window
     #[test]
     fn cpu_budget_window_re_anchors_only_on_a_new_minute() {
         // First anchor for a window: the window starts at the live count.
@@ -2279,6 +2314,7 @@ mod tests {
 
     /// The budget window is aligned to wall-clock minutes, matching the
     /// accountant's billing windows.
+    // scenario: process-metering/per-minute-cpu-budget-enforcement/window-aligned-to-the-wall-clock-minute
     #[test]
     fn cpu_budget_window_is_wall_clock_minute_aligned() {
         let now = std::time::SystemTime::now()
@@ -2293,6 +2329,7 @@ mod tests {
     /// reservations (here, a shared-region quota reservation). Task 4.3: the
     /// exhaustion outcome is a distinct first-class signal recorded by the
     /// runtime (the engine only reports it).
+    // scenario: process-metering/per-minute-cpu-budget-enforcement/over-budget-process-halted
     #[test]
     fn over_budget_process_is_reaped_and_releases_reservations() {
         let runtime = Runtime::default();
@@ -2360,6 +2397,8 @@ mod tests {
         );
     }
 
+    // scenario: capability-enforcement/cleanup-preserves-co-owners/co-owner-survives-cleanup
+    // scenario: selium-runtime/sub-struct-architecture/cross-subsystem-orchestration-uses-function-parameters
     #[test]
     fn cleanup_failed_process_preserves_co_owners() {
         let runtime = Runtime::default();
@@ -2429,6 +2468,7 @@ mod tests {
     /// the surviving owner still holds: the identity-keyed record would be
     /// dropped while the resource is still live. The last owner's exit does
     /// publish it, and only then is the region destroyed.
+    // scenario: selium-runtime/process-teardown-revocation/co-owned-resource-survives-an-owner-exit
     #[test]
     fn co_owner_exit_publishes_no_resource_freed() {
         let runtime = Runtime::default();
@@ -2480,6 +2520,8 @@ mod tests {
             "expected the identity-keyed revocation once the last owner exits, got: {events:?}"
         );
     }
+    // scenario: selium-abi/resource-authority-hostcall/unowned-resource-reports-no-ownership
+    // scenario: selium-abi/resource-authority-hostcall/class-mismatch-is-reported
 
     /// The authority answer distinguishes a class mismatch from an unknown
     /// identity, so admission can refuse it as a permission failure.
@@ -2601,7 +2643,35 @@ mod tests {
     /// A discovery publish failure during `stop_process` must fail the stop
     /// (rather than silently skipping revocations), keep the process
     /// authority so the stop can be retried, and leave the pending
+    // scenario: selium-runtime/a-concurrent-stop-is-not-undone-by-an-in-flight-poll/repeated-stop-cycles-leave-no-loaded-guests
+    // scenario: selium-runtime/a-concurrent-stop-is-not-undone-by-an-in-flight-poll/stop-during-a-poll-reclaims-the-execution
+    #[test]
+    fn repeated_stop_cycles_leave_no_loaded_guests() {
+        let runtime = Runtime::default();
+        for _ in 0..5 {
+            let guest = runtime
+                .spawn_system_guest(crate::SystemGuestDescriptor {
+                    name: "stop-cycle".to_string(),
+                    module_id: "stop-cycle-module".to_string(),
+                    module_bytes: wat::parse_str("(module (memory 1) (func (export \"boot\")))")
+                        .expect("compile wat"),
+                    entrypoint: "boot".to_string(),
+                    arguments: Vec::new(),
+                    grants: Vec::new(),
+                    tenant: None,
+                    discovery_service: false,
+                    handlers: Vec::new(),
+                })
+                .expect("spawn guest");
+            runtime.stop_process(guest.process_id).expect("stop");
+            assert_eq!(runtime.loaded_guest_count(), 0);
+        }
+    }
+
     /// revocations staged so the retry publishes them.
+    // scenario: guest-shared-memory/mapping-release-on-process-teardown/teardown-retry-does-not-duplicate-mappings
+    // scenario: selium-runtime/process-teardown-revocation/failed-teardown-is-retryable
+    // scenario: selium-runtime/process-teardown-revocation/exit-revokes-before-reclaim
     #[test]
     fn stop_process_teardown_is_retryable_after_publish_failure() {
         let runtime = Runtime::default();
@@ -2686,6 +2756,7 @@ mod tests {
     /// A `DelegateGrants` grant with no `Tenant` selector would vacuously
     /// match every scope context (including root), granting global
     /// cross-tenant delegation authority; validation rejects it.
+    // scenario: selium-runtime/principal-provenance-allocation/selector-less-delegation-grant-rejected
     #[test]
     fn delegate_grants_requires_a_tenant_selector() {
         let runtime = Runtime::default();
@@ -2781,87 +2852,7 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-runtime` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-runtime/wasmtiny-backed-guest-execution/runtime-starts-a-guest-module
-// scenario: selium-runtime/shared-memory-hostcall-passthrough/authorised-region-allocation
-// scenario: selium-runtime/shared-memory-hostcall-passthrough/unauthorised-region-allocation-denied
-// scenario: selium-runtime/region-lifetime-tied-to-guest-lifecycle/guest-exits-with-attached-regions
-// scenario: selium-runtime/network-hostcall-dispatch/guest-connects-to-tcp-endpoint-via-runtime
-// scenario: selium-runtime/network-hostcall-dispatch/guest-binds-tcp-listener-via-runtime
-// scenario: selium-runtime/network-hostcall-dispatch/guest-binds-udp-socket-via-runtime
-// scenario: selium-runtime/dedicated-timer-driver/guest-calls-sleep
-// scenario: selium-runtime/dedicated-timer-driver/timer-completes-without-an-ambient-executor
-// scenario: selium-runtime/dedicated-timer-driver/a-cancelled-sleep-is-not-woken
-// scenario: selium-runtime/cross-process-channel-wake-delivery/cross-guest-write-wakes-a-parked-reader
-// scenario: selium-runtime/cross-process-channel-wake-delivery/host-commit-wakes-its-subscriber
-// scenario: selium-runtime/cross-process-channel-wake-delivery/waking-a-stopped-process-is-a-no-op
-// scenario: selium-runtime/resource-revocation-by-identity/minted-resource-revokes-under-its-tenant
-// scenario: selium-runtime/resource-revocation-by-identity/teardown-needs-no-side-map
-// scenario: selium-runtime/sub-struct-architecture/sub-structs-are-independently-usable
-// scenario: selium-runtime/sub-struct-architecture/cross-subsystem-orchestration-uses-function-parameters
-// scenario: selium-runtime/tokio-dependency/runtime-uses-ambient-tokio-context
-// scenario: selium-runtime/tokio-dependency/tests-use-tokio-test
-// scenario: selium-runtime/async-network-i-o/tcp-accept-loop-uses-async-i-o
-// scenario: selium-runtime/async-network-i-o/tcp-proxy-uses-async-i-o
-// scenario: selium-runtime/discovery-enabled-bootstrap/discovery-wiring-uses-tagged-argument-encoding
-// scenario: selium-runtime/discovery-enabled-bootstrap/readiness-is-per-guest
-// scenario: selium-runtime/discovery-enabled-bootstrap/application-guest-receives-discovery-handle
-// scenario: selium-runtime/runtime-discovery-publication-session/runtime-connects-to-discovery-guest
-// scenario: selium-runtime/resource-authority-record-on-allocation/mint-records-the-principal-tenant
-// scenario: selium-runtime/resource-authority-record-on-allocation/authority-answers-before-the-owner-publishes
-// scenario: selium-runtime/no-host-registration-publication/allocation-publishes-nothing
-// scenario: selium-runtime/no-host-registration-publication/process-start-publishes-nothing
-// scenario: selium-runtime/process-teardown-revocation/exit-revokes-before-reclaim
-// scenario: selium-runtime/process-teardown-revocation/runtime-revokes-all-process-uris-on-exit
-// scenario: selium-runtime/process-teardown-revocation/runtime-revokes-freed-resource-identities
-// scenario: selium-runtime/process-teardown-revocation/failed-teardown-is-retryable
-// scenario: selium-runtime/process-teardown-revocation/co-owned-resource-survives-an-owner-exit
-// scenario: selium-runtime/guestlogregister-hostcall-validation/guestlogregister-accepted-for-own-region
-// scenario: selium-runtime/guestlogregister-hostcall-validation/guestlogregister-rejected-for-foreign-region
-// scenario: selium-runtime/discovery-handle-passed-to-guest-entrypoints/application-guest-receives-discovery-handle-unchanged
-// scenario: selium-runtime/grant-admission-and-evaluation/accept-then-deny-is-impossible
-// scenario: selium-runtime/grant-admission-and-evaluation/errors-attribute-correctly
-// scenario: selium-runtime/entrypoint-failure-detection/non-zero-exit-code-fails-bootstrap
-// scenario: selium-runtime/entrypoint-failure-detection/zero-exit-code-proceeds-normally
-// scenario: selium-runtime/entrypoint-failure-detection/void-entrypoint-no-return-value-proceeds-normally
-// scenario: selium-runtime/entrypoint-argument-injection/integer-argument-encoded-as-i64
-// scenario: selium-runtime/entrypoint-argument-injection/pointer-argument-bytes-injected-into-guest-memory
-// scenario: selium-runtime/entrypoint-argument-injection/pointer-argument-layout-is-declaration-ordered
-// scenario: selium-runtime/entrypoint-argument-injection/oversized-pointer-payload-rejected
-// scenario: selium-runtime/owner-published-process-nodes/process-node-is-published-by-the-process
-// scenario: selium-runtime/owner-published-process-nodes/process-node-revoked-at-teardown
-// scenario: selium-runtime/owner-published-process-nodes/unpublished-process-is-accounted-but-undiscoverable
-// scenario: selium-runtime/owner-published-process-nodes/registry-publishes-its-routes-without-a-self-rpc
-// scenario: selium-runtime/principal-provenance-allocation/system-process-allocates-for-another-tenant
-// scenario: selium-runtime/principal-provenance-allocation/root-principal-allocates-for-any-tenant-without-delegation
-// scenario: selium-runtime/principal-provenance-allocation/unauthorised-cross-tenant-allocation-denied
-// scenario: selium-runtime/principal-provenance-allocation/host-queue-minted-under-the-serving-tenant
-// scenario: selium-runtime/principal-provenance-allocation/volume-minted-under-the-serving-tenant
-// scenario: selium-runtime/principal-provenance-allocation/selector-less-delegation-grant-rejected
-// scenario: selium-runtime/entrypoint-completion-terminates-the-process/completed-entrypoint-reaps-the-process
-// scenario: selium-runtime/entrypoint-completion-terminates-the-process/long-running-entrypoint-stays-resident
-// scenario: selium-runtime/process-spawn-quota/spawn-over-the-process-ceiling-denied
-// scenario: selium-runtime/process-spawn-quota/quota-distinct-from-lifecycle-grant
-// scenario: selium-runtime/process-spawn-quota/exited-process-returns-its-slot
-// scenario: selium-runtime/state-root-boot/dependants-start-after-the-store
-// scenario: selium-runtime/state-root-boot/usage-reconstructed-at-boot
-// scenario: selium-runtime/host-keyring-persistence/first-boot-generates-and-persists
-// scenario: selium-runtime/host-keyring-persistence/restart-preserves-the-hierarchy
-// scenario: selium-runtime/volume-hostcall-enforcement/append-beyond-the-ceiling-denied
-// scenario: selium-runtime/volume-hostcall-enforcement/removal-releases-usage
-// scenario: selium-runtime/protocol-handler-route-claims/handler-claim-is-host-provisioned
-// scenario: selium-runtime/protocol-handler-route-claims/handler-guest-publishes-its-claim
-// scenario: selium-runtime/protocol-handler-route-claims/guests-cannot-forge-a-handler
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `route-claims` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: route-claims/host-issued-route-claims/claim-holder-publishes-a-reserved-name
-// scenario: route-claims/host-issued-route-claims/process-without-a-claim-is-refused
-// scenario: route-claims/host-issued-route-claims/claim-is-not-delegable
-// scenario: route-claims/host-issued-route-claims/exact-match-only
-// scenario: route-claims/exclusive-live-claims/second-claimant-refused
-// scenario: route-claims/exclusive-live-claims/claim-released-on-owner-exit
-// scenario: route-claims/well-known-names-are-claims/handler-guest-claims-its-scheme
-// scenario: route-claims/well-known-names-are-claims/another-guest-cannot-claim-a-scheme
-// scenario: route-claims/expected-claim-reconciliation/unpublished-claim-is-visible-as-drift
-// scenario: route-claims/expected-claim-reconciliation/non-publishing-guest-remains-accounted

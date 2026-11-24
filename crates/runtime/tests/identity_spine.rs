@@ -42,7 +42,12 @@
 //! process-global region provider) and serialise on the cross-process
 //! spine port lock.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Arc,
+    time::Duration,
+};
 
 use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256, PublicKeyData};
 use selium_client::FlatMsg as _;
@@ -50,16 +55,24 @@ use selium_identity_onboard::{MODE_ONBOARD, MODE_REVOKE};
 use selium_runtime::RuntimeConfig;
 use selium_service::{ControlRequest, ControlResponse, DelegationStatus, Deployment};
 use spine_common::{
-    CONNECTOR_ADDR, CONTROL_URI, CONVERGENCE_BOUND, HANDSHAKE_BOUND, OBSERVATION_BOUND,
-    SCHEDULER_DEFERRED, SpinePortGuard, StateRoot, bridge_server_descriptor, client_options,
-    connector_descriptor, control_plane_descriptor, discovery_descriptor, drain_logs_if_live,
-    identity_descriptor, operator_descriptor, read_issued_leaf, read_wasm, runtime_in_state_root,
-    seed_tls_blob_store, store_descriptor, wait_for_logs,
+    BRIDGE_CERT_PEM, CONNECTOR_ADDR, CONTROL_URI, CONVERGENCE_BOUND, HANDSHAKE_BOUND,
+    OBSERVATION_BOUND, SCHEDULER_DEFERRED, SpinePortGuard, StateRoot, bridge_server_descriptor,
+    client_options, connector_descriptor, control_plane_descriptor, discovery_descriptor,
+    drain_logs_if_live, identity_descriptor, operator_descriptor, read_issued_leaf, read_wasm,
+    runtime_in_state_root, seed_tls_blob_store, store_descriptor, wait_for_logs,
 };
 
 mod common;
 mod spine_common;
+// scenario: selium-identity/user-certificate-lifecycle/issuing-a-user-cert-records-the-fingerprint
+// scenario: selium-cli/ephemeral-single-request-lifecycle/one-invocation-performs-one-request
 
+// scenario: verification-gate/external-protocol-paths-have-real-end-to-end-evidence/cli-subprocess-uses-real-bridge
+// scenario: selium-cli/bridge-derived-connection/real-cli-invocation-reaches-the-control-plane
+// scenario: control-plane/served-typed-control-surface/external-client-reaches-the-served-surface
+// scenario: control-plane/capability-enforced-access/privileged-client-reaches-the-control-surface
+// scenario: control-plane/requestor-tenant-derivation/external-client-scoped-through-its-bridge-channel
+// scenario: quic-connector/identity-published-trust-anchors-and-runtime-refresh/live-connections-survive-revocation-until-re-auth
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the identity, discovery, connector, bridge and control-plane guests built for wasm32-unknown-unknown"]
 async fn identity_spine_onboards_and_reaches_the_control_plane() {
@@ -221,8 +234,122 @@ async fn identity_spine_onboards_and_reaches_the_control_plane() {
         out
     };
 
-    // mTLS handshake with the identity-issued leaf against the wasm connector.
+    // CLI subprocess spine (task 10.3): the real `sel` binary runs against
+    // the same connector, bridge, and control plane. Each invocation is a
+    // fresh process that opens one connection, issues exactly one request,
+    // renders one line, and exits — so state crossing invocations can only
+    // come from the control plane's durable projection.
+    let select_binary = || -> PathBuf {
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| workspace.join("target"));
+        // The in-process guests only progress while this runtime's threads
+        // run, so hand the blocking subprocess to `block_in_place` rather
+        // than parking an async worker on it.
+        let output = tokio::task::block_in_place(|| {
+            Command::new(cargo)
+                .current_dir(&workspace)
+                .args(["build", "-p", "selium-cli"])
+                .output()
+                .expect("run cargo to build the sel binary")
+        });
+        assert!(
+            output.status.success(),
+            "failed to build sel: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        target.join("debug").join("sel")
+    };
+    let binary = select_binary();
+
+    let credentials = std::env::temp_dir().join(format!(
+        "selium-cli-spine-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&credentials).expect("create CLI credential directory");
+    let ca_path = credentials.join("ca.pem");
+    let cert_path = credentials.join("client-cert.pem");
+    let key_path = credentials.join("client-key.pem");
+    std::fs::write(&ca_path, BRIDGE_CERT_PEM).expect("write CA PEM");
     let leaf = read_issued_leaf(&runtime);
+    std::fs::write(&cert_path, pem_encode("CERTIFICATE", &leaf))
+        .expect("write client certificate PEM");
+    std::fs::write(&key_path, client_key.serialize_pem()).expect("write client key PEM");
+
+    let invoke = |arguments: &[&str]| {
+        tokio::task::block_in_place(|| {
+            Command::new(&binary)
+                .args([
+                    "--connector",
+                    CONNECTOR_ADDR,
+                    "--ca",
+                    ca_path.to_str().expect("CA path"),
+                    "--client-cert",
+                    cert_path.to_str().expect("certificate path"),
+                    "--client-key",
+                    key_path.to_str().expect("key path"),
+                ])
+                .args(arguments)
+                .output()
+                .expect("run the sel binary")
+        })
+    };
+
+    // The CLI is the first external client: one process, one connection, one
+    // request. The bridge and control plane converge asynchronously (the
+    // suite's other clients wait through `wait_for_logs`); the CLI itself is
+    // synchronous by design, so the harness waits for convergence by retrying
+    // only connection-level failures.
+    // Connection-level failures are convergence, not a typed CLI result. Retry
+    // those within the same bounded window the other external clients use; a
+    // typed response (including not-found) is returned immediately.
+    let invoke_ready = |arguments: &[&str]| {
+        let mut attempts = 0;
+        loop {
+            let output = invoke(arguments);
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let not_ready = stderr.contains("connection lost") || stderr.contains("timed out");
+            if not_ready && attempts < 8 {
+                attempts += 1;
+                tokio::task::block_in_place(|| std::thread::sleep(Duration::from_secs(5)));
+                continue;
+            }
+            break output;
+        }
+    };
+    let missing = invoke_ready(&["status", "absent"]);
+    assert!(
+        !missing.status.success(),
+        "status for an unknown workload must exit non-zero; stdout: {}; stderr: {}; state: {:#?}",
+        String::from_utf8_lossy(&missing.stdout),
+        String::from_utf8_lossy(&missing.stderr),
+        dump(),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&missing.stdout).trim(),
+        "not found",
+        "stderr: {}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&missing.stdout).lines().count(),
+        1,
+        "one invocation renders one line"
+    );
+    assert!(
+        missing.stderr.is_empty(),
+        "a typed not-found response is stdout, not a transport diagnostic: {}",
+        String::from_utf8_lossy(&missing.stderr)
+    );
+
+    // mTLS handshake with the identity-issued leaf against the wasm connector.
     let connecting = selium_client::connect(
         CONNECTOR_ADDR.parse().expect("connector address"),
         client_options(leaf.clone(), client_pkcs8.clone()),
@@ -232,14 +359,30 @@ async fn identity_spine_onboards_and_reaches_the_control_plane() {
         Err(_elapsed) => panic!("handshake timed out; state: {:#?}", dump()),
     };
 
-    let opening = client.rpc::<ControlRequest, ControlResponse>(CONTROL_URI);
-    let mut rpc = match tokio::time::timeout(CONVERGENCE_BOUND, opening).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(error)) => panic!(
-            "control route channel open failed: {error}; state: {:#?}",
-            dump()
-        ),
-        Err(_elapsed) => panic!("channel open timed out; state: {:#?}", dump()),
+    // The bridge creates a fresh channel for every stream; connection-level
+    // loss during that convergence is retried exactly like the CLI subprocess.
+    // A typed channel rejection remains fatal immediately.
+    let mut attempts = 0;
+    let mut rpc = loop {
+        let opening = client.rpc::<ControlRequest, ControlResponse>(CONTROL_URI);
+        match tokio::time::timeout(CONVERGENCE_BOUND, opening).await {
+            Ok(Ok(result)) => break result,
+            Ok(Err(error)) if attempts < 8 => {
+                eprintln!("control channel not ready ({attempts}): {error}");
+                attempts += 1;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            Ok(Err(error)) => panic!(
+                "control route channel open failed: {error}; state: {:#?}",
+                dump()
+            ),
+            Err(_elapsed) if attempts < 8 => {
+                eprintln!("control channel open timed out ({attempts})");
+                attempts += 1;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            Err(_elapsed) => panic!("channel open timed out; state: {:#?}", dump()),
+        }
     };
 
     let deploying = rpc.request(ControlRequest::Deploy {
@@ -285,6 +428,26 @@ async fn identity_spine_onboards_and_reaches_the_control_plane() {
         "status returns the recorded desired state; guest logs: {:#?}",
         logs(),
     );
+
+    let successful = invoke_ready(&["status", "api"]);
+    assert!(
+        successful.status.success(),
+        "a recorded workload exits zero; stdout: {}; stderr: {}; state: {:#?}",
+        String::from_utf8_lossy(&successful.stdout),
+        String::from_utf8_lossy(&successful.stderr),
+        dump(),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&successful.stdout),
+        "workload api: 3 replicas, module api/v1\n",
+        "the successful response is rendered exactly on stdout"
+    );
+    assert!(
+        successful.stderr.is_empty(),
+        "a successful request emits no stderr diagnostic: {}",
+        String::from_utf8_lossy(&successful.stderr)
+    );
+    drop(std::fs::remove_dir_all(&credentials));
 
     // Revocation leg (task 4.6): the operator tier revokes the `acme`
     // tenant, removing its published anchor and deleting its CA key.
@@ -413,7 +576,8 @@ async fn identity_spine_onboards_and_reaches_the_control_plane() {
                 message.contains("failed")
                     && !(name == "quic-connector"
                         && (message.contains("incoming connection failed")
-                            || message.contains("no client trust anchors configured")))
+                            || message.contains("no client trust anchors configured")
+                            || message.contains("accept_bi failed: closed by peer:")))
             })
             .collect();
         assert!(
@@ -433,4 +597,31 @@ async fn identity_spine_onboards_and_reaches_the_control_plane() {
     // The revocation driver is a one-shot guest: it completes and is reaped by
     // the runtime, so there is nothing left to stop.
     drop(revoke_guest);
+}
+
+/// Encodes DER bytes as a PEM block (the CLI reads certificate and key files
+/// as PEM, while the identity guest returns the issued leaf as DER).
+fn pem_encode(label: &str, der: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut body = String::new();
+    for chunk in der.chunks(48) {
+        let mut line = String::new();
+        for triple in chunk.chunks(3) {
+            let first = u32::from(triple.first().copied().unwrap_or(0));
+            let second = u32::from(triple.get(1).copied().unwrap_or(0));
+            let third = u32::from(triple.get(2).copied().unwrap_or(0));
+            let value = (first << 16) | (second << 8) | third;
+            let digit = |shift: u32| -> char {
+                let index = ((value >> shift) & 0x3f) as usize;
+                ALPHABET.get(index).map(|byte| *byte as char).unwrap_or('=')
+            };
+            line.push(digit(18));
+            line.push(digit(12));
+            line.push(if triple.len() > 1 { digit(6) } else { '=' });
+            line.push(if triple.len() > 2 { digit(0) } else { '=' });
+        }
+        body.push_str(&line);
+        body.push('\n');
+    }
+    format!("-----BEGIN {label}-----\n{body}-----END {label}-----\n")
 }

@@ -10,7 +10,11 @@ use selium_abi::{
 use selium_memory::FrameHeader;
 use selium_runtime::{Runtime, SystemGuestDescriptor};
 
+// scenario: selium-abi/shared-region-hostcall-variants/allocregion-hostcall-round-trip
+// scenario: guest-shared-memory/shared-region-allocation-via-regionprovider/guest-allocates-a-shared-region-via-provider
+// scenario: guest-shared-memory/shared-region-free/guest-frees-a-region-via-provider
 /// Tests AllocRegion and FreeRegion lifecycle.
+// scenario: selium-runtime/shared-memory-hostcall-passthrough/authorised-region-allocation
 #[test]
 fn alloc_and_free_region_lifecycle() {
     let runtime = Runtime::default();
@@ -39,6 +43,9 @@ fn alloc_region(runtime: &Runtime, process_id: ProcessId, pages: u32) -> u64 {
     }
 }
 
+// scenario: per-page-memory-protection/per-page-memory-protection-on-attach/consumer-attaches-with-reader-slot
+// scenario: selium-abi/shared-region-hostcall-variants/attachregion-with-reader-slot
+// scenario: guest-shared-memory/shared-region-allocation-via-regionprovider/guest-allocates-with-read-only-protection
 /// Tests that protection and reader_slot parameters are correctly accepted by the hostcall
 /// and that the region is mapped into guest linear memory with the requested protection.
 /// The per-page mprotect enforcement is handled by wasmtiny's `map_shared_region`.
@@ -74,6 +81,8 @@ fn attach_accepts_protection_and_reader_slot() {
     free_region(&runtime, process_id, region_id);
 }
 
+// scenario: per-page-memory-protection/producer-full-access/producer-attaches-without-reader-slot
+// scenario: guest-shared-memory/shared-region-attach/guest-attaches-to-an-existing-region-via-provider
 /// Tests that a region can be allocated, attached, and the pages are
 /// accessible through the kernel.
 #[test]
@@ -171,6 +180,7 @@ fn frame_header_round_trip() {
     free_region(&runtime, process_id, region_id);
 }
 
+// scenario: guest-shared-memory/shared-region-free/region-freed-while-other-instances-are-attached
 /// Tests that FreeRegion cleans up active kernel mappings and succeeds.
 #[test]
 fn free_fails_when_mapped() {
@@ -276,14 +286,3 @@ fn two_attachments_share_region() {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `guest-shared-memory` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: guest-shared-memory/shared-region-allocation-via-regionprovider/guest-allocates-a-shared-region-via-provider
-// scenario: guest-shared-memory/shared-region-allocation-via-regionprovider/guest-allocates-with-read-only-protection
-// scenario: guest-shared-memory/shared-region-free/guest-frees-a-region-via-provider
-// scenario: guest-shared-memory/shared-region-free/region-freed-while-other-instances-are-attached
-// scenario: guest-shared-memory/shared-region-attach/guest-attaches-to-an-existing-region-via-provider
-// scenario: guest-shared-memory/shared-region-attach/guest-attaches-to-a-non-existent-region
-// scenario: guest-shared-memory/native-atomic-access-to-shared-regions/guest-reads-shared-data-via-regionmapping-read-u64
-// scenario: guest-shared-memory/native-atomic-access-to-shared-regions/guest-uses-atomic-cas-on-coordination-field
-// scenario: guest-shared-memory/shared-region-coordination-layout/standard-coordination-layout
-// scenario: guest-shared-memory/shared-region-coordination-layout/host-proxy-coordinates-via-shared-fields
-// scenario: guest-shared-memory/shared-region-coordination-layout/kernel-notifies-guest-via-generation-counter

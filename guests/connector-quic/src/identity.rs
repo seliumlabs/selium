@@ -366,10 +366,22 @@ pub fn build_server_config(
     // them (see `MAX_CONCURRENT_BIDI_STREAMS`).
     let mut transport = TransportConfig::default();
     transport.max_concurrent_bidi_streams(crate::MAX_CONCURRENT_BIDI_STREAMS.into());
+    // The connector runs interpreted, so a mutual-TLS handshake (client
+    // certificate chain plus anchor verification) can take tens of seconds on
+    // a loaded host, and a dropped datagram adds a retransmission round. The
+    // budget must outlast a slow handshake, not police it; a genuinely dead
+    // peer is detected by the client's own timeout.
+    transport.max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::from(
+        HANDSHAKE_IDLE_TIMEOUT_MS,
+    ))));
     config.transport_config(Arc::new(transport));
 
     Ok(config)
 }
+
+/// Idle budget for a connection, sized for the interpreted handshake and for
+/// clients that legitimately pause between requests.
+const HANDSHAKE_IDLE_TIMEOUT_MS: u32 = 300_000;
 
 /// Builds a per-tenant client verifier from a single trust anchor.
 fn per_tenant_verifier(
@@ -419,6 +431,7 @@ mod tests {
         ));
     }
 
+    // scenario: addressing/advisory-domain-to-tenant-table/mapping-is-advisory-not-authoritative-for-identity
     #[test]
     fn identity_is_derived_from_fixture_chain() {
         let anchors = client_anchor();
@@ -443,6 +456,7 @@ mod tests {
         assert!(anchors.identity_from_chain(&[server_cert]).is_none());
     }
 
+    // scenario: quic-connector/identity-published-trust-anchors-and-runtime-refresh/connector-refuses-to-serve-before-anchor-state-arrives
     #[test]
     fn empty_set_refuses_valid_client_certificate() {
         // The live-table flow's start state: before identity's initial
@@ -497,6 +511,8 @@ mod tests {
         )
     }
 
+    // scenario: quic-connector/identity-published-trust-anchors-and-runtime-refresh/new-tenant-anchor-propagates
+    // scenario: quic-connector/identity-published-trust-anchors-and-runtime-refresh/revoked-tenant-anchor-propagates
     #[test]
     fn replace_propagates_anchor_addition_and_revocation() {
         // New tenant anchor propagates: a rebuilt set accepts certificates

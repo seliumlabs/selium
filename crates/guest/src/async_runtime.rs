@@ -160,28 +160,52 @@ impl<T> JoinHandle<T> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
     }
+
+    fn poll_inner(&self, cx: &mut Context<'_>, before_registration: impl FnOnce()) -> Poll<T> {
+        if self.state.done.load(Ordering::Acquire) {
+            return Poll::Ready(self.completed_result());
+        }
+        before_registration();
+        *self
+            .state
+            .waker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cx.waker().clone());
+        // Close the completion/registration race: the task may have completed
+        // between the first check and the waker store, in which case
+        // `complete` found no waker. Re-check and either return the result now
+        // or wake the just-registered waker.
+        if self.state.done.load(Ordering::Acquire) {
+            if let Some(waker) = self
+                .state
+                .waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                waker.wake();
+            }
+            return Poll::Ready(self.completed_result());
+        }
+        Poll::Pending
+    }
 }
 
 impl<T> Future for JoinHandle<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.state.done.load(Ordering::Acquire) {
-            let result = self
-                .state
-                .result
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            Poll::Ready(result.expect("a done join always holds its result"))
-        } else {
-            *self
-                .state
-                .waker
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cx.waker().clone());
-            Poll::Pending
-        }
+        self.poll_inner(cx, || {})
+    }
+}
+
+impl<T> JoinHandle<T> {
+    /// Takes the completion value exactly once. A `JoinHandle` is polled to
+    /// completion by one task, so a second take is a caller error rather than
+    /// a wake to lose.
+    fn completed_result(&self) -> T {
+        self.take_result()
+            .expect("a done join always holds its result")
     }
 }
 
@@ -543,6 +567,11 @@ fn create_waker(worker_id: u32, task_id: TaskId) -> Waker {
     // entries, and the data pointer always points at a live `Arc<TaskWake>`
     // for as long as any waker derived from it exists.
     unsafe { Waker::from_raw(RawWaker::new(ptr.cast(), &TASK_WAKE_VTABLE)) }
+}
+
+#[cfg(test)]
+pub(crate) fn test_task_waker() -> Waker {
+    create_waker(0, 1)
 }
 
 /// Drives the entrypoint to its first park.
@@ -1063,6 +1092,7 @@ mod tests {
 
     fn assert_send<T: Send>() {}
 
+    // scenario: selium-guest/concurrent-task-execution/spawned-future-must-be-send
     #[test]
     fn join_handle_is_send_when_output_is_send() {
         assert_send::<JoinHandle<u32>>();
@@ -1070,6 +1100,70 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         reset_executor();
+    }
+
+    struct RecordingWaker {
+        woken: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl std::task::Wake for RecordingWaker {
+        fn wake(self: Arc<Self>) {
+            self.woken.store(true, Ordering::Release);
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.woken.store(true, Ordering::Release);
+        }
+    }
+
+    #[test]
+    fn forced_completion_between_check_and_registration_returns_the_result() {
+        let state = Arc::new(JoinState::<u32>::new());
+        let handle = JoinHandle {
+            state: Arc::clone(&state),
+        };
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        let result = handle.poll_inner(&mut context, || state.complete(42));
+        assert!(matches!(result, std::task::Poll::Ready(42)));
+    }
+
+    /// Completion can land between the join handle's `done` check and its
+    /// waker registration. Repeated races must either return the result or
+    /// wake the joiner; a stranded join is a failure.
+    // scenario: selium-guest/join-completion-cannot-be-lost/completion-races-poll
+    #[test]
+    fn completion_between_join_check_and_waker_registration_is_not_lost() {
+        for _ in 0..500 {
+            let state = Arc::new(JoinState::<u32>::new());
+            let completer_state = Arc::clone(&state);
+            let completer = std::thread::spawn(move || completer_state.complete(42));
+
+            let woken = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let waker = std::task::Waker::from(Arc::new(RecordingWaker {
+                woken: Arc::clone(&woken),
+            }));
+            let mut context = std::task::Context::from_waker(&waker);
+            let mut handle = JoinHandle {
+                state: Arc::clone(&state),
+            };
+
+            let ready = match std::pin::Pin::new(&mut handle).poll(&mut context) {
+                std::task::Poll::Ready(value) => {
+                    assert_eq!(value, 42);
+                    true
+                }
+                std::task::Poll::Pending => false,
+            };
+            completer.join().expect("completer thread");
+
+            if !ready {
+                wait_until(
+                    || woken.load(Ordering::Acquire),
+                    "a join woken after concurrent completion",
+                );
+            }
+        }
     }
 
     #[test]
@@ -1216,6 +1310,7 @@ mod tests {
         }
     }
 
+    // scenario: selium-guest/entrypoint-result-extraction/entrypoint-parks-without-completing
     #[test]
     fn result_entrypoint_that_parks_returns_ok_before_completion() {
         let _guard = TEST_LOCK
@@ -1249,6 +1344,7 @@ mod tests {
         );
     }
 
+    // scenario: selium-guest/entrypoint-result-extraction/failing-future-returns-its-error
     #[test]
     fn result_entrypoint_that_fails_returns_err() {
         let _guard = TEST_LOCK
@@ -1263,6 +1359,7 @@ mod tests {
     /// Task 1.1: a poll-owner future that completes causes the reactor to
     /// report completion, while one that parks (never resolving) reports
     /// still-running.
+    // scenario: selium-guest/entrypoint-result-extraction/successful-future-returns-its-output
     #[test]
     fn reactor_reports_poll_owner_completion() {
         let _guard = TEST_LOCK
@@ -1291,6 +1388,7 @@ mod tests {
     /// reactor poll (a wake, not a bare re-poll) flips the reactor to the
     /// completion signal — for both `Ok` and `Err` completions — rather than
     /// leaving the process resident on an idle reactor.
+    // scenario: selium-guest/entrypoint-result-extraction/late-completion-ends-the-process
     #[test]
     fn reactor_reports_late_poll_owner_completion() {
         let _guard = TEST_LOCK
@@ -1402,6 +1500,7 @@ mod tests {
     /// Task 2.1: two OS-thread workers running one shared executor execute
     /// independent tasks concurrently — each task observes a distinct worker
     /// id (via the executor waker) and both tasks overlap in time.
+    // scenario: selium-guest/concurrent-task-execution/independent-tasks-advance-in-parallel
     #[test]
     fn independent_tasks_run_concurrently_on_distinct_workers() {
         let _guard = TEST_LOCK

@@ -19,6 +19,7 @@ use selium_runtime::{Runtime, RuntimeConfig, SystemGuestDescriptor};
 
 /// Task 4.1 substrate: the connector's raw UDP socket is capability-gated by
 /// `Network + UdpSocket`; a guest without that grant cannot bind one.
+// scenario: udp-transport/capability-gated-udp-access/guest-denied-udp-bind-without-capability
 #[test]
 fn connector_udp_socket_requires_network_grant() {
     let runtime = Runtime::default();
@@ -151,6 +152,8 @@ fn spawn_guest(runtime: &Runtime, name: &str, grants: Vec<CapabilityGrant>) -> P
         .process_id
 }
 
+// scenario: dns-connector/typed-egress-resolution/resolution-is-grant-gated
+// scenario: dns-connector/well-known-discovery-registration/tenant-scoped-resolution-policy
 /// Task 4.3: a guest without a grant for the connector's channel cannot
 /// attach to it (and therefore cannot resolve).
 #[test]
@@ -210,10 +213,3 @@ fn ungranted_guest_cannot_attach_connector_channel() {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `dns-connector` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: dns-connector/typed-egress-resolution/successful-resolution
-// scenario: dns-connector/typed-egress-resolution/resolution-is-grant-gated
-// scenario: dns-connector/reply-correlation/concurrent-queries-do-not-cross
-// scenario: dns-connector/honest-failure-outcomes/nxdomain-is-typed
-// scenario: dns-connector/honest-failure-outcomes/upstream-error-codes-are-typed
-// scenario: dns-connector/honest-failure-outcomes/forwarding-failure-is-typed
-// scenario: dns-connector/well-known-discovery-registration/tenant-scoped-resolution-policy

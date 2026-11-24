@@ -458,7 +458,11 @@ impl Client {
         })
     }
 
-    /// Opens a typed live-table channel for `uri`.
+    /// Opens a typed writable live-table channel for `uri`.
+    ///
+    /// Writable tables require a transport-provided shared writer arbiter.
+    /// Construction returns [`selium_wire::Error::TableAuthorityUnavailable`]
+    /// when the transport cannot enforce exclusive cross-writer authority.
     pub async fn live_table<K, V>(&self, uri: &str) -> Result<LiveTable<K, V>>
     where
         K: FlatMsg + Clone + Eq + std::hash::Hash,
@@ -474,7 +478,11 @@ impl Client {
         > = selium_wire::Subscriber::new(reader, None);
 
         Ok(LiveTable {
-            inner: selium_wire::LiveTable::new(publisher, subscriber)?,
+            inner: selium_wire::LiveTable::new(
+                selium_wire::TableWriterAuthority::claim(format!("live-table:{uri}"))?,
+                publisher,
+                subscriber,
+            )?,
         })
     }
 }
@@ -496,11 +504,3 @@ pub async fn connect(addr: SocketAddr, options: ConnectOptions) -> Result<Client
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-client` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-client/quic-connection/client-connects
-// scenario: selium-client/mutual-tls-client-identity/client-presents-identity
-// scenario: selium-client/channel-open-per-stream/open-a-channel
-// scenario: selium-client/typed-messaging-handles/subscribe-to-a-channel
-// scenario: selium-client/typed-messaging-handles/publish-to-a-channel
-// scenario: selium-client/typed-termination-errors/channel-open-fails
-// scenario: selium-client/unified-error-surface/connection-failure-surfaces-typed-error
-// scenario: selium-client/encoding-re-exports/single-import-surface

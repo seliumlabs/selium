@@ -5,10 +5,7 @@
 //! native tests (including the torn-tail recovery cases, which need a volume
 //! that can be truncated).
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Mutex,
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use crate::format::{self, Record};
 
@@ -70,7 +67,9 @@ struct LogState<H> {
 
 /// A blob store's recovered and live state.
 struct BlobState {
-    blobs: HashSet<String>,
+    /// Valid content length for each recovered blob. A volume can retain a
+    /// torn tail after this prefix; readers and slices are bounded by it.
+    blobs: HashMap<String, u64>,
     manifests: HashMap<String, String>,
 }
 
@@ -158,6 +157,20 @@ impl<V: Volumes> Store<V> {
         })
     }
 
+    /// Forces a log's appended records to stable storage.
+    ///
+    /// This is the durable-commit barrier: a caller that acknowledges a policy
+    /// mutation only after this returns may truthfully claim the data survives
+    /// a power cycle. The store also syncs on its own threshold, so this is an
+    /// explicit barrier rather than the only time a log is synced.
+    pub fn sync_log(&self, tenant: &str, name: &str) -> Result<(), Failure> {
+        self.with_log(tenant, name, |state| {
+            state.write.sync()?;
+            state.unsynced_bytes = 0;
+            Ok(())
+        })
+    }
+
     /// Replays records from an optional sequence with a bound.
     pub fn replay(
         &self,
@@ -179,7 +192,7 @@ impl<V: Volumes> Store<V> {
 
     /// Records a named checkpoint referencing an existing sequence.
     ///
-    /// This is the log's durability barrier: the log is synced before the
+    /// A checkpoint is also a durability barrier: the log is synced before the
     /// checkpoint is recorded, so a checkpoint acknowledged here never
     /// references data lost to a power cycle.
     pub fn write_checkpoint(
@@ -229,21 +242,46 @@ impl<V: Volumes> Store<V> {
     /// A blob write is synced before acknowledgement: blob content is one of
     /// the store's durable artifacts (uploaded modules, TLS material).
     pub fn put_blob(&self, tenant: &str, store: &str, bytes: &[u8]) -> Result<String, Failure> {
+        // Recovery precedes the first mutation: a put as the first operation
+        // after restart must see (and not duplicate or shadow) existing blobs
+        // and manifests.
+        self.recover_blob_store(tenant, store)?;
         let id = format::blob_id(bytes);
         let mut stores = self.blob_stores.lock().map_err(poisoned)?;
         let state = stores
             .entry((tenant.to_string(), store.to_string()))
             .or_insert_with(|| BlobState {
-                blobs: HashSet::new(),
+                blobs: HashMap::new(),
                 manifests: HashMap::new(),
             });
-        if !state.blobs.contains(&id) {
-            let volume_name = format::blob_volume(store, &id);
-            let handle = self.volumes.open(serving(tenant), &volume_name)?;
-            handle.append(bytes)?;
+        let volume_name = format::blob_volume(store, &id);
+        let mut handle = self.volumes.open(serving(tenant), &volume_name)?;
+        let existing = handle.read_all()?;
+
+        // Never trust the in-memory index as proof of content. In particular,
+        // the first put may have appended successfully and then failed sync;
+        // its retry must validate and sync those same bytes, not append again.
+        if let Some(valid_len) = format::valid_blob_prefix(&existing, &id) {
+            if valid_len != bytes.len() || existing.get(..valid_len) != Some(bytes) {
+                return Err(Failure::format(format!(
+                    "blob volume {volume_name:?} contains different valid content for id {id:?}"
+                )));
+            }
             handle.sync()?;
-            state.blobs.insert(id.clone());
+            state.blobs.insert(id.clone(), valid_len as u64);
+            return Ok(id);
         }
+
+        // No valid acknowledged prefix exists, so these bytes are only a torn
+        // or partial first append. Reclaim them before retrying; recovery never
+        // removes a volume that contains a valid prefix.
+        if !existing.is_empty() {
+            self.volumes.remove(serving(tenant), &volume_name)?;
+            handle = self.volumes.open(serving(tenant), &volume_name)?;
+        }
+        handle.append(bytes)?;
+        handle.sync()?;
+        state.blobs.insert(id.clone(), bytes.len() as u64);
         Ok(id)
     }
 
@@ -259,14 +297,22 @@ impl<V: Volumes> Store<V> {
         let Some(state) = stores.get(&(tenant.to_string(), store.to_string())) else {
             return Ok(None);
         };
-        if !state.blobs.contains(blob_id) {
+        let Some(&valid_len) = state.blobs.get(blob_id) else {
             return Ok(None);
-        }
+        };
         drop(stores);
         let volume_name = format::blob_volume(store, blob_id);
         let handle = self.volumes.open(serving(tenant), &volume_name)?;
         let bytes = handle.read_all()?;
-        Ok(Some(bytes))
+        let valid_len = usize::try_from(valid_len)
+            .map_err(|_error| Failure::format("blob length does not fit in memory"))?;
+        let Some(prefix) = bytes.get(..valid_len) else {
+            return Ok(None);
+        };
+        if format::blob_id(prefix) != blob_id {
+            return Ok(None);
+        }
+        Ok(Some(prefix.to_vec()))
     }
 
     /// References an existing blob id from a named manifest.
@@ -282,10 +328,10 @@ impl<V: Volumes> Store<V> {
         let state = stores
             .entry((tenant.to_string(), store.to_string()))
             .or_insert_with(|| BlobState {
-                blobs: HashSet::new(),
+                blobs: HashMap::new(),
                 manifests: HashMap::new(),
             });
-        if !state.blobs.contains(blob_id) {
+        if !state.blobs.contains_key(blob_id) {
             return Err(Failure {
                 code: "UnknownBlob",
                 message: format!("blob {blob_id:?} is not held by store {store:?}"),
@@ -332,14 +378,24 @@ impl<V: Volumes> Store<V> {
         let Some(state) = stores.get(&(tenant.to_string(), store.to_string())) else {
             return Ok(None);
         };
-        if !state.blobs.contains(blob_id) {
+        let Some(&valid_len) = state.blobs.get(blob_id) else {
             return Ok(None);
-        }
+        };
         drop(stores);
         let volume_name = format::blob_volume(store, blob_id);
         let handle = self.volumes.open(serving(tenant), &volume_name)?;
-        let len = handle.len()?;
-        Ok(Some((volume_name, len)))
+        let bytes = handle.read_all()?;
+        let valid_len_usize = usize::try_from(valid_len)
+            .map_err(|_error| Failure::format("blob length does not fit in memory"))?;
+        if bytes
+            .get(..valid_len_usize)
+            .is_none_or(|prefix| format::blob_id(prefix) != blob_id)
+        {
+            return Ok(None);
+        }
+        // The volume may retain an ignored torn tail; the durable slice covers
+        // only the validated content prefix.
+        Ok(Some((volume_name, valid_len)))
     }
 
     fn with_log<R>(
@@ -457,14 +513,38 @@ impl<V: Volumes> Store<V> {
             return Ok(());
         }
         let volumes = self.volumes.list(serving(tenant))?;
-        let mut blobs = HashSet::new();
+        let mut blobs = HashMap::new();
         let mut manifests = HashMap::new();
         for volume in &volumes {
             if let Some(parsed) = format::parse_blob_volume(volume) {
                 let (volume_store, blob_id) =
                     parsed.map_err(|error| Failure::format(error.to_string()))?;
                 if volume_store == store {
-                    blobs.insert(blob_id);
+                    let handle = self.volumes.open(serving(tenant), volume)?;
+                    let bytes = handle.read_all()?;
+                    if let Some(valid_len) = format::valid_blob_prefix(&bytes, &blob_id) {
+                        if valid_len < bytes.len() {
+                            selium_guest::warn!(
+                                store,
+                                blob_id,
+                                valid_len,
+                                recovered_bytes = bytes.len(),
+                                "store: preserving a valid blob prefix and ignoring its torn tail"
+                            );
+                        }
+                        blobs.insert(blob_id, valid_len as u64);
+                    } else {
+                        // A partial first append has no acknowledged prefix.
+                        // Leave it in place and invisible; a corrected put will
+                        // reclaim it, while valid prefixed volumes are never
+                        // destructively recovered.
+                        selium_guest::warn!(
+                            store,
+                            blob_id,
+                            recovered_bytes = bytes.len(),
+                            "store: ignoring a recovered blob with no valid content prefix"
+                        );
+                    }
                 }
             }
         }
@@ -476,7 +556,18 @@ impl<V: Volumes> Store<V> {
             for body in bodies {
                 let (name, blob_id) = format::decode_manifest(body)
                     .map_err(|error| Failure::format(error.to_string()))?;
-                manifests.insert(name, blob_id);
+                if blobs.contains_key(&blob_id) {
+                    manifests.insert(name, blob_id);
+                } else {
+                    // A later manifest can name a blob whose append was torn.
+                    // Ignore that record rather than replacing a prior valid
+                    // mapping with an unresolvable one.
+                    selium_guest::warn!(
+                        store,
+                        blob_id,
+                        "store: ignoring a manifest whose blob has no valid content"
+                    );
+                }
             }
         }
         self.blob_stores

@@ -21,8 +21,14 @@ use selium_shm::layout::{self, GENERATION_COUNTER_OFFSET, RingReader, RingWriter
 
 use crate::{error::Result, runtime::Runtime};
 
-/// Default ring buffer data capacity (64 KiB, power of two).
-const DEFAULT_RING_CAPACITY: u64 = 64 * 1024;
+/// Default ring buffer data capacity (1 MiB, power of two).
+///
+/// Sized for bursty datagram traffic: a QUIC handshake arrives as a burst
+/// that the interpreted connector drains slower than the kernel poller fills
+/// it, and a full rewrite ring drops datagrams. 256 KiB was enough on a fast
+/// host but not in the Linux container, where the connector drains slower; a
+/// 1 MiB ring absorbs the whole handshake burst instead of losing packets.
+const DEFAULT_RING_CAPACITY: u64 = 1024 * 1024;
 /// Maximum time to wait on a generation advance for outbound drain (ms).
 /// The backstop ensures correctness even if a runtime kick is missed.
 const OUTBOUND_WAIT_TIMEOUT_MS: u64 = 1000;
@@ -64,7 +70,7 @@ pub fn tcp_bind(
     // Register the listener with the mio poller.
     if let Some(poller) = kernel.poller() {
         let k = kernel.clone();
-        let rt = runtime.clone();
+        let rt = runtime.background_handle();
         let queue_local_id = local_id;
         // Bandwidth attribution: bytes on accepted connections belong to the
         // listener's owner (the accepting process's tenant).
@@ -73,21 +79,36 @@ pub fn tcp_bind(
             .register_tcp_listener(
                 std_listener,
                 Box::new(move |stream: std::net::TcpStream| {
+                    let Some(runtime) = rt.upgrade() else {
+                        return;
+                    };
                     // A queued connection reserves one pipe slot against the
                     // listener owner's (serving) tenant. Over-ceiling arrivals
                     // are dropped at the chokepoint — the external peer sees a
                     // closed connection — and the denial is logged to aid
                     // debugging.
-                    if let Ok(queue_shared_id) = k.queues().host_queue_shared_id(queue_local_id)
-                        && let Err(error) = rt.charge_queue_item(queue_shared_id)
-                    {
-                        tracing::debug!(
-                            queue = queue_shared_id,
-                            error = error.message,
-                            "accepted connection dropped: listener tenant's pipe quota exhausted"
-                        );
-                        return;
-                    }
+                    let queue_shared_id = match k.queues().host_queue_shared_id(queue_local_id) {
+                        Ok(shared_id) => shared_id,
+                        Err(error) => {
+                            tracing::debug!(
+                                queue = queue_local_id,
+                                error = %error,
+                                "accepted connection dropped: listener queue is gone"
+                            );
+                            return;
+                        }
+                    };
+                    let mut queue_slot = match runtime.reserve_queue_item(queue_shared_id) {
+                        Ok(slot) => slot,
+                        Err(error) => {
+                            tracing::debug!(
+                                queue = queue_shared_id,
+                                error = error.message,
+                                "accepted connection dropped: listener tenant's pipe quota exhausted"
+                            );
+                            return;
+                        }
+                    };
                     drop(stream.set_nonblocking(true));
                     let (region, inbound_writer, outbound_reader, ring_offset, parent_local_id) =
                         match create_stream_region(&k) {
@@ -128,7 +149,9 @@ pub fn tcp_bind(
                     let bandwidth_rt = rt.clone();
                     let bandwidth_cb: Option<selium_kernel::BandwidthFn> =
                         Some(std::sync::Arc::new(move |bytes: u64| {
-                            bandwidth_rt.record_bandwidth_usage(owner_pid, bytes);
+                            if let Some(runtime) = bandwidth_rt.upgrade() {
+                                runtime.record_bandwidth_usage(owner_pid, bytes);
+                            }
                         }));
                     let registration = match k.poller() {
                         Some(p) => p.register_tcp_stream(
@@ -155,7 +178,7 @@ pub fn tcp_bind(
                     // Register the wait target for runtime kicks: the
                     // generation-word offset within the shared region.
                     let gen_offset = ring_offset + GENERATION_COUNTER_OFFSET;
-                    rt.network_wait_keys.lock().push((shared_id, gen_offset));
+                    runtime.network_wait_keys.lock().push((shared_id, gen_offset));
 
                     // Spawn outbound drain on a dedicated thread.
                     let memory = k.memory();
@@ -168,12 +191,17 @@ pub fn tcp_bind(
                             outbound_reader,
                             stream_running,
                             Some(Box::new(move |bytes: u64| {
-                                drain_rt.record_bandwidth_usage(drain_pid, bytes);
+                                if let Some(runtime) = drain_rt.upgrade() {
+                                    runtime.record_bandwidth_usage(drain_pid, bytes);
+                                }
                             })),
                         ) {}
-                        rt2.network_wait_keys
-                            .lock()
-                            .retain(|(sid, _)| *sid != shared_id);
+                        if let Some(runtime) = rt2.upgrade() {
+                            runtime
+                                .network_wait_keys
+                                .lock()
+                                .retain(|(sid, _)| *sid != shared_id);
+                        }
                         drop(memory.detach_shared_region(parent_local_id));
                     });
 
@@ -183,9 +211,12 @@ pub fn tcp_bind(
                     {
                         eprintln!("failed to enqueue connection: {e}");
                     } else {
+                        if let Some(mut reservation) = queue_slot.take() {
+                            reservation.commit();
+                        }
                         // The connection is queued: wake the guest parked on
                         // HostQueueRecv so it re-polls and completes its accept.
-                        rt.wake_queue_waiter(queue_local_id);
+                        runtime.wake_queue_waiter(queue_local_id);
                     }
                 }),
                 running,
@@ -232,11 +263,13 @@ pub fn tcp_connect(
     // Register the stream for inbound reads with the mio poller. Inbound
     // bytes are attributed to the connecting process's bandwidth counter.
     if let Some(poller) = kernel.poller() {
-        let bandwidth_rt = runtime.clone();
+        let bandwidth_rt = runtime.background_handle();
         let bandwidth_pid = process_id;
         let bandwidth_cb: Option<selium_kernel::BandwidthFn> =
             Some(std::sync::Arc::new(move |bytes: u64| {
-                bandwidth_rt.record_bandwidth_usage(bandwidth_pid, bytes)
+                if let Some(runtime) = bandwidth_rt.upgrade() {
+                    runtime.record_bandwidth_usage(bandwidth_pid, bytes);
+                }
             }));
         poller
             .register_tcp_stream(
@@ -259,8 +292,8 @@ pub fn tcp_connect(
     // Spawn the outbound drain on a dedicated thread. Outbound bytes are
     // attributed to the connecting process's bandwidth counter.
     let memory = kernel.memory();
-    let rt = runtime.clone();
-    let drain_rt = runtime.clone();
+    let rt = runtime.background_handle();
+    let drain_rt = runtime.background_handle();
     let drain_pid = process_id;
     thread::spawn(move || {
         if let Err(_e) = proxy_outbound_tcp(
@@ -268,13 +301,18 @@ pub fn tcp_connect(
             outbound_reader,
             running,
             Some(Box::new(move |bytes: u64| {
-                drain_rt.record_bandwidth_usage(drain_pid, bytes);
+                if let Some(runtime) = drain_rt.upgrade() {
+                    runtime.record_bandwidth_usage(drain_pid, bytes);
+                }
             })),
         ) {}
         // Cleanup: remove wait key on exit.
-        rt.network_wait_keys
-            .lock()
-            .retain(|(sid, _)| *sid != shared_id);
+        if let Some(runtime) = rt.upgrade() {
+            runtime
+                .network_wait_keys
+                .lock()
+                .retain(|(sid, _)| *sid != shared_id);
+        }
         drop(memory.detach_shared_region(parent_local_id));
     });
 
@@ -323,12 +361,23 @@ pub fn udp_bind(runtime: &Runtime, address: String) -> Result<SharedRegionDescri
 
     // Spawn the outbound send drain on a dedicated thread.
     let memory = kernel.memory();
-    let rt = runtime.clone();
+    let rt = runtime.background_handle();
+    let drain_rt = rt.clone();
     thread::spawn(move || {
-        if let Err(_e) = proxy_outbound_udp(outbound_socket, send_reader, running) {}
-        rt.network_wait_keys
-            .lock()
-            .retain(|(sid, _)| *sid != shared_id);
+        if let Err(_e) = proxy_outbound_udp(outbound_socket, send_reader, running, || {
+            if let Some(runtime) = drain_rt.upgrade() {
+                // Reading frees capacity without advancing the ring's write
+                // generation. Wake every registered waiter, mirroring the
+                // guest-side reader's u64::MAX capacity notification.
+                runtime.note_generation_advance(shared_id, u64::MAX);
+            }
+        }) {}
+        if let Some(runtime) = rt.upgrade() {
+            runtime
+                .network_wait_keys
+                .lock()
+                .retain(|(sid, _)| *sid != shared_id);
+        }
         drop(memory.detach_shared_region(parent_local_id));
     });
 
@@ -430,8 +479,13 @@ fn proxy_outbound_tcp(
     let backend = reader.backend();
     // A fresh ring has zero writers because the peer has not attached yet.
     // That is not EOF: only treat an empty writer set as end-of-stream once
-    // at least one writer has been observed.
-    let mut seen_writer = false;
+    // at least one writer has been observed. Blocking-writer attachment bumps
+    // the generation, which also covers attach-then-close before this thread
+    // first runs (including a session that never writes a payload).
+    let mut seen_writer = reader
+        .generation()
+        .map_err(|e| crate::Error::Host(e.to_string()))?
+        != 0;
 
     while running.load(Ordering::Relaxed) {
         // Snapshot the generation *before* draining. The drain loop below
@@ -464,6 +518,10 @@ fn proxy_outbound_tcp(
                         record(written);
                     }
                     saw_frame = true;
+                    // The writer may have committed and withdrawn before this
+                    // drainer first observed its registration. Committed data
+                    // proves that an empty writer set is now a real EOF.
+                    seen_writer = true;
                 }
                 Ok(None) => break,
                 Err(_) => {
@@ -508,6 +566,7 @@ fn proxy_outbound_udp(
     socket: UdpSocket,
     mut reader: RingReader,
     running: Arc<AtomicBool>,
+    on_consumed: impl Fn(),
 ) -> Result<()> {
     let backend = reader.backend();
     // See proxy_outbound_tcp: zero writers before first attach is not EOF.
@@ -571,7 +630,9 @@ fn proxy_outbound_udp(
             }
         }
 
-        if !saw_frame {
+        if saw_frame {
+            on_consumed();
+        } else {
             match reader.writer_count() {
                 Ok(0) => {
                     if seen_writer {
@@ -601,6 +662,9 @@ mod tests {
     use selium_kernel::Kernel;
     use selium_memory::MultiMemoryHeader;
 
+    // scenario: selium-runtime/tokio-dependency/tests-use-tokio-test
+    // scenario: selium-kernel/protocol-neutral-network-primitives/kernel-tracks-listener-metadata
+    // scenario: selium-abi/tcpbind-hostcall/guest-binds-tcp-listener
     #[tokio::test]
     async fn tcp_bind_creates_host_queue() {
         let kernel = Kernel::default();
@@ -615,6 +679,9 @@ mod tests {
             .unwrap();
     }
 
+    // scenario: selium-runtime/network-hostcall-dispatch/guest-connects-to-tcp-endpoint-via-runtime
+    // scenario: selium-runtime/tokio-dependency/runtime-uses-ambient-tokio-context
+    // scenario: selium-abi/tcpconnect-hostcall/guest-connects-to-tcp-endpoint
     #[tokio::test]
     async fn tcp_connect_returns_shared_region() {
         let kernel = Kernel::default();
@@ -637,6 +704,9 @@ mod tests {
         assert_eq!(header.count, 2, "expected 2 sub-memories");
     }
 
+    // scenario: selium-runtime/network-hostcall-dispatch/guest-binds-udp-socket-via-runtime
+    // scenario: selium-abi/udpbind-hostcall/guest-binds-udp-socket
+    // scenario: udp-transport/udp-socket-binding-via-hostcall/guest-binds-a-udp-socket
     #[tokio::test]
     async fn udp_bind_returns_shared_region() {
         let kernel = Kernel::default();
@@ -669,6 +739,7 @@ mod tests {
     /// Verify no sleep-based polling remains in network proxy paths.
     /// The source of `network.rs` must not contain `thread::sleep` or
     /// `tokio::time::sleep` outside of test-only code.
+    // scenario: selium-runtime/async-network-i-o/tcp-accept-loop-uses-async-i-o
     #[test]
     fn proxy_paths_do_not_spin() {
         let source = include_str!("network.rs");
@@ -688,6 +759,10 @@ mod tests {
     }
 
     /// End-to-end TCP echo test using the event-driven proxy infrastructure.
+    // scenario: selium-runtime/async-network-i-o/tcp-proxy-uses-async-i-o
+    // scenario: selium-kernel/kernel-consumes-the-shared-ring-implementation/network-proxy-uses-shared-primitives
+    // scenario: selium-kernel/event-driven-network-poller/socket-data-reaches-the-inbound-ring-without-polling
+    // scenario: guest-shared-memory/shared-region-coordination-layout/host-proxy-coordinates-via-shared-fields
     #[tokio::test]
     async fn tcp_echo_via_event_driven_proxy() {
         use selium_memory::MultiMemoryHeader;
@@ -852,6 +927,74 @@ mod tests {
         );
 
         drop(outbound_writer);
+        server_handle.join().expect("server thread");
+        runtime.kernel.close_tcp_stream(shared_id).unwrap();
+    }
+
+    /// A remote write half-close must not truncate replies that the guest
+    /// commits before closing its own writer.
+    #[tokio::test]
+    async fn remote_half_close_drains_guest_replies_before_outbound_eof() {
+        use std::io::Read as _;
+
+        let kernel = Kernel::default();
+        let _ = kernel.init_poller().expect("init poller");
+        let runtime = Runtime::new(kernel.clone());
+        let server = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let server_addr = server.local_addr().expect("addr");
+        let (received_tx, received_rx) = std::sync::mpsc::channel();
+        let server_handle = std::thread::spawn(move || {
+            let (mut stream, _) = server.accept().expect("accept");
+            stream
+                .shutdown(std::net::Shutdown::Write)
+                .expect("half-close server writer");
+            let mut received = Vec::new();
+            stream.read_to_end(&mut received).expect("read replies");
+            received_tx.send(received).expect("report replies");
+        });
+
+        let descriptor = tcp_connect(&runtime, 0, server_addr.to_string()).expect("tcp connect");
+        let shared_id = descriptor.shared_id;
+        let memory = runtime.kernel.memory();
+        let parent_backend = memory.attach_backend(shared_id).expect("attach");
+        let header = MultiMemoryHeader::parse(&parent_backend, 0).expect("parse");
+        let inbound_entry = header.entry(0).expect("inbound entry");
+        let inbound_backend = parent_backend
+            .sub_region(inbound_entry.offset, inbound_entry.length)
+            .expect("inbound sub");
+        let inbound_reader =
+            RingReader::open(inbound_backend, DEFAULT_RING_CAPACITY, false).expect("open reader");
+        let outbound_entry = header.entry(1).expect("outbound entry");
+        let outbound_backend = parent_backend
+            .sub_region(outbound_entry.offset, outbound_entry.length)
+            .expect("outbound sub");
+        let outbound_writer =
+            RingWriter::open(outbound_backend, DEFAULT_RING_CAPACITY).expect("open writer");
+        outbound_writer.increment_writer_count().expect("inc wc");
+
+        // Wait until the remote half-close has reached the inbound ring. The
+        // outbound direction must still accept and drain guest replies.
+        let start = std::time::Instant::now();
+        while inbound_reader.writer_count().expect("writer count") != 0 {
+            assert!(start.elapsed() < std::time::Duration::from_secs(5));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        outbound_writer.write_frame(b"first,", 0, 0).expect("first");
+        outbound_writer
+            .write_frame(b"second", 0, 0)
+            .expect("second");
+        drop(outbound_writer.decrement_writer_count());
+        drop(outbound_writer.backend().fetch_add_u64(
+            GENERATION_COUNTER_OFFSET,
+            1,
+            Ordering::Release,
+        ));
+        runtime.kick_network_waiters();
+
+        let received = received_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("outbound EOF after replies");
+        assert_eq!(received, b"first,second");
         server_handle.join().expect("server thread");
         runtime.kernel.close_tcp_stream(shared_id).unwrap();
     }

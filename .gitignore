@@ -1,3 +1,6 @@
 /target
+/fuzz/target
+/fuzz/artifacts
+/fuzz/coverage
 .opencode
 .worktree

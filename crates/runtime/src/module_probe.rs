@@ -28,13 +28,26 @@
 //! Detection, not configuration: there is no user-facing knob; see the
 //! `shared-page-fastpath` capability spec.
 
+const CUSTOM_SECTION: u8 = 0;
 const CODE_SECTION: u8 = 10;
 const EXPORT_SECTION: u8 = 7;
 const MEMORY_SECTION: u8 = 5;
+const IMPORT_SECTION: u8 = 2;
 /// The worker entry export name a multithreaded guest module must carry.
 /// Presence selects multithreaded execution (dedicated worker pool); absence
 /// falls back to the single-worker cooperative reactor.
 pub const WORKER_ENTRY_EXPORT: &str = "__selium_guest_worker";
+
+/// The passive ABI declaration found in a module's custom sections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbiVersionDeclaration {
+    /// No ABI custom section was present.
+    Missing,
+    /// Exactly one well-formed ABI custom section was present.
+    Version(u32),
+    /// The ABI section was malformed or duplicated.
+    Invalid,
+}
 
 /// Probe result: does this module participate in the shared-page fast path?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +60,11 @@ pub struct ModuleProbe {
     /// The module exports the multithreaded worker entry
     /// (`__selium_guest_worker`).
     pub worker_entry: bool,
+    /// The module imports the hostcall request boundary and therefore must
+    /// negotiate its ABI before instantiation proceeds to guest execution.
+    pub uses_hostcalls: bool,
+    /// The module's passive ABI version declaration.
+    pub abi_version: AbiVersionDeclaration,
 }
 
 /// Iterates the sections of a wasm module. Returns `None` when the magic
@@ -124,6 +142,8 @@ pub fn probe(module: &[u8]) -> ModuleProbe {
         shared_memory: false,
         atomic_notify: false,
         worker_entry: false,
+        uses_hostcalls: false,
+        abi_version: AbiVersionDeclaration::Missing,
     };
 
     let Some(mut cursor) = SectionCursor::new(module) else {
@@ -132,6 +152,17 @@ pub fn probe(module: &[u8]) -> ModuleProbe {
 
     while let Some((id, payload)) = cursor.next_section() {
         match id {
+            CUSTOM_SECTION => {
+                if let Some(declaration) = scan_abi_custom_section(payload) {
+                    probe.abi_version = match probe.abi_version {
+                        AbiVersionDeclaration::Missing => declaration,
+                        AbiVersionDeclaration::Version(_) | AbiVersionDeclaration::Invalid => {
+                            AbiVersionDeclaration::Invalid
+                        }
+                    };
+                }
+            }
+            IMPORT_SECTION => probe.uses_hostcalls |= scan_import_section(payload),
             MEMORY_SECTION => probe.shared_memory |= scan_memory_section(payload),
             CODE_SECTION => probe.atomic_notify |= scan_code_section(payload),
             EXPORT_SECTION => probe.worker_entry |= scan_export_section(payload),
@@ -141,11 +172,101 @@ pub fn probe(module: &[u8]) -> ModuleProbe {
     probe
 }
 
+/// Reads a custom section without executing the module. The Selium ABI
+/// declaration payload is exactly one little-endian `u32`; unrelated custom
+/// sections are ignored. `Some(Invalid)` distinguishes a malformed declaration
+/// from an absent one, and duplicates are rejected by the caller.
+fn scan_abi_custom_section(payload: &[u8]) -> Option<AbiVersionDeclaration> {
+    let mut cursor = SectionCursor {
+        bytes: payload,
+        pos: 0,
+    };
+    let name_len = cursor.read_leb_u32()? as usize;
+    let name_end = cursor.pos.checked_add(name_len)?;
+    let name = cursor.bytes.get(cursor.pos..name_end)?;
+    if name != selium_abi::SELIUM_ABI_VERSION_SECTION.as_bytes() {
+        return None;
+    }
+    let version = cursor
+        .bytes
+        .get(name_end..)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map(u32::from_le_bytes)
+        .map_or(AbiVersionDeclaration::Invalid, |version| {
+            AbiVersionDeclaration::Version(version)
+        });
+    Some(version)
+}
+
 /// True when the code section payload contains the `memory.atomic.notify`
 /// opcode sequence (`0xFE 0x00`). See the module docs for the false-positive
 /// analysis; there are no false negatives.
 fn scan_code_section(payload: &[u8]) -> bool {
     payload.windows(2).any(|pair| pair == [0xFE, 0x00])
+}
+
+/// True when the import section contains the exact hostcall request import.
+/// Parsing is deliberately bounded by the module bytes; malformed imports
+/// return false and are subsequently rejected by the engine validator.
+fn scan_import_section(payload: &[u8]) -> bool {
+    fn name<'a>(cursor: &mut SectionCursor<'a>) -> Option<&'a [u8]> {
+        let len = cursor.read_leb_u32()? as usize;
+        let end = cursor.pos.checked_add(len)?;
+        let name = cursor.bytes.get(cursor.pos..end)?;
+        cursor.pos = end;
+        Some(name)
+    }
+
+    fn limits(cursor: &mut SectionCursor<'_>) -> Option<()> {
+        let flags = *cursor.bytes.get(cursor.pos)?;
+        cursor.pos += 1;
+        cursor.read_leb_u32()?;
+        if flags & 1 != 0 {
+            cursor.read_leb_u32()?;
+        }
+        Some(())
+    }
+
+    let mut cursor = SectionCursor {
+        bytes: payload,
+        pos: 0,
+    };
+    let Some(count) = cursor.read_leb_u32() else {
+        return false;
+    };
+    for _ in 0..count {
+        let (Some(module), Some(import)) = (name(&mut cursor), name(&mut cursor)) else {
+            return false;
+        };
+        if module == b"selium" && import == b"hostcall_create" {
+            return true;
+        }
+        let Some(kind) = cursor.bytes.get(cursor.pos).copied() else {
+            return false;
+        };
+        cursor.pos += 1;
+        let valid = match kind {
+            0 => cursor.read_leb_u32().is_some(),
+            1 => {
+                cursor.pos += 1;
+                limits(&mut cursor).is_some()
+            }
+            2 => limits(&mut cursor).is_some(),
+            3 => {
+                cursor.pos += 2;
+                cursor.pos <= cursor.bytes.len()
+            }
+            4 => {
+                cursor.pos += 1;
+                cursor.read_leb_u32().is_some()
+            }
+            _ => false,
+        };
+        if !valid {
+            return false;
+        }
+    }
+    false
 }
 
 /// True when an export section payload declares the multithreaded worker
@@ -234,6 +355,42 @@ mod tests {
         assert!(!probe.fast_path_capable());
     }
 
+    fn abi_custom_payload(version: u32) -> Vec<u8> {
+        let name = selium_abi::SELIUM_ABI_VERSION_SECTION.as_bytes();
+        let mut payload = vec![name.len() as u8];
+        payload.extend_from_slice(name);
+        payload.extend_from_slice(&version.to_le_bytes());
+        payload
+    }
+
+    #[test]
+    fn abi_version_is_read_from_the_passive_custom_section() {
+        let module = module(
+            CUSTOM_SECTION,
+            &abi_custom_payload(selium_abi::SELIUM_ABI_VERSION),
+        );
+        assert_eq!(
+            probe(&module).abi_version,
+            AbiVersionDeclaration::Version(selium_abi::SELIUM_ABI_VERSION)
+        );
+    }
+
+    #[test]
+    fn malformed_or_duplicate_abi_declarations_are_invalid() {
+        let mut malformed = abi_custom_payload(selium_abi::SELIUM_ABI_VERSION);
+        assert!(malformed.pop().is_some());
+        assert_eq!(
+            probe(&module(CUSTOM_SECTION, &malformed)).abi_version,
+            AbiVersionDeclaration::Invalid
+        );
+
+        let payload = abi_custom_payload(selium_abi::SELIUM_ABI_VERSION);
+        let mut bytes = module(CUSTOM_SECTION, &payload);
+        let second = module(CUSTOM_SECTION, &payload);
+        bytes.extend_from_slice(second.get(8..).expect("skip the second module header"));
+        assert_eq!(probe(&bytes).abi_version, AbiVersionDeclaration::Invalid);
+    }
+
     #[test]
     fn non_shared_module_without_notify_is_not_capable() {
         // Memory section: one entry, flags 0 (min only), min 1.
@@ -294,6 +451,25 @@ mod tests {
         payload.push(0x00); // kind: func
         payload.push(0x00); // index 0
         payload
+    }
+
+    #[test]
+    fn hostcall_import_is_detected_exactly() {
+        let module = wat::parse_str(
+            r#"(module
+                (import "selium" "hostcall_create" (func (param i32 i32) (result i64)))
+                (memory 1))"#,
+        )
+        .expect("compile import fixture");
+        assert!(probe(&module).uses_hostcalls);
+
+        let module = wat::parse_str(
+            r#"(module
+                (import "selium" "process_id" (func (result i64)))
+                (memory 1))"#,
+        )
+        .expect("compile non-hostcall import fixture");
+        assert!(!probe(&module).uses_hostcalls);
     }
 
     #[test]

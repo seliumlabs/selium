@@ -1,7 +1,7 @@
 ## 1. wasmtiny: HostCaller + Instance identity
 
 - [ ] 1.1 Add `consumer_id: u64` field to `Instance`
-- [ ] 1.2 Add `consumer_id: u64` field to `HostCaller` (`memory.rs`)
+- [ ] 1.2 Add `consumer_id: u64` field to `HostCallDispatcher` (`crates/runtime/src/hostcall.rs`)
 - [ ] 1.3 Add `HostCaller::consumer_id(&self) -> u64` accessor
 - [ ] 1.4 Pass `self.consumer_id` from `Instance::call_cloned_host_func` to `HostCaller::new`
 - [ ] 1.5 Write wasmtiny unit tests for `consumer_id` round-trip
@@ -18,7 +18,7 @@
 ## 3. selium-guest: ChannelHeaderLayout + memoffset
 
 - [ ] 3.1 Add `memoffset` to `Cargo.toml` dependencies
-- [ ] 3.2 Define `ChannelHeaderLayout` `#[repr(C)]` struct in `io::region`
+- [ ] 3.2 Define `ChannelHeaderLayout` `#[repr(C)]` struct in `crates/shm/src/region.rs`
 - [ ] 3.3 Replace all hand-written offset constants with `offset_of!(ChannelHeaderLayout, field)`:
   - `GENERATION_COUNTER_OFFSET`
   - `NEXT_TAIL_OFFSET`

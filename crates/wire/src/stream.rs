@@ -492,7 +492,7 @@ where
             }
 
             if region_id != 0 {
-                crate::generation_wait(region_id, last_generation).await;
+                crate::generation_wait(&mut self.request_reader, last_generation).await;
             }
         }
     }
@@ -1000,7 +1000,7 @@ impl<Resp, M: MessageTransport> BidiReceiver<'_, Resp, M> {
             }
 
             if region_id != 0 {
-                crate::generation_wait(region_id, last_generation).await;
+                crate::generation_wait(self.reader, last_generation).await;
             }
         }
     }
@@ -1120,7 +1120,7 @@ where
             }
 
             if region_id != 0 {
-                crate::generation_wait(region_id, last_generation).await;
+                crate::generation_wait(&mut self.request_reader, last_generation).await;
             }
         }
     }
@@ -1434,7 +1434,7 @@ impl<Item, M: MessageTransport> BidiRequestStream<'_, Item, M> {
             }
 
             if region_id != 0 {
-                crate::generation_wait(region_id, last_generation).await;
+                crate::generation_wait(self.reader, last_generation).await;
             }
         }
     }
@@ -1459,6 +1459,18 @@ fn register_gen_wait<M: MessageTransport>(reader: &mut FramedRead<M>, cx: &mut C
         let cur_gen = reader.generation().unwrap_or(0);
         if !selium_memory::register_generation_wait(region_id, cur_gen, cx.waker()) {
             cx.waker().wake_by_ref();
+            return;
+        }
+        // A producer can commit between the empty read above and wait
+        // registration. In that case its generation advance has already
+        // happened and cannot wake this newly registered waiter. Re-check the
+        // frame, generation, and EOF state after registering so the next poll
+        // observes the committed frame instead of parking until a later write.
+        if reader.poll_ready().unwrap_or(true)
+            || reader.generation().ok() != Some(cur_gen)
+            || reader.poll_peer_closed().unwrap_or(true)
+        {
+            cx.waker().wake_by_ref();
         }
     } else {
         cx.waker().wake_by_ref();
@@ -1477,14 +1489,3 @@ fn try_poll_ready<M: MessageTransport>(reader: &mut FramedRead<M>) -> WireResult
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `transport-abstraction` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: transport-abstraction/messagetransport-trait/transport-signals-data-available
-// scenario: transport-abstraction/messagetransport-trait/transport-signals-empty
-// scenario: transport-abstraction/messagetransport-trait/transport-signals-peer-closed
-// scenario: transport-abstraction/patterns-generic-over-messagetransport/publisher-is-instantiated-with-shm-transport
-// scenario: transport-abstraction/patterns-generic-over-messagetransport/publisher-is-instantiated-with-quic-transport
-// scenario: transport-abstraction/patterns-generic-over-messagetransport/subscriber-detects-overwrite-over-shm-transport
-// scenario: transport-abstraction/patterns-generic-over-messagetransport/subscriber-does-not-report-overwrite-over-quic-transport
-// scenario: transport-abstraction/frame-format-transport-independent/frame-written-over-shm-is-readable-over-shm
-// scenario: transport-abstraction/frame-format-transport-independent/frame-written-over-quic-is-readable-over-quic
-// scenario: transport-abstraction/transport-error-abstraction/rpcerror-from-transport-error
-// scenario: transport-abstraction/waker-honest-frame-readiness/socket-transport-parks-through-the-codec

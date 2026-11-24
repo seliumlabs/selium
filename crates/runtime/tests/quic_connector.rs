@@ -17,6 +17,7 @@ use selium_abi::{
 };
 use selium_runtime::{Runtime, RuntimeConfig, SystemGuestDescriptor};
 
+// scenario: quic-connector/edge-backpressure-honesty/slow-client
 /// Task 6.2 substrate layer: a full Park ring parks writers (no loss), the
 /// channel mechanism the connector's backpressure honesty is built on.
 #[tokio::test]
@@ -68,10 +69,11 @@ async fn full_ring_parks_writes_until_consumed() {
             )
             .await
     });
-    let parked = tokio::time::timeout(std::time::Duration::from_millis(100), &mut write_handle)
-        .await
-        .is_err();
-    assert!(parked, "a write past ring capacity must park, not overflow");
+    tokio::task::yield_now().await;
+    assert!(
+        !write_handle.is_finished(),
+        "a write past ring capacity must park, not overflow"
+    );
 
     let (frame, tag, flags) = reader.read_frame().expect("read first frame");
     assert_eq!(frame, payload);
@@ -303,6 +305,9 @@ fn quic_channel_handoff_golden_path() {
     ));
 }
 
+// scenario: quic-connector/per-stream-channel-isolation/concurrent-streams-do-not-cross
+// scenario: quic-connector/zero-network-grant-app-guests/ungranted-third-party-cannot-intercept
+// scenario: selium-kernel/per-connection-rpc-session-isolation/unauthorised-guest-attempts-to-attach-a-session-region
 /// Task 6.3 substrate layer: concurrent streams become distinct regions, and
 /// an ungranted third party is denied attach to a stream region.
 ///
@@ -450,38 +455,3 @@ fn spawn_guest(runtime: &Runtime, name: &str, grants: Vec<CapabilityGrant>) -> P
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `quic-connector` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/client-grade-connection
-// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/resumed-session-cannot-bypass-client-authentication
-// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/untrusted-client-refused
-// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/mtls-disabled
-// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/missing-server-certificate-material
-// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/broken-anchor-source-fails-closed
-// scenario: quic-connector/opaque-byte-stream-forwarding/arbitrary-payload-round-trips-byte-identical
-// scenario: quic-connector/opaque-byte-stream-forwarding/user-defined-flatbuffers-schema-is-opaque-to-the-connector
-// scenario: quic-connector/sni-based-discovery-route-resolution/connection-routed-to-registered-guest
-// scenario: quic-connector/sni-based-discovery-route-resolution/registered-domain-sni
-// scenario: quic-connector/sni-based-discovery-route-resolution/unknown-sni-refused-at-the-handshake
-// scenario: quic-connector/sni-based-discovery-route-resolution/cache-eviction-normalises-the-raw-sni
-// scenario: quic-connector/per-stream-channel-isolation/concurrent-streams-do-not-cross
-// scenario: quic-connector/zero-network-grant-app-guests/app-guest-serves-with-no-network-grant
-// scenario: quic-connector/zero-network-grant-app-guests/ungranted-third-party-cannot-intercept
-// scenario: quic-connector/edge-backpressure-honesty/slow-app-guest
-// scenario: quic-connector/edge-backpressure-honesty/slow-client
-// scenario: quic-connector/stream-lifecycle-fidelity/client-finishes-a-stream
-// scenario: quic-connector/stream-lifecycle-fidelity/guest-closes-a-stream
-// scenario: quic-connector/authenticated-client-identity-on-handoff/handoff-carries-verified-identity
-// scenario: quic-connector/authenticated-client-identity-on-handoff/handoff-without-mtls
-// scenario: quic-connector/identity-published-trust-anchors-and-runtime-refresh/new-tenant-anchor-propagates
-// scenario: quic-connector/identity-published-trust-anchors-and-runtime-refresh/revoked-tenant-anchor-propagates
-// scenario: quic-connector/identity-published-trust-anchors-and-runtime-refresh/live-connections-survive-revocation-until-re-auth
-// scenario: quic-connector/identity-published-trust-anchors-and-runtime-refresh/connector-refuses-to-serve-before-anchor-state-arrives
-// scenario: quic-connector/per-connection-bidirectional-stream-cap/connection-exceeds-the-stream-cap
-// scenario: quic-connector/per-tenant-stream-admission-rate-limit/flood-above-the-rate-is-refused-cheaply
-// scenario: quic-connector/per-tenant-stream-admission-rate-limit/unauthenticated-endpoint-falls-back-to-the-serving-tenant
-
-// --- Spec traceability (scripts/check-traceability.sh) -------------------
-// These tests are the evidence for the `quinn-transport` scenarios. One scenario may
-// be claimed by several tests; the annotation lives next to the evidence.
-// scenario: quinn-transport/udpsender-implementation/quinn-sends-a-datagram-via-shared-memory
-// scenario: quinn-transport/udpsender-implementation/quinn-polls-for-received-datagrams
-// scenario: quinn-transport/stream-framing-separated-from-datagram-transport/bridge-guest-composes-datagram-transport-stream-transport

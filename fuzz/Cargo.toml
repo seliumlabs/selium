@@ -1,0 +1,45 @@
+[package]
+name = "selium-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+selium-abi = { path = "../crates/abi" }
+selium-memory = { path = "../crates/memory" }
+selium-shm = { path = "../crates/shm" }
+wasmtiny = { git = "https://github.com/seliumlabs/wasmtiny", rev = "99e0c537c08aac877e7db733bc346e0b213983dc" }
+
+[[bin]]
+name = "hostcall_envelope"
+path = "fuzz_targets/hostcall_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "multi_memory_header"
+path = "fuzz_targets/multi_memory_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frame_codec"
+path = "fuzz_targets/frame_codec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "module_probing"
+path = "fuzz_targets/module_probing.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

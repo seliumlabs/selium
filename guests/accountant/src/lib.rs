@@ -458,31 +458,26 @@ impl Shared {
         }
     }
 
-    /// Rolls the current window into the ledger's record set and returns the
-    /// rolled records.
-    ///
-    /// The records are applied to the projection here but appended by the
-    /// caller: the ledger is an async client and appends must not run under
-    /// this state's lock.
+    /// Rolls the current window into the ledger's record set without changing
+    /// the projection. The caller appends each record first, then projects it
+    /// in the same guest-wide commit lane.
     fn roll_window(&mut self, window: RollingWindow) -> Vec<LedgerRecord> {
-        let records = window.into_records(&self.accounts.accounts);
-        for record in &records {
-            self.accounts.apply_record(record.clone());
-        }
-        records
+        window.into_records(&self.accounts.accounts)
     }
 
-    /// Applies a policy record to the projection and re-authors the tenant's
-    /// enforcement state, returning the record for the caller to append.
-    fn apply_policy(&mut self, tenant: &str, record: LedgerRecord) -> LedgerRecord {
-        self.accounts.apply_record(record.clone());
-        self.author_enforcement(tenant);
-        record
+    /// Applies a policy record to the projection. Enforcement is re-authored
+    /// separately, after the caller's durable append succeeds.
+    fn apply_policy(&mut self, record: LedgerRecord) {
+        self.accounts.apply_record(record);
     }
 
     /// Authors the tenant's enforcement state (quotas + narrowing) from its
     /// current account projection.
-    fn author_enforcement(&mut self, tenant: &str) {
+    ///
+    /// Every dimension is attempted; the first failure is returned so a
+    /// caller that has already committed the policy can report incomplete
+    /// application rather than claiming success.
+    fn author_enforcement(&mut self, tenant: &str) -> Result<(), String> {
         let account = self
             .accounts
             .accounts
@@ -496,35 +491,49 @@ impl Shared {
             account.delinquent,
         );
 
+        let mut first_error = None;
         // Memory and storage are separate quota dimensions with separate
         // ceilings; each is authored under its own class.
         for (class, limit) in [
             (ResourceClass::SharedRegion, enforcement.memory_quota),
             (ResourceClass::Volume, enforcement.storage_quota),
         ] {
-            if let Err(error) = quota_set(tenant, class.clone(), limit) {
-                warn!(tenant, class = ?class, "accountant: quota set failed: {error}");
+            if let Err(error) = quota_set(tenant, class, limit)
+                && first_error.is_none()
+            {
+                first_error = Some(format!("quota set failed: {error}"));
             }
         }
-        if let Err(error) = quota_set(tenant, ResourceClass::Process, enforcement.process_quota) {
-            warn!(tenant, "accountant: process quota set failed: {error}");
+        if let Err(error) = quota_set(tenant, ResourceClass::Process, enforcement.process_quota)
+            && first_error.is_none()
+        {
+            first_error = Some(format!("process quota set failed: {error}"));
         }
         // The CPU ceiling is a quota dimension (not an allocation gate): the
         // runtime translates it into per-process engine execution budgets on
         // its minute refresh. Zeroed for a delinquent tenant alongside its
         // other quotas.
-        if let Err(error) = quota_set(tenant, ResourceClass::Cpu, enforcement.cpu_ceiling) {
-            warn!(tenant, "accountant: cpu ceiling set failed: {error}");
+        if let Err(error) = quota_set(tenant, ResourceClass::Cpu, enforcement.cpu_ceiling)
+            && first_error.is_none()
+        {
+            first_error = Some(format!("cpu quota set failed: {error}"));
         }
 
         match selium_abi::encode_rkyv(&enforcement.narrowing) {
             Ok(bytes) => {
-                if let Err(error) = self.narrowing.set(tenant.to_string(), bytes) {
-                    warn!(tenant, "accountant: narrowing publish failed: {error}");
+                if let Err(error) = self.narrowing.set(tenant.to_string(), bytes)
+                    && first_error.is_none()
+                {
+                    first_error = Some(format!("narrowing publish failed: {error}"));
                 }
             }
-            Err(error) => warn!("accountant: narrowing encode failed: {error}"),
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(format!("narrowing encode failed: {error}"));
+                }
+            }
         }
+        first_error.map_or(Ok(()), Err)
     }
 }
 
@@ -748,6 +757,9 @@ async fn accountant(mut ctx: Context) -> anyhow::Result<()> {
         narrowing,
         window: None,
     }));
+    // Controls and window rolling share one durable commit lane. Append/sync,
+    // projection and enforcement are one ordered operation per guest.
+    let mutations = Arc::new(tokio::sync::Mutex::new(()));
 
     // Re-author enforcement for every replayed tenant (covers a restart where
     // a tenant's policy records predate this boot).
@@ -757,7 +769,9 @@ async fn accountant(mut ctx: Context) -> anyhow::Result<()> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tenants: Vec<String> = shared.accounts.accounts.keys().cloned().collect();
         for tenant in tenants {
-            shared.author_enforcement(&tenant);
+            if let Err(error) = shared.author_enforcement(&tenant) {
+                warn!(tenant, "accountant: replay enforcement incomplete: {error}");
+            }
         }
     }
 
@@ -805,7 +819,7 @@ async fn accountant(mut ctx: Context) -> anyhow::Result<()> {
     }
 
     // The rolling loop runs alongside the control surface.
-    spawn(roll_loop(shared.clone(), ledger.clone()));
+    spawn(roll_loop(shared.clone(), ledger.clone(), mutations.clone()));
 
     // Serve the control surface.
     loop {
@@ -825,29 +839,87 @@ async fn accountant(mut ctx: Context) -> anyhow::Result<()> {
                 continue;
             }
         };
-        spawn(handle_control(connection, shared.clone(), ledger.clone()));
+        spawn(handle_control(
+            connection,
+            shared.clone(),
+            ledger.clone(),
+            mutations.clone(),
+        ));
     }
 }
 
-/// Appends one ledger record, tolerating encode/append failures with a warning
-/// (usage history is advisory; enforcement is the preemptive path).
-async fn append_ledger(ledger: &DurableLog, record: &LedgerRecord) {
+/// Appends one ledger record. Returns the encode/append failure so policy
+/// controls can refuse acknowledgement; bookkeeping callers log it.
+///
+/// `durable` adds the sync barrier: policy controls acknowledge only after the
+/// record is on stable storage, while high-volume usage records keep the
+/// store's own batching so the accounting lane does not fsync per sample.
+async fn append_ledger(
+    ledger: &DurableLog,
+    record: &LedgerRecord,
+    durable: bool,
+) -> Result<(), String> {
     let timestamp_ms = time::now()
         .map(|nanos| nanos / 1_000_000)
         .unwrap_or_default();
-    match selium_abi::encode_rkyv(record) {
-        Ok(payload) => {
-            if let Err(error) = ledger.append(timestamp_ms, Vec::new(), payload).await {
-                warn!("accountant: ledger append failed: {error}");
-            }
-        }
-        Err(error) => warn!("accountant: ledger record encode failed: {error}"),
+    let payload =
+        selium_abi::encode_rkyv(record).map_err(|error| format!("encode failed: {error}"))?;
+    ledger
+        .append(timestamp_ms, Vec::new(), payload)
+        .await
+        .map(|_sequence| ())
+        .map_err(|error| format!("append failed: {error}"))?;
+    if durable {
+        ledger
+            .sync()
+            .await
+            .map_err(|error| format!("sync failed: {error}"))?;
+    }
+    Ok(())
+}
+
+/// Acknowledges a policy control only after the durable commit and its
+/// post-commit application both succeed.
+fn acknowledge_control(
+    tenant: String,
+    commit: Result<(), String>,
+    apply: impl FnOnce() -> Result<(), String>,
+) -> AccountantControlResponse {
+    if let Err(error) = commit {
+        return AccountantControlResponse::Error {
+            context: format!("ledger commit failed: {error}"),
+        };
+    }
+    match apply() {
+        Ok(()) => AccountantControlResponse::Updated { tenant },
+        Err(error) => AccountantControlResponse::Error {
+            context: format!(
+                "policy committed but enforcement is incomplete ({error}); restart reconciles the committed intent"
+            ),
+        },
     }
 }
 
-/// Applies one operator/billing control to the shared state and appends its
-/// ledger record.
+/// Runs one ledger mutation in the guest-wide commit lane.
+async fn serialised_mutation<R>(
+    lane: &tokio::sync::Mutex<()>,
+    mutation: impl std::future::Future<Output = R>,
+) -> R {
+    let _guard = lane.lock().await;
+    mutation.await
+}
+
+/// Applies one operator/billing control in the durable commit lane.
 async fn apply_control(
+    shared: &Arc<Mutex<Shared>>,
+    ledger: &DurableLog,
+    mutations: &tokio::sync::Mutex<()>,
+    control: AccountantControl,
+) -> AccountantControlResponse {
+    serialised_mutation(mutations, apply_control_locked(shared, ledger, control)).await
+}
+
+async fn apply_control_locked(
     shared: &Arc<Mutex<Shared>>,
     ledger: &DurableLog,
     control: AccountantControl,
@@ -879,15 +951,16 @@ async fn apply_control(
         ),
     };
 
-    let record = {
+    // Durable commit first: never project or acknowledge policy that the
+    // ledger has not accepted.
+    let commit = append_ledger(ledger, &record, true).await;
+    acknowledge_control(tenant.clone(), commit, || {
         let mut shared = shared
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        shared.apply_policy(&tenant, record)
-    };
-    append_ledger(ledger, &record).await;
-
-    AccountantControlResponse::Updated { tenant }
+        shared.apply_policy(record);
+        shared.author_enforcement(&tenant)
+    })
 }
 
 /// Bookkeeper entrypoint: inventory, sampling, reduction, and publication on a
@@ -985,7 +1058,9 @@ async fn bookkeeper(mut ctx: Context) -> anyhow::Result<()> {
             }
         }
 
-        Timer::new(next).await;
+        if let Err(error) = Timer::new(next).await {
+            warn!("accountant: sleep failed: {error}");
+        }
     }
 }
 
@@ -1008,7 +1083,9 @@ fn create_live_table(capacity: u64) -> selium_wire::Result<(u64, NarrowingLiveTa
     let region_id = channel.region_id();
     let write = ShmTransport::new(&channel, &channel)?;
     let read = ShmTransport::new(&channel, &channel)?;
+    let authority = selium_wire::TableWriterAuthority::claim("accountant.narrowing")?;
     let table = LiveTable::new(
+        authority,
         Publisher::new(FramedWrite::new(write)),
         Subscriber::new(FramedRead::new(read), None),
     )?;
@@ -1022,6 +1099,7 @@ async fn handle_control(
     mut connection: selium_shm::rpc::RpcConnection<AccountantControl, AccountantControlResponse>,
     shared: Arc<Mutex<Shared>>,
     ledger: DurableLog,
+    mutations: Arc<tokio::sync::Mutex<()>>,
 ) {
     let operator = match process_tenant(connection.client_process_id()) {
         Ok(None) => true,
@@ -1042,7 +1120,7 @@ async fn handle_control(
                     Ok(_) if !operator => AccountantControlResponse::Error {
                         context: "operator tier required".to_string(),
                     },
-                    Ok(payload) => apply_control(&shared, &ledger, payload).await,
+                    Ok(payload) => apply_control(&shared, &ledger, &mutations, payload).await,
                     Err(error) => AccountantControlResponse::Error {
                         context: format!("{error}"),
                     },
@@ -1073,9 +1151,47 @@ fn roll_due(shared: &mut Shared) -> Vec<LedgerRecord> {
     }
 }
 
+/// Appends a completed window and only then projects and enforces each record.
+/// Controls use the same lane, so their ledger and projection orders agree.
+async fn commit_due_window(
+    shared: &Arc<Mutex<Shared>>,
+    ledger: &DurableLog,
+    mutations: &tokio::sync::Mutex<()>,
+) {
+    serialised_mutation(mutations, async {
+        let records = {
+            let mut shared = shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            roll_due(&mut shared)
+        };
+        for record in records {
+            if let Err(error) = append_ledger(ledger, &record, false).await {
+                warn!("accountant: window ledger append failed: {error}");
+                break;
+            }
+            if let LedgerRecord::Window { tenant, .. } = &record {
+                let tenant = tenant.clone();
+                let mut shared = shared
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                shared.apply_policy(record);
+                if let Err(error) = shared.author_enforcement(&tenant) {
+                    warn!(tenant, "accountant: window enforcement incomplete: {error}");
+                }
+            }
+        }
+    })
+    .await;
+}
+
 /// The rolling loop: drains bookkeeper buckets into the current minute window
 /// and rolls a completed window into the ledger, re-evaluating enforcement.
-async fn roll_loop(shared: Arc<Mutex<Shared>>, ledger: DurableLog) {
+async fn roll_loop(
+    shared: Arc<Mutex<Shared>>,
+    ledger: DurableLog,
+    mutations: Arc<tokio::sync::Mutex<()>>,
+) {
     loop {
         // Drain available buckets into the current window, rolling when the
         // minute has elapsed. The read is scoped so its `RefMut` drops before
@@ -1090,26 +1206,13 @@ async fn roll_loop(shared: Arc<Mutex<Shared>>, ledger: DurableLog) {
                 .read_with_tag();
             match read {
                 Ok((bucket, _tag)) => {
-                    let rolled = {
-                        let mut shared = shared
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        // Roll the elapsed window BEFORE merging: the merge
-                        // starts the next minute's window, and rolling first
-                        // guarantees the completed window reaches the ledger
-                        // instead of being dropped by the boundary replacement.
-                        let records = roll_due(&mut shared);
-                        for record in &records {
-                            if let LedgerRecord::Window { tenant, .. } = record {
-                                shared.author_enforcement(tenant);
-                            }
-                        }
-                        shared.merge_bucket(bucket);
-                        records
-                    };
-                    for record in &rolled {
-                        append_ledger(&ledger, record).await;
-                    }
+                    // Roll before merging into the next minute's window. The
+                    // commit lane covers append, projection and enforcement.
+                    commit_due_window(&shared, &ledger, &mutations).await;
+                    shared
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .merge_bucket(bucket);
                 }
                 Err(selium_wire::error::Error::BufferEmpty) => break,
                 Err(error) => {
@@ -1120,27 +1223,15 @@ async fn roll_loop(shared: Arc<Mutex<Shared>>, ledger: DurableLog) {
         }
 
         // A minute ticks even without traffic: roll an elapsed window.
-        let rolled = {
-            let mut shared = shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let records = roll_due(&mut shared);
-            for record in &records {
-                if let LedgerRecord::Window { tenant, .. } = record {
-                    shared.author_enforcement(tenant);
-                }
-            }
-            records
-        };
-        for record in &rolled {
-            append_ledger(&ledger, record).await;
-        }
+        commit_due_window(&shared, &ledger, &mutations).await;
 
         let next = Instant::now()
             .ok()
             .and_then(|now| now.checked_add(Duration::from_secs(1)))
             .unwrap_or_else(|| Instant::now().expect("accountant clock"));
-        Timer::new(next).await;
+        if let Err(error) = Timer::new(next).await {
+            warn!("accountant: sleep failed: {error}");
+        }
     }
 }
 
@@ -1197,6 +1288,8 @@ mod tests {
         usage(500, 5_000, 2_500, 1_000)
     }
 
+    // scenario: selium-accountant/process-quota-ceiling/delinquent-process-ceiling-zeroed
+    // scenario: selium-accountant/per-tenant-cpu-budget-authoring/delinquent-cpu-ceiling-zeroed
     #[test]
     fn enforcements_map_across_the_state_machine() {
         // Paid/active tenants are capped at the hard ceiling and not narrowed.
@@ -1229,6 +1322,7 @@ mod tests {
         assert!(delinquent.narrowing.len() >= 10);
     }
 
+    // scenario: selium-accountant/per-tenant-cpu-budget-authoring/ceiling-authored-per-minute
     #[test]
     fn authored_cpu_ceiling_is_plan_plus_overage() {
         // Task 5.1: the authored per-minute CPU instruction ceiling equals the
@@ -1242,6 +1336,8 @@ mod tests {
         );
     }
 
+    // scenario: selium-accountant/process-quota-ceiling/default-process-ceiling-authored
+    // scenario: selium-accountant/process-quota-ceiling/raised-process-ceiling-authored
     #[test]
     fn account_defaults_to_the_process_quota_ceiling() {
         // No operator control: the account defaults to a 100-process ceiling.
@@ -1278,6 +1374,131 @@ mod tests {
         assert_eq!(decoded, process_quota);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_controls_project_in_ledger_order() {
+        let lane = Arc::new(tokio::sync::Mutex::new(()));
+        let ledger = Arc::new(Mutex::new(Vec::new()));
+        let projection = Arc::new(Mutex::new(Vec::new()));
+        let first_appended = Arc::new(tokio::sync::Notify::new());
+        let release_first = Arc::new(tokio::sync::Notify::new());
+
+        let first = {
+            let lane = lane.clone();
+            let ledger = ledger.clone();
+            let projection = projection.clone();
+            let first_appended = first_appended.clone();
+            let release_first = release_first.clone();
+            tokio::spawn(async move {
+                serialised_mutation(&lane, async move {
+                    ledger.lock().expect("ledger").push("A");
+                    first_appended.notify_one();
+                    release_first.notified().await;
+                    projection.lock().expect("projection").push("A");
+                })
+                .await;
+            })
+        };
+        first_appended.notified().await;
+
+        let second = {
+            let lane = lane.clone();
+            let ledger = ledger.clone();
+            let projection = projection.clone();
+            tokio::spawn(async move {
+                serialised_mutation(&lane, async move {
+                    ledger.lock().expect("ledger").push("B");
+                    projection.lock().expect("projection").push("B");
+                })
+                .await;
+            })
+        };
+        tokio::task::yield_now().await;
+        assert_eq!(*ledger.lock().expect("ledger"), vec!["A"]);
+        assert!(projection.lock().expect("projection").is_empty());
+
+        release_first.notify_one();
+        first.await.expect("first control");
+        second.await.expect("second control");
+        assert_eq!(*ledger.lock().expect("ledger"), vec!["A", "B"]);
+        assert_eq!(*projection.lock().expect("projection"), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn restart_replay_restores_committed_policy_after_enforcement_failure() {
+        // The append committed, but this lifetime stopped before projecting or
+        // enforcing it. Rebuilding solely from the durable payloads must
+        // recover the latest ledger state rather than the stale projection.
+        let committed = [
+            LedgerRecord::SetPlan {
+                tenant: "acme".to_string(),
+                plan: plan(),
+            },
+            LedgerRecord::SetPlan {
+                tenant: "acme".to_string(),
+                plan: usage(9_000, 90_000, 50_000, 20_000),
+            },
+            LedgerRecord::Delinquent {
+                tenant: "acme".to_string(),
+            },
+        ];
+        let payloads = committed
+            .iter()
+            .map(|record| selium_abi::encode_rkyv(record).expect("encode ledger record"))
+            .collect::<Vec<_>>();
+
+        let mut replayed = AccountBook::default();
+        replayed.rebuild_payloads(payloads);
+        let account = &replayed.accounts["acme"];
+        assert_eq!(account.plan, usage(9_000, 90_000, 50_000, 20_000));
+        assert_eq!(account.state(), AccountState::Delinquent);
+        let enforcement = enforcement_for(
+            account.plan,
+            account.overage,
+            account.process_quota,
+            account.delinquent,
+        );
+        assert_eq!(enforcement.cpu_ceiling, 0);
+        assert_eq!(enforcement.narrowing, all_capabilities());
+    }
+
+    // scenario: selium-accountant/policy-acknowledgement-requires-durable-commit/ledger-append-fails
+    // scenario: selium-accountant/policy-acknowledgement-requires-durable-commit/projection-or-enforcement-fails-after-commit
+    #[test]
+    fn failed_ledger_commit_never_acknowledges_updated_policy() {
+        let applied = std::cell::Cell::new(false);
+        let response = acknowledge_control(
+            "acme".to_string(),
+            Err("injected append failure".to_string()),
+            || {
+                applied.set(true);
+                Ok(())
+            },
+        );
+        assert!(!applied.get(), "a failed commit must not project policy");
+        assert!(
+            matches!(response, AccountantControlResponse::Error { ref context } if context.contains("ledger commit failed")),
+            "a failed ledger commit must not be acknowledged as Updated: {response:?}"
+        );
+
+        // A committed policy whose enforcement cannot be authored reports
+        // incomplete application rather than success.
+        let response = acknowledge_control("acme".to_string(), Ok(()), || {
+            Err("injected enforcement failure".to_string())
+        });
+        assert!(matches!(
+            response,
+            AccountantControlResponse::Error { ref context } if context.contains("enforcement is incomplete")
+        ));
+
+        let response = acknowledge_control("acme".to_string(), Ok(()), || Ok(()));
+        assert!(matches!(
+            response,
+            AccountantControlResponse::Updated { ref tenant } if tenant == "acme"
+        ));
+    }
+
+    // scenario: selium-accountant/account-state-machine-and-enforcement/delinquency-suspends-a-tenant
+    // scenario: selium-accountant/account-state-machine-and-enforcement/restored-tenant
     #[test]
     fn account_book_replays_policy_and_windows() {
         let mut book = AccountBook::default();
@@ -1333,6 +1554,9 @@ mod tests {
         assert_eq!(account.state(), AccountState::Delinquent);
     }
 
+    // scenario: selium-accountant/counter-and-gauge-reduction/counter-difference
+    // scenario: selium-accountant/counter-and-gauge-reduction/gauge-sample
+    // scenario: selium-accountant/per-minute-billing-windows-and-ledger/dropped-sample-recovered
     #[test]
     fn reduce_samples_differences_counters_and_samples_gauges() {
         let mut last_counters = HashMap::new();
@@ -1385,6 +1609,9 @@ mod tests {
         assert_eq!(second["acme"], usage(50, 900, 0, 25));
     }
 
+    // scenario: selium-accountant/bucket-publication/accountant-consumes-buckets
+    // scenario: process-metering/peak-memory-per-billing-window/peak-retained
+    // scenario: selium-accountant/counter-and-gauge-reduction/storage-read-per-tenant
     #[test]
     fn rolling_window_accumulates_counters_and_peaks_gauges() {
         let mut window = RollingWindow {
@@ -1416,6 +1643,8 @@ mod tests {
         );
     }
 
+    // scenario: selium-accountant/per-minute-billing-windows-and-ledger/window-rolled-to-ledger
+    // scenario: selium-accountant/plan-and-overage-ceilings/overage-recorded
     #[test]
     fn window_rolls_to_per_tenant_ledger_records_with_overage() {
         let accounts = {
@@ -1500,31 +1729,3 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-accountant` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-accountant/per-second-metering-sampling/sample-covers-all-live-processes
-// scenario: selium-accountant/counter-and-gauge-reduction/counter-difference
-// scenario: selium-accountant/counter-and-gauge-reduction/gauge-sample
-// scenario: selium-accountant/counter-and-gauge-reduction/storage-read-per-tenant
-// scenario: selium-accountant/bucket-publication/accountant-consumes-buckets
-// scenario: selium-accountant/metering-projection-by-the-host/observations-track-consumption
-// scenario: selium-accountant/per-minute-billing-windows-and-ledger/window-rolled-to-ledger
-// scenario: selium-accountant/per-minute-billing-windows-and-ledger/dropped-sample-recovered
-// scenario: selium-accountant/plan-and-overage-ceilings/overage-recorded
-// scenario: selium-accountant/plan-and-overage-ceilings/hard-ceiling-preempted
-// scenario: selium-accountant/account-state-machine-and-enforcement/delinquency-suspends-a-tenant
-// scenario: selium-accountant/account-state-machine-and-enforcement/restored-tenant
-// scenario: selium-accountant/quota-enforcement-at-allocation/allocation-over-quota-denied
-// scenario: selium-accountant/quota-enforcement-at-allocation/append-over-volume-quota-denied
-// scenario: selium-accountant/quota-enforcement-at-allocation/spawn-over-process-quota-denied
-// scenario: selium-accountant/quota-enforcement-at-allocation/quota-distinct-from-grant
-// scenario: selium-accountant/quota-enforcement-at-allocation/pre-authoring-usage-is-inherited
-// scenario: selium-accountant/quota-enforcement-at-allocation/a-dying-process-releases-its-reservations
-// scenario: selium-accountant/pipe-quotas-meter-queued-items/over-ceiling-send-denied
-// scenario: selium-accountant/pipe-quotas-meter-queued-items/receiving-frees-the-slot
-// scenario: selium-accountant/handed-off-resources-transfer-ownership/cross-tenant-handoff-moves-the-reservation
-// scenario: selium-accountant/narrowing-publication/narrowed-conferral
-// scenario: selium-accountant/sole-quota-authorship/non-accountant-quota-write-denied
-// scenario: selium-accountant/process-quota-ceiling/default-process-ceiling-authored
-// scenario: selium-accountant/process-quota-ceiling/raised-process-ceiling-authored
-// scenario: selium-accountant/process-quota-ceiling/delinquent-process-ceiling-zeroed
-// scenario: selium-accountant/per-tenant-cpu-budget-authoring/ceiling-authored-per-minute
-// scenario: selium-accountant/per-tenant-cpu-budget-authoring/delinquent-cpu-ceiling-zeroed

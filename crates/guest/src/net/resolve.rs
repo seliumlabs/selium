@@ -29,12 +29,12 @@ pub async fn resolve(ctx: &mut Context, name: &str) -> Result<Vec<IpAddr>> {
 
     let mut client = rpc::connect::<DnsQuery, DnsResponse, _>(sender, 0, 0)
         .await
-        .map_err(|e| GuestError::Host(format!("connect to dns connector: {e}")))?;
+        .map_err(|e| GuestError::from(e).context("connect to dns connector"))?;
 
     let response = client
         .request(DnsQuery::from_str(name, DnsRecordType::A))
         .await
-        .map_err(|e| GuestError::Host(format!("dns request: {e}")))?;
+        .map_err(|e| GuestError::from(e).context("dns request"))?;
 
     match response.outcome {
         DnsOutcome::Ok => parse_addresses(&response.addresses),

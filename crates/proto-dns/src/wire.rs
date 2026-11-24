@@ -325,6 +325,7 @@ mod tests {
         assert_eq!(parsed.addresses, vec!["93.184.216.34".to_string()]);
     }
 
+    // scenario: dns-connector/honest-failure-outcomes/nxdomain-is-typed
     #[test]
     fn parse_nxdomain_response() {
         // Same header/question, but rcode=3 (NXDOMAIN) and no answers.
@@ -349,6 +350,7 @@ mod tests {
         assert_eq!(parsed.outcome, DnsOutcome::Truncated);
     }
 
+    // scenario: dns-connector/honest-failure-outcomes/upstream-error-codes-are-typed
     #[test]
     fn parse_servfail_response() {
         // rcode=2 (SERVFAIL) → distinct typed outcome, not Ok.
@@ -373,6 +375,7 @@ mod tests {
         assert_eq!(parsed.outcome, DnsOutcome::Refused);
     }
 
+    // scenario: dns-connector/honest-failure-outcomes/forwarding-failure-is-typed
     #[test]
     fn parse_unhandled_rcode_maps_to_upstream() {
         // rcode=4 (NOTIMP) is not modelled explicitly → Upstream, never Ok.

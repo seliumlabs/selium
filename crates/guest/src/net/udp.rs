@@ -10,12 +10,7 @@ use std::{
 };
 
 use selium_abi::{HostcallOutput, HostcallRequest, RegionProt};
-use selium_memory::MultiMemoryHeader;
-use selium_shm::{
-    Channel, ChannelBackpressure, ChannelRegion,
-    channels::{Reader, Writer},
-    ring_buf::RingBuf,
-};
+use selium_shm::channels::{Reader, Writer};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::{GuestError, Result, hostcall::hostcall_async};
@@ -66,50 +61,15 @@ impl UdpSocket {
 
         let shared_id = descriptor.shared_id;
 
-        let region_provider = selium_memory::region_provider()
-            .map_err(|e| GuestError::Host(format!("region provider unavailable: {e}")))?;
+        let region_provider = selium_memory::region_provider()?;
+        let region = region_provider.attach(shared_id, None, RegionProt::ReadWrite)?;
 
-        let region = region_provider
-            .attach(shared_id, None, RegionProt::ReadWrite)
-            .map_err(|e| GuestError::Host(format!("attach region failed: {e}")))?;
-
-        let mapping = region.mapping();
-        let header = MultiMemoryHeader::parse(mapping.backend(), 0)
-            .map_err(|e| GuestError::Host(format!("parse header failed: {e}")))?;
-
-        let recv_entry = header
-            .entry(0)
-            .map_err(|e| GuestError::Host(format!("recv entry missing: {e}")))?;
-        let send_entry = header
-            .entry(1)
-            .map_err(|e| GuestError::Host(format!("send entry missing: {e}")))?;
-
-        let recv_mapping = mapping
-            .sub_region(recv_entry.offset, recv_entry.length)
-            .map_err(|e| GuestError::Host(format!("recv sub-region failed: {e}")))?;
-        let send_mapping = mapping
-            .sub_region(send_entry.offset, send_entry.length)
-            .map_err(|e| GuestError::Host(format!("send sub-region failed: {e}")))?;
-
-        let ring_cap = recv_entry
-            .length
-            .saturating_sub(selium_shm::layout::DATA_OFFSET);
-
-        let recv_region = ChannelRegion::from_mapping_with_id(recv_mapping, ring_cap, shared_id);
-        let send_region = ChannelRegion::from_mapping_with_id(send_mapping, ring_cap, shared_id);
-
-        let recv_ring = RingBuf::wrap_region(recv_region)
-            .map_err(|e| GuestError::Host(format!("wrap recv ring failed: {e}")))?;
-        let send_ring = RingBuf::wrap_region(send_region)
-            .map_err(|e| GuestError::Host(format!("wrap send ring failed: {e}")))?;
-
-        let recv_channel = Channel::from_ring(recv_ring, ChannelBackpressure::Park);
-        let send_channel = Channel::from_ring(send_ring, ChannelBackpressure::Park);
+        // Shared byte-channel geometry parser: recv and send keep their own
+        // declared capacities.
+        let (recv_channel, send_channel) = selium_shm::byte_channel::channels_from_region(&region)?;
 
         let recv_reader = recv_channel.reader();
-        let send_writer = send_channel
-            .writer()
-            .map_err(|e| GuestError::Host(format!("create writer failed: {e}")))?;
+        let send_writer = send_channel.writer()?;
 
         Ok(Self {
             recv_reader,
@@ -180,6 +140,15 @@ impl UdpSocket {
                     cx.waker(),
                 ) {
                     cx.waker().wake_by_ref();
+                }
+                // The host proxy frees capacity without advancing the write
+                // generation. Re-check after registering so a drain that raced
+                // the registration cannot leave the task parked on available
+                // space until the idle timeout.
+                match send_ring_writable(region, needed) {
+                    Ok(true) => cx.waker().wake_by_ref(),
+                    Ok(false) => {}
+                    Err(error) => return Poll::Ready(Err(error)),
                 }
                 Poll::Pending
             }
@@ -313,16 +282,14 @@ fn encode_udp_frame(addr: SocketAddr, payload: &[u8]) -> Vec<u8> {
 /// Returns whether `needed` bytes can be written to the send ring without
 /// overwriting the slowest blocking reader or writer.
 fn send_ring_writable(region: &selium_shm::ChannelRegion, needed: u64) -> Result<bool> {
-    let tail = region
-        .read_next_tail()
-        .map_err(|e| GuestError::Host(e.to_string()))?;
+    let tail = region.read_next_tail().map_err(GuestError::from)?;
     let reader = region
         .minimum_reader_position()
-        .map_err(|e| GuestError::Host(e.to_string()))?
+        .map_err(GuestError::from)?
         .unwrap_or(tail);
     let writer = region
         .minimum_writer_position()
-        .map_err(|e| GuestError::Host(e.to_string()))?
+        .map_err(GuestError::from)?
         .unwrap_or(tail);
     let pinned = reader.min(writer);
 
@@ -339,6 +306,11 @@ mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddrV4};
 
+    // These assert the datagram frame format (address + payload, both
+    // directions), which is what the kernel and guest share; the socket send
+    // and receive paths themselves only run inside a wasm guest.
+    // scenario: udp-transport/binary-datagram-frame-format/kernel-encodes-an-inbound-datagram
+    // scenario: udp-transport/udp-datagram-receive-channel/guest-receives-a-datagram
     #[test]
     fn encode_decode_ipv4_round_trip() {
         let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 7), 5353));
@@ -356,7 +328,9 @@ mod tests {
         assert_eq!(decoded.addr, addr);
         assert_eq!(decoded.payload, payload);
     }
+    // scenario: guest-networking/guest-udp-socket-datagram-api/guest-receives-a-datagram
 
+    // scenario: udp-transport/binary-datagram-frame-format/guest-encodes-an-outbound-datagram
     #[test]
     fn encode_decode_ipv6_round_trip() {
         let ip = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);

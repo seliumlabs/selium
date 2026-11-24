@@ -50,6 +50,12 @@ pub const NEXT_WRITER_ID_OFFSET: u64 = 1048;
 /// session and release the region. The word sits after the last allocated
 /// header field (2112) and well inside `RING_HEADER_SIZE`.
 pub const PEER_CLOSED_OFFSET: u64 = 2112;
+/// Byte offset of the shared live-table writer claim (0 = unclaimed).
+///
+/// Unlike a process-local topic string, this word lives in the actual ring:
+/// every attachment competes for the same atomic CAS, including attachments
+/// from different guests using different labels for the channel.
+pub const TABLE_WRITER_AUTHORITY_OFFSET: u64 = 2120;
 /// Byte offset where the shared `reader_slots` array begins (128 × u64).
 pub const READER_SLOTS_OFFSET: u64 = 24;
 /// Byte offset of the shared `reader_slot_counter` (fetch_add for unique reader slot indices).
@@ -305,6 +311,24 @@ impl RingWriter {
         )
     }
 
+    /// Returns whether one encoded frame of `payload_len` bytes fits without
+    /// overwriting an active reader.
+    ///
+    /// Host proxies use this before consuming a socket datagram so a full ring
+    /// leaves the datagram in the kernel receive buffer instead of dropping it.
+    pub fn has_capacity_for_frame(&self, payload_len: u64) -> Result<bool> {
+        let frame_len = FrameHeader::ENCODED_SIZE as u64 + payload_len;
+        if frame_len > self.capacity {
+            return Ok(false);
+        }
+        let next_tail = load_next_tail(self.backend.as_ref())?;
+        let Some(min_reader) = minimum_reader_position(self.backend.as_ref())? else {
+            return Ok(true);
+        };
+        let used = next_tail.saturating_sub(min_reader);
+        Ok(self.capacity.saturating_sub(used) >= frame_len)
+    }
+
     /// Writes a framed message with the single-phase write protocol and bumps
     /// the generation counter.
     pub fn write_frame(&self, payload: &[u8], tag: u32, flags: u8) -> Result<()> {
@@ -380,6 +404,26 @@ pub fn cas_next_tail(backend: &dyn MappingBackend, current: u64, new: u64) -> Re
     backend
         .compare_exchange_u64(NEXT_TAIL_OFFSET, current, new)
         .map_err(Error::from)
+}
+
+/// Claims the ring's live-table writer word, returning false when it is held.
+pub fn claim_table_writer(backend: &dyn MappingBackend, claim: u64) -> Result<bool> {
+    if claim == 0 {
+        return Err(Error::InvalidLayout);
+    }
+    Ok(backend.compare_exchange_u64(TABLE_WRITER_AUTHORITY_OFFSET, 0, claim)? == 0)
+}
+
+/// Releases a previously held live-table writer claim.
+pub fn release_table_writer(backend: &dyn MappingBackend, claim: u64) -> Result<()> {
+    let previous = backend.compare_exchange_u64(TABLE_WRITER_AUTHORITY_OFFSET, claim, 0)?;
+    if previous == claim {
+        Ok(())
+    } else {
+        Err(Error::TableAuthorityConflict {
+            topic: "shared channel writer claim changed during release".to_string(),
+        })
+    }
 }
 
 /// Decrements the shared `writer_count`.
@@ -481,6 +525,7 @@ pub fn init_ring(backend: &dyn MappingBackend) -> Result<()> {
     backend.atomic_store_u64(GENERATION_COUNTER_OFFSET, 0, Ordering::Release)?;
     backend.atomic_store_u64(NEXT_TAIL_OFFSET, 0, Ordering::Release)?;
     backend.atomic_store_u64(WRITER_COUNT_OFFSET, 0, Ordering::Release)?;
+    backend.atomic_store_u64(TABLE_WRITER_AUTHORITY_OFFSET, 0, Ordering::Release)?;
     for i in 0..MAX_READER_SLOTS as u32 {
         let offset = READER_SLOTS_OFFSET + i as u64 * 8;
         backend.atomic_store_u64(offset, 0, Ordering::Release)?;
@@ -937,22 +982,12 @@ pub fn write_at(
 
 /// Writes a framed message using single-phase write with release fencing.
 ///
-/// 1. Reserve `frame_size` bytes at the tail.
-/// 2. Write a placeholder header (checksum-valid, not READY) at `pos`.
-/// 3. Write payload at `pos + ENCODED_SIZE`.
-/// 4. Release fence.
-/// 5. Write header with READY flag at `pos`.
-/// 6. Bump generation counter.
+/// Reserves `frame_size` bytes at the tail, then delegates the write protocol
+/// to [`write_frame_at`].
 #[expect(
     clippy::too_many_arguments,
     reason = "ring-protocol write primitive; arguments are inherent to the protocol"
 )]
-///
-/// 1. Reserve `frame_size` bytes at the tail.
-/// 2. Write payload at `pos + ENCODED_SIZE`.
-/// 3. Release fence.
-/// 4. Write header with READY flag at `pos`.
-/// 5. Bump generation counter.
 pub fn write_frame(
     backend: &dyn MappingBackend,
     payload: &[u8],
@@ -975,11 +1010,38 @@ pub fn write_frame(
         protect_readers,
         protect_writers,
     )?;
+    write_frame_at(backend, pos, payload, tag, flags, capacity, mask).map(drop)
+}
 
-    // Placeholder header (checksum-valid, not READY) marks the reservation as
-    // an in-flight frame. Readers gate on `is_ready()`; without this, a strict
-    // checksum-verifying reader would read stale bytes at the frame start and
-    // mistake an in-progress write for a torn header.
+/// Writes a frame at an already-reserved position.
+///
+/// The canonical write protocol used by every ring surface:
+///
+/// 1. Write a placeholder header (checksum-valid, not READY) at `pos`, so a
+///    strict checksum-verifying reader never mistakes in-flight bytes for a
+///    torn header.
+/// 2. Write the payload at `pos + ENCODED_SIZE`.
+/// 3. Release fence, making the payload visible before the header.
+/// 4. Write the READY header at `pos`.
+/// 5. Bump the generation counter, returning the new value.
+///
+/// The bump alone does not signal cross-guest waiters: a caller that owns the
+/// region must publish it (see `ChannelRegion::write_frame_at`, which also
+/// wakes parked readers and host drainers).
+pub fn write_frame_at(
+    backend: &dyn MappingBackend,
+    pos: u64,
+    payload: &[u8],
+    tag: u32,
+    flags: u8,
+    capacity: u64,
+    mask: u64,
+) -> Result<u64> {
+    let frame_size = FrameHeader::ENCODED_SIZE as u64 + payload.len() as u64;
+    if frame_size > capacity {
+        return Err(Error::CapacityExceeded);
+    }
+
     let placeholder = FrameHeader {
         len: payload.len() as u32,
         tag,
@@ -992,7 +1054,6 @@ pub fn write_frame(
         .ok_or_else(|| Error::InvalidFrame("payload position overflow".to_string()))?;
     write_at(backend, payload_pos, payload, mask, capacity)?;
 
-    // Release fence ensures payload is visible before the header.
     fence(Ordering::Release);
 
     let ready_header = FrameHeader {
@@ -1002,9 +1063,46 @@ pub fn write_frame(
     };
     write_at(backend, pos, &ready_header.encode(), mask, capacity)?;
 
-    bump_generation(backend)?;
+    bump_generation(backend)
+}
 
-    Ok(())
+/// Writes an already-encoded frame (header + payload) at a reserved position.
+///
+/// The encoded buffer's actual length must equal its header's declared frame
+/// length and fit the ring capacity; a disagreement is rejected before any
+/// bytes are published.
+pub fn write_encoded_frame_at(
+    backend: &dyn MappingBackend,
+    pos: u64,
+    encoded: &[u8],
+    capacity: u64,
+    mask: u64,
+) -> Result<u64> {
+    let header =
+        FrameHeader::decode(encoded.get(..FrameHeader::ENCODED_SIZE).ok_or_else(|| {
+            Error::InvalidFrame("encoded frame is shorter than its header".into())
+        })?)
+        .map_err(|error| Error::InvalidFrame(error.to_string()))?;
+    if encoded.len() as u64 != header.frame_size() {
+        return Err(Error::InvalidFrame(format!(
+            "encoded length {} disagrees with header frame length {}",
+            encoded.len(),
+            header.frame_size()
+        )));
+    }
+    if header.frame_size() > capacity {
+        return Err(Error::CapacityExceeded);
+    }
+    let payload = encoded.get(FrameHeader::ENCODED_SIZE..).unwrap_or_default();
+    write_frame_at(
+        backend,
+        pos,
+        payload,
+        header.tag,
+        header.flags,
+        capacity,
+        mask,
+    )
 }
 
 /// Scans forward from `start` (exclusive) for the next position holding a
@@ -1046,6 +1144,7 @@ mod tests {
     use super::*;
     use selium_memory::PointerBackend;
 
+    // scenario: ring-protocol-core/backend-generic-primitives/reservation-behaves-identically-across-backends
     #[test]
     fn reserve_tail_next_checks_capacity_and_overflow() {
         assert_eq!(
@@ -1090,6 +1189,8 @@ mod tests {
         assert!(mask_for_capacity(3).is_err());
     }
 
+    // scenario: selium-shm/layout-plumbing-separation/layout-usable-without-a-provider
+    // scenario: ring-protocol-core/single-ring-protocol-definition/guest-and-host-read-identical-rings
     #[test]
     fn ring_reader_writer_round_trip_on_pointer_backend() {
         let backend = Arc::new(PointerBackend::allocate(DATA_OFFSET + 64).expect("allocate"));
@@ -1109,6 +1210,7 @@ mod tests {
         assert!(reader.read_frame().expect("read2").is_none());
     }
 
+    // scenario: ring-protocol-core/backend-generic-primitives/slot-allocation-is-uniform
     #[test]
     fn ring_reader_allocates_slot_via_counter() {
         let backend = Arc::new(PointerBackend::allocate(DATA_OFFSET + 64).expect("allocate"));
@@ -1126,7 +1228,3 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `ring-protocol-core` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: ring-protocol-core/single-ring-protocol-definition/guest-and-host-read-identical-rings
-// scenario: ring-protocol-core/single-ring-protocol-definition/multi-memory-header-parsed-identically
-// scenario: ring-protocol-core/backend-generic-primitives/slot-allocation-is-uniform
-// scenario: ring-protocol-core/backend-generic-primitives/reservation-behaves-identically-across-backends

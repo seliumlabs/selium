@@ -3,7 +3,7 @@
 use selium_abi::{HostcallOutput, HostcallRequest, RegionAllocation, RegionProt, ResourceKind};
 use selium_memory::{MemoryError, Region, RegionProvider};
 
-use crate::hostcall::hostcall_ready;
+use crate::{error::guest_error_to_memory_error, hostcall::hostcall_ready};
 
 /// Shared-memory region provider that delegates to the host via hostcalls.
 #[derive(Default, Debug)]
@@ -33,7 +33,7 @@ impl RegionProvider for HostcallRegionProvider {
             purpose,
             serving_tenant: serving_tenant.map(str::to_string),
         })
-        .map_err(|error| MemoryError::Other(error.to_string()))?
+        .map_err(guest_error_to_memory_error)?
         {
             HostcallOutput::RegionAlloc(allocation) => allocation,
             _ => {
@@ -57,7 +57,7 @@ impl RegionProvider for HostcallRegionProvider {
             reader_slot,
             prot,
         })
-        .map_err(|error| MemoryError::Other(error.to_string()))?
+        .map_err(guest_error_to_memory_error)?
         {
             HostcallOutput::RegionAttach(attachment) => Ok(Region::new(
                 RegionAllocation {
@@ -75,12 +75,44 @@ impl RegionProvider for HostcallRegionProvider {
 
     fn free(&self, region_id: u64) -> Result<(), MemoryError> {
         match hostcall_ready(HostcallRequest::FreeRegion { region_id })
-            .map_err(|error| MemoryError::Other(error.to_string()))?
+            .map_err(guest_error_to_memory_error)?
         {
             HostcallOutput::Empty => Ok(()),
             _ => Err(MemoryError::Other(
                 "unexpected hostcall output for FreeRegion".to_string(),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocation_preserves_the_structured_abi_error() {
+        crate::platform::install_native_hostcall_script(crate::platform::NativeHostcallScript {
+            immediate_failure: Some(selium_abi::AbiError::new(
+                selium_abi::AbiErrorCode::QuotaExceeded,
+                "quota detail",
+            )),
+            ..crate::platform::NativeHostcallScript::default()
+        });
+        let error = match HostcallRegionProvider::new().allocate(
+            1,
+            RegionProt::ReadWrite,
+            ResourceKind::SharedMemory,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("allocation must fail"),
+        };
+        assert!(matches!(
+            error,
+            MemoryError::Abi(selium_abi::AbiError {
+                code: selium_abi::AbiErrorCode::QuotaExceeded,
+                ref message,
+            }) if message == "quota detail"
+        ));
+        crate::platform::clear_native_hostcall_script();
     }
 }

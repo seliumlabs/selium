@@ -115,16 +115,3 @@ impl Cli {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-cli` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-cli/bridge-derived-connection/tenant-drives-server-name-and-control-route
-// scenario: selium-cli/bridge-derived-connection/client-identity-is-presented
-// scenario: selium-cli/ephemeral-single-request-lifecycle/one-invocation-performs-one-request
-// scenario: selium-cli/deploy-expresses-desired-state/deploy-is-accepted
-// scenario: selium-cli/scale-and-stop-maintain-desired-state/scale-changes-the-replica-count
-// scenario: selium-cli/scale-and-stop-maintain-desired-state/stop-removes-a-workload
-// scenario: selium-cli/status-reads-the-recorded-deployment/status-returns-the-recorded-deployment
-// scenario: selium-cli/status-reads-the-recorded-deployment/status-reports-an-unknown-workload
-// scenario: selium-cli/resolve-queries-discovery/resolve-returns-a-target
-// scenario: selium-cli/upload-stores-module-bytes/upload-stores-a-module
-// scenario: selium-cli/upload-stores-module-bytes/upload-fails-on-an-unreadable-file
-// scenario: selium-cli/typed-failure-mapping/deferred-delegation-surfaces-as-failure
-// scenario: selium-cli/typed-failure-mapping/typed-error-carries-step-and-context

@@ -66,19 +66,3 @@ impl MeteringProjector {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `process-metering` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: process-metering/instruction-unit-of-account/observation-carries-instructions
-// scenario: process-metering/monotonic-per-process-counters/counter-never-decreases
-// scenario: process-metering/monotonic-per-process-counters/cross-thread-execution-attributed-to-the-process
-// scenario: process-metering/aggregation-across-workers/worker-pool-charges-the-process-once
-// scenario: process-metering/committed-linear-memory-gauge/heap-growth-reflected-in-the-gauge
-// scenario: process-metering/committed-linear-memory-gauge/shared-regions-excluded-from-the-gauge
-// scenario: process-metering/peak-memory-per-billing-window/peak-retained
-// scenario: process-metering/tamper-evident-metering/guest-cannot-decrement-its-counter
-// scenario: process-metering/tamper-evident-metering/load-invariance
-// scenario: process-metering/per-minute-cpu-budget-enforcement/over-budget-process-halted
-// scenario: process-metering/per-minute-cpu-budget-enforcement/budget-evaluated-per-window
-// scenario: process-metering/per-minute-cpu-budget-enforcement/budget-applied-at-spawn
-// scenario: process-metering/per-minute-cpu-budget-enforcement/window-aligned-to-the-wall-clock-minute
-// scenario: process-metering/cpu-ceiling-delivery-under-a-resource-class/ceiling-delivered-under-the-cpu-class
-// scenario: process-metering/cpu-ceiling-delivery-under-a-resource-class/cpu-class-allocates-nothing
-// scenario: process-metering/pricing-seam/meter-independent-of-price

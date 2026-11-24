@@ -39,6 +39,7 @@ async fn a_fresh_writer_can_write_after_pre_existing_ring_data_is_drained() {
     }
 }
 
+// scenario: channel-wake-wait/wakeable-channel-writes-park-backpressure/a-large-frame-does-not-pin-its-own-writer
 #[tokio::test]
 async fn a_large_frame_does_not_pin_its_own_writer() {
     install_heap_provider();
@@ -59,6 +60,7 @@ async fn a_large_frame_does_not_pin_its_own_writer() {
     }
 }
 
+// scenario: channel-wake-wait/wakeable-channel-writes-park-backpressure/an-idle-writer-still-anchors-other-writers
 #[tokio::test]
 async fn an_idle_writer_still_anchors_other_writers() {
     install_heap_provider();
@@ -153,5 +155,3 @@ async fn read_one_frame(
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: channel-wake-wait/wakeable-channel-writes-park-backpressure/a-large-frame-does-not-pin-its-own-writer
-// scenario: channel-wake-wait/wakeable-channel-writes-park-backpressure/an-idle-writer-still-anchors-other-writers

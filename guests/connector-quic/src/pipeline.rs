@@ -177,6 +177,8 @@ mod tests {
     }
 
     #[tokio::test]
+    // scenario: quic-connector/edge-backpressure-honesty/slow-app-guest
+    // scenario: quic-connector/stream-lifecycle-fidelity/client-finishes-a-stream
     async fn copy_relays_bytes_identical_and_ordered() {
         // Bounded duplex buffers provide backpressure on both sides: writes
         // park when the buffer fills, so a slow consumer must not lose bytes.
@@ -216,6 +218,7 @@ mod tests {
         assert_eq!(got, payload, "relayed bytes must be identical and ordered");
     }
 
+    // scenario: quic-connector/stream-lifecycle-fidelity/guest-closes-a-stream
     #[tokio::test]
     async fn guest_close_finishes_wire_stream() {
         // Guest close (EOF on a channel) must finish the wire send half.
@@ -244,6 +247,7 @@ mod tests {
         assert_eq!(&buf, b"payload");
     }
 
+    // scenario: quic-connector/relay-waits-for-initial-serving-peer/relay-polls-before-serving-guest-attachment
     #[tokio::test]
     async fn relay_waits_for_the_guest_before_accepting_eof() {
         drop(selium_memory::set_region_provider(Box::new(
@@ -338,6 +342,7 @@ mod tests {
             .expect("relay task");
     }
 
+    // scenario: quic-connector/relay-waits-for-initial-serving-peer/guest-closes-after-attachment
     #[tokio::test]
     async fn relay_drains_a_final_write_before_finishing() {
         drop(selium_memory::set_region_provider(Box::new(
@@ -424,5 +429,3 @@ mod tests {
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: quic-connector/relay-waits-for-initial-serving-peer/relay-polls-before-serving-guest-attachment
-// scenario: quic-connector/relay-waits-for-initial-serving-peer/guest-closes-after-attachment

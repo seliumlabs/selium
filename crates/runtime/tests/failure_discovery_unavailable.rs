@@ -16,6 +16,7 @@ use selium_runtime::Runtime;
 mod common;
 mod failure_common;
 
+// scenario: verification-gate/failure-injection-coverage/discovery-outage-does-not-hang-a-client
 #[test]
 #[ignore = "requires the discovery-probe guest built for wasm32-unknown-unknown"]
 fn discovery_unavailable_does_not_hang_a_connecting_guest() {

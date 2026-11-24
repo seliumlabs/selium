@@ -486,6 +486,7 @@ impl MemoryRegistry {
 mod tests {
     use crate::kernel::Kernel;
 
+    // scenario: selium-kernel/shared-memory-regions/shared-region-attached-to-two-guests
     #[test]
     fn shared_memory_round_trips_between_attachments() {
         let kernel = Kernel::default();
@@ -520,9 +521,3 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `per-page-memory-protection` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: per-page-memory-protection/per-page-memory-protection-on-attach/consumer-attaches-with-reader-slot
-// scenario: per-page-memory-protection/per-page-memory-protection-on-attach/consumer-attempts-write-to-data-page
-// scenario: per-page-memory-protection/per-page-memory-protection-on-attach/consumer-writes-to-its-own-cursor-page
-// scenario: per-page-memory-protection/per-page-memory-protection-on-attach/consumer-attempts-write-to-another-reader-s-cursor-page
-// scenario: per-page-memory-protection/producer-full-access/producer-attaches-without-reader-slot
-// scenario: per-page-memory-protection/protection-is-kernel-enforced/malicious-guest-bypass-attempt

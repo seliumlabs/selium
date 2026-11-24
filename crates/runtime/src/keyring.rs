@@ -50,16 +50,28 @@ pub trait CaStore: Send + Sync {
 pub enum KeyringError {
     #[error("no intermediate key material configured")]
     IntermediateMissing,
+    #[error("no root certificate configured for the keyring hierarchy")]
+    RootMissing,
     #[error("invalid certificate material: {0}")]
     InvalidMaterial(String),
     #[error("signing failed: {0}")]
     Signing(String),
     #[error("tenant CA not found: {tenant}")]
     TenantCaNotFound { tenant: String },
+    #[error("no uncommitted tenant CA transaction found: {tenant}")]
+    TenantCaTransactionNotFound { tenant: String },
+    #[error("tenant CA changed while its transaction was pending: {tenant}")]
+    TenantCaChanged { tenant: String },
     #[error("unsupported subject key algorithm")]
     UnsupportedSubjectKey,
     #[error("keyring state error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("failed to remove legacy online root private key {path}: {source}")]
+    LegacyRootKeyRemoval {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Host-side PKI key material: a DER certificate plus its PKCS#8 private key.
@@ -74,7 +86,12 @@ pub struct KeyMaterial {
 /// Material needed to initialise the keyring at startup.
 #[derive(Debug, Clone, Default)]
 pub struct KeyringBootstrap {
-    /// Optional offline root, retained for operator bootstrap only.
+    /// Offline root public certificate, retained so issued chains remain
+    /// verifiable. It is required: an intermediate without its recorded root
+    /// is a partial hierarchy, not a new trust domain. The root **private** key is offline-only and is
+    /// never loaded from (or written to) the online state directory; a key
+    /// generated in-process is present here only for the lifetime of that
+    /// process.
     pub root: Option<KeyMaterial>,
     /// The online intermediate. `None` means the keyring cannot be
     /// initialised (the host would be unable to sign tenant CAs).
@@ -101,6 +118,10 @@ pub struct Keyring {
     intermediate: KeyMaterial,
     root: Option<KeyMaterial>,
     tenant_cas: Box<dyn CaStore>,
+    /// Host-private snapshots taken immediately before each tenant CA mint.
+    /// Identity rolls the snapshot back only when its registry append definitely
+    /// failed, and commits it only after the registry's durability barrier.
+    pending_tenant_ca_rollbacks: HashMap<String, Option<TenantCa>>,
 }
 
 /// File-backed tenant CA store: one certificate/key pair per tenant.
@@ -110,14 +131,17 @@ pub struct FileCaStore {
 
 /// The host keyring persisted under a state directory.
 ///
-/// Covers the whole hierarchy — the offline root, the online intermediate and
-/// the per-tenant CAs — so a restart reuses the material it already had rather
-/// than silently replacing it: certificates issued before a restart keep
-/// validating against the tenant CA they chain to. An empty state directory
-/// generates and persists a fresh hierarchy on first boot.
+/// Persists the material a restart needs: the online intermediate, the
+/// per-tenant CAs and the root **public** certificate. The offline root
+/// private key is never written to online state (and a legacy `root.key.der`
+/// is removed after validating the loaded hierarchy), so certificates issued
+/// before a restart keep validating without an online root signing key. An
+/// empty state directory generates and persists a fresh hierarchy on first
+/// boot.
 ///
 /// Layout: `<state>/keys/{root,intermediate}.{cert,key}.der` and
-/// `<state>/keys/tenants/<enc tenant>.{cert,key}.der`.
+/// `<state>/keys/tenants/<enc tenant>.{cert,key}.der`; `root.key.der` is
+/// legacy-only and is migrated away.
 pub struct KeyringStore {
     dir: PathBuf,
 }
@@ -148,13 +172,21 @@ impl Keyring {
             .intermediate
             .ok_or(KeyringError::IntermediateMissing)?;
         validate_material(&intermediate)?;
-        if let Some(root) = &bootstrap.root {
-            validate_material(root)?;
+        let root = bootstrap.root.ok_or(KeyringError::RootMissing)?;
+        // Only the public root certificate is required online: the root
+        // private key is offline-only. When present (a hierarchy generated in
+        // this process) validate it; a loaded certificate has no key.
+        if root.key_der.is_empty() {
+            validate_certificate(&root.cert_der)?;
+        } else {
+            validate_material(&root)?;
         }
+        validate_chain(&root.cert_der, &intermediate.cert_der)?;
         Ok(Self {
             intermediate,
-            root: bootstrap.root,
+            root: Some(root),
             tenant_cas,
+            pending_tenant_ca_rollbacks: HashMap::new(),
         })
     }
 
@@ -180,6 +212,7 @@ impl Keyring {
             intermediate: material_from(&intermediate_cert, &intermediate_key),
             root: Some(material_from(&root_cert, &root_key)),
             tenant_cas: Box::new(InMemoryCaStore::default()),
+            pending_tenant_ca_rollbacks: HashMap::new(),
         })
     }
 
@@ -205,9 +238,9 @@ impl Keyring {
     /// Returns the host-private material a later boot needs to reconstruct this
     /// hierarchy.
     ///
-    /// Host-only, and the counterpart of [`KeyringBootstrap`]: the private keys
-    /// it carries are written to the host's state directory and never cross to
-    /// a guest.
+    /// Host-only, and the counterpart of [`KeyringBootstrap`]. The returned
+    /// root entry carries the public certificate; [`KeyringStore`] deliberately
+    /// never writes the root private key to online state.
     pub fn bootstrap_material(&self) -> KeyringBootstrap {
         KeyringBootstrap {
             root: self.root.clone(),
@@ -234,6 +267,7 @@ impl Keyring {
             .signed_by(&tenant_key, &issuer)
             .map_err(|error| KeyringError::Signing(error.to_string()))?;
         let cert_der = cert.der().to_vec();
+        let previous = self.tenant_cas.get(tenant);
         self.tenant_cas.insert(
             tenant,
             TenantCa {
@@ -241,7 +275,74 @@ impl Keyring {
                 key_der: tenant_key.serialize_der(),
             },
         )?;
+        // Replace any older unresolved snapshot: this mint's immediate
+        // predecessor is the state a definite failure of *this* append must
+        // restore. A sync-failed predecessor remains the active CA and is
+        // therefore the correct predecessor for a later rotation.
+        self.pending_tenant_ca_rollbacks
+            .insert(tenant.to_string(), previous);
         Ok(cert_der)
+    }
+
+    /// Discards the host-private rollback snapshot after the tenant registry
+    /// record has reached its durability barrier.
+    pub fn commit_tenant_ca(&mut self, tenant: &str, cert_der: &[u8]) -> Result<(), KeyringError> {
+        self.check_tenant_ca_transaction(tenant, cert_der)?;
+        self.pending_tenant_ca_rollbacks.remove(tenant);
+        Ok(())
+    }
+
+    /// Restores the exact CA displaced by an uncommitted mint. If this was the
+    /// tenant's first mint, restoration removes the new key instead.
+    pub fn rollback_tenant_ca(
+        &mut self,
+        tenant: &str,
+        cert_der: &[u8],
+    ) -> Result<(), KeyringError> {
+        self.check_tenant_ca_transaction(tenant, cert_der)?;
+        let previous = self
+            .pending_tenant_ca_rollbacks
+            .get(tenant)
+            .cloned()
+            .ok_or_else(|| KeyringError::TenantCaTransactionNotFound {
+                tenant: tenant.to_string(),
+            })?;
+        match previous {
+            Some(ca) => self.tenant_cas.insert(tenant, ca)?,
+            None => {
+                self.tenant_cas
+                    .remove(tenant)
+                    .ok_or_else(|| KeyringError::TenantCaNotFound {
+                        tenant: tenant.to_string(),
+                    })?;
+            }
+        }
+        self.pending_tenant_ca_rollbacks.remove(tenant);
+        Ok(())
+    }
+
+    fn check_tenant_ca_transaction(
+        &self,
+        tenant: &str,
+        cert_der: &[u8],
+    ) -> Result<(), KeyringError> {
+        if !self.pending_tenant_ca_rollbacks.contains_key(tenant) {
+            return Err(KeyringError::TenantCaTransactionNotFound {
+                tenant: tenant.to_string(),
+            });
+        }
+        let current =
+            self.tenant_cas
+                .get(tenant)
+                .ok_or_else(|| KeyringError::TenantCaNotFound {
+                    tenant: tenant.to_string(),
+                })?;
+        if current.cert_der != cert_der {
+            return Err(KeyringError::TenantCaChanged {
+                tenant: tenant.to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Signs a client-supplied SPKI via the tenant's CA key, returning the
@@ -282,6 +383,7 @@ impl Keyring {
                 tenant: tenant.to_string(),
             });
         }
+        self.pending_tenant_ca_rollbacks.remove(tenant);
         Ok(())
     }
 }
@@ -335,9 +437,16 @@ impl KeyringStore {
 
     /// Loads the persisted hierarchy, or generates and persists a fresh one
     /// when the state directory holds none.
+    ///
+    /// A legacy online root private key (`root.key.der`) is removed only after
+    /// the loaded hierarchy validates; a removal failure fails boot loudly
+    /// rather than reporting a migrated state that still holds the key.
     pub fn load_or_generate(&self) -> Result<Keyring, KeyringError> {
         if let Some(bootstrap) = self.load()? {
-            return Keyring::initialise(Box::new(FileCaStore::new(self.tenants_dir())), bootstrap);
+            let keyring =
+                Keyring::initialise(Box::new(FileCaStore::new(self.tenants_dir())), bootstrap)?;
+            self.remove_legacy_root_key()?;
+            return Ok(keyring);
         }
         let keyring = Keyring::generate()?;
         self.persist(&keyring)?;
@@ -356,28 +465,49 @@ impl KeyringStore {
     }
 
     /// Reads the persisted hierarchy, returning `None` when it is absent.
+    ///
+    /// Only the intermediate private key and the root **public** certificate
+    /// are loaded; the root private key is offline and never read back.
     fn load(&self) -> Result<Option<KeyringBootstrap>, KeyringError> {
         let (intermediate_cert, intermediate_key) = self.material_paths("intermediate");
-        let Some(intermediate) = read_material(&intermediate_cert, &intermediate_key)? else {
-            return Ok(None);
-        };
+        let intermediate = read_material(&intermediate_cert, &intermediate_key)?;
         let (root_cert, root_key) = self.material_paths("root");
-        let root = read_material(&root_cert, &root_key)?;
-        Ok(Some(KeyringBootstrap {
-            root,
-            intermediate: Some(intermediate),
-        }))
+        let root = read_certificate(&root_cert)?.map(|cert_der| KeyMaterial {
+            cert_der,
+            key_der: Vec::new(),
+        });
+        match (intermediate, root) {
+            (Some(intermediate), Some(root)) => Ok(Some(KeyringBootstrap {
+                root: Some(root),
+                intermediate: Some(intermediate),
+            })),
+            (None, None) if !root_key.try_exists()? => Ok(None),
+            (None, None) => Err(KeyringError::InvalidMaterial(
+                "partial hierarchy: root key exists without its certificates".to_string(),
+            )),
+            (Some(_), None) => Err(KeyringError::InvalidMaterial(
+                "partial hierarchy: intermediate exists without the root certificate".to_string(),
+            )),
+            (None, Some(_)) => Err(KeyringError::InvalidMaterial(
+                "partial hierarchy: root certificate exists without intermediate key material"
+                    .to_string(),
+            )),
+        }
     }
 
-    /// Writes the whole hierarchy to the state directory.
+    /// Writes the persistence-needed hierarchy to the state directory.
+    ///
+    /// The root public certificate is retained; the root private key is never
+    /// written. The online intermediate key and the tenant CA keys are the
+    /// only private material persisted.
     fn persist(&self, keyring: &Keyring) -> Result<(), KeyringError> {
         std::fs::create_dir_all(&self.dir)?;
         let material = keyring.bootstrap_material();
-        let root = material.root.ok_or(KeyringError::IntermediateMissing)?;
-        let (root_cert, root_key) = self.material_paths("root");
+        let root = material.root.ok_or(KeyringError::RootMissing)?;
+        let (root_cert, _root_key) = self.material_paths("root");
         write_private(&root_cert, &root.cert_der)?;
-        write_private(&root_key, &root.key_der)?;
-
+        // A stale online root key from an earlier version is not part of the
+        // persisted hierarchy; `load_or_generate` removes it after validating.
         let intermediate = material
             .intermediate
             .ok_or(KeyringError::IntermediateMissing)?;
@@ -387,6 +517,20 @@ impl KeyringStore {
 
         std::fs::create_dir_all(self.tenants_dir())?;
         Ok(())
+    }
+
+    /// Removes a legacy online root private key, failing loudly on any error
+    /// other than "already absent".
+    fn remove_legacy_root_key(&self) -> Result<(), KeyringError> {
+        let (_root_cert, root_key) = self.material_paths("root");
+        match std::fs::remove_file(&root_key) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(KeyringError::LegacyRootKeyRemoval {
+                path: root_key,
+                source,
+            }),
+        }
     }
 }
 
@@ -450,11 +594,63 @@ fn material_from(cert: &Certificate, key: &KeyPair) -> KeyMaterial {
 fn read_material(cert: &Path, key: &Path) -> Result<Option<KeyMaterial>, KeyringError> {
     match (std::fs::read(cert), std::fs::read(key)) {
         (Ok(cert_der), Ok(key_der)) => Ok(Some(KeyMaterial { cert_der, key_der })),
-        (Err(error), _) | (_, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+        (Err(cert_error), Err(key_error))
+            if cert_error.kind() == std::io::ErrorKind::NotFound
+                && key_error.kind() == std::io::ErrorKind::NotFound =>
+        {
             Ok(None)
+        }
+        (Err(error), Ok(_)) | (Ok(_), Err(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Err(KeyringError::InvalidMaterial(format!(
+                "partial key material for {}",
+                cert.display()
+            )))
         }
         (Err(error), _) | (_, Err(error)) => Err(error.into()),
     }
+}
+
+/// Reads a certificate, returning `None` when it is absent.
+fn read_certificate(path: &Path) -> Result<Option<Vec<u8>>, KeyringError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Validates that a certificate parses as a CA certificate.
+fn validate_certificate(cert_der: &[u8]) -> Result<(), KeyringError> {
+    let (_, certificate) = x509_parser::parse_x509_certificate(cert_der).map_err(|error| {
+        KeyringError::InvalidMaterial(format!("root certificate parse failed: {error}"))
+    })?;
+    if !certificate.tbs_certificate.is_ca() {
+        return Err(KeyringError::InvalidMaterial(
+            "root certificate is not a CA".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Verifies that the online intermediate was actually signed by the recorded
+/// root, not merely that both are independently valid CA certificates.
+fn validate_chain(root_der: &[u8], intermediate_der: &[u8]) -> Result<(), KeyringError> {
+    let (_, root) = x509_parser::parse_x509_certificate(root_der).map_err(|error| {
+        KeyringError::InvalidMaterial(format!("root certificate parse failed: {error}"))
+    })?;
+    let (_, intermediate) =
+        x509_parser::parse_x509_certificate(intermediate_der).map_err(|error| {
+            KeyringError::InvalidMaterial(format!("intermediate certificate parse failed: {error}"))
+        })?;
+    intermediate
+        .verify_signature(Some(root.public_key()))
+        .map_err(|error| {
+            KeyringError::InvalidMaterial(format!(
+                "intermediate does not chain to the recorded root: {error}"
+            ))
+        })
 }
 
 /// Validates that stored material round-trips through a signing handle.
@@ -520,6 +716,7 @@ mod tests {
         );
         assert!(matches!(result, Err(KeyringError::InvalidMaterial(_))));
     }
+    // scenario: selium-identity/host-held-signing-oracle/tenant-ca-key-never-reaches-the-guest
 
     #[test]
     fn sign_tenant_ca_retains_key_and_returns_certificate() {
@@ -535,6 +732,32 @@ mod tests {
             .sign_user_cert("acme", &test_spki())
             .expect("sign user cert");
         assert!(!leaf.is_empty());
+    }
+    // scenario: selium-identity/host-held-signing-oracle/user-leaf-signed-from-client-supplied-spki
+
+    #[test]
+    fn failed_rotation_restores_the_committed_tenant_ca() {
+        let mut keyring = Keyring::generate().expect("generate");
+        let committed_ca = keyring.sign_tenant_ca("acme").expect("onboard acme");
+        keyring
+            .commit_tenant_ca("acme", &committed_ca)
+            .expect("commit onboarding");
+
+        let rotated_ca = keyring.sign_tenant_ca("acme").expect("rotate acme");
+        assert_ne!(rotated_ca, committed_ca);
+        keyring
+            .rollback_tenant_ca("acme", &rotated_ca)
+            .expect("roll back uncommitted rotation");
+
+        let leaf = keyring
+            .sign_user_cert("acme", &test_spki())
+            .expect("the restored CA still signs");
+        let (_, tenant_ca) =
+            x509_parser::parse_x509_certificate(&committed_ca).expect("parse committed CA");
+        let (_, leaf) = x509_parser::parse_x509_certificate(&leaf).expect("parse leaf");
+        assert_eq!(leaf.issuer(), tenant_ca.subject());
+        leaf.verify_signature(Some(tenant_ca.public_key()))
+            .expect("the leaf chains cryptographically to the restored CA");
     }
 
     #[test]
@@ -557,6 +780,7 @@ mod tests {
             input.subject_public_key.as_ref(),
         );
     }
+    // scenario: selium-identity/user-certificate-lifecycle/short-ttl-leaf-expires
 
     #[test]
     fn sign_user_cert_leaf_expires_in_bounded_window() {
@@ -583,6 +807,7 @@ mod tests {
         assert!(matches!(result, Err(KeyringError::TenantCaNotFound { .. })));
     }
 
+    // scenario: selium-abi/certificate-signing-hostcall-variants/revokeca-returns-no-key-material
     #[test]
     fn revoke_ca_removes_key() {
         let mut keyring = Keyring::generate().expect("generate");
@@ -620,6 +845,8 @@ mod tests {
         ))
     }
 
+    // scenario: selium-runtime/host-keyring-persistence/first-boot-generates-and-persists
+    // scenario: selium-identity/depth-3-certificate-hierarchy/online-state-does-not-contain-the-root-private-key
     #[test]
     fn first_boot_generates_and_persists_the_whole_hierarchy() {
         let dir = temp_state_dir("keyring-fresh");
@@ -628,16 +855,22 @@ mod tests {
             .expect("generate");
         let intermediate = keyring.intermediate_cert().to_vec();
         assert!(!intermediate.is_empty());
-        for name in ["root", "intermediate"] {
-            assert!(
-                dir.join("keys").join(format!("{name}.cert.der")).exists(),
-                "{name} certificate is persisted"
-            );
-            assert!(
-                dir.join("keys").join(format!("{name}.key.der")).exists(),
-                "{name} private key is persisted"
-            );
-        }
+        assert!(
+            dir.join("keys").join("root.cert.der").exists(),
+            "the root public certificate is persisted for chain validation"
+        );
+        assert!(
+            !dir.join("keys").join("root.key.der").exists(),
+            "the root private key must never be persisted in online state"
+        );
+        assert!(
+            dir.join("keys").join("intermediate.cert.der").exists(),
+            "intermediate certificate is persisted"
+        );
+        assert!(
+            dir.join("keys").join("intermediate.key.der").exists(),
+            "intermediate private key is persisted"
+        );
 
         // The next boot reuses the same material rather than replacing it.
         let reopened = KeyringStore::new(&dir).load_or_generate().expect("reload");
@@ -648,7 +881,166 @@ mod tests {
         );
         drop(std::fs::remove_dir_all(&dir));
     }
+    // scenario: selium-identity/depth-3-certificate-hierarchy/root-key-unreachable-from-guests
 
+    #[test]
+    fn restart_mints_and_chains_without_a_root_private_key() {
+        let dir = temp_state_dir("keyring-no-root-key");
+
+        let mut first = KeyringStore::new(&dir)
+            .load_or_generate()
+            .expect("first boot");
+        let tenant_ca_der = first.sign_tenant_ca("acme").expect("tenant ca");
+        drop(first);
+
+        let second = KeyringStore::new(&dir).load_or_generate().expect("restart");
+        assert!(
+            second.root_cert().is_some(),
+            "the root certificate is loaded"
+        );
+        assert!(
+            !dir.join("keys").join("root.key.der").exists(),
+            "restart must not recreate the online root private key"
+        );
+        let leaf_der = second
+            .sign_user_cert("acme", &test_spki())
+            .expect("leaf minted after restart");
+
+        let (_, tenant_ca) =
+            x509_parser::parse_x509_certificate(&tenant_ca_der).expect("parse tenant ca");
+        let (_, leaf) = x509_parser::parse_x509_certificate(&leaf_der).expect("parse leaf");
+        assert_eq!(
+            leaf.issuer().to_string(),
+            tenant_ca.subject().to_string(),
+            "a post-restart leaf chains to the recorded tenant CA"
+        );
+        drop(std::fs::remove_dir_all(&dir));
+    }
+
+    // scenario: selium-runtime/host-keyring-persistence/legacy-online-root-key-is-migrated
+    #[test]
+    fn legacy_online_root_key_is_removed_only_after_validation() {
+        let dir = temp_state_dir("keyring-legacy-root-key");
+        let store = KeyringStore::new(&dir);
+        let mut first = store.load_or_generate().expect("first boot");
+        first.sign_tenant_ca("acme").expect("tenant ca");
+        drop(first);
+
+        let legacy_key = dir.join("keys").join("root.key.der");
+        std::fs::write(&legacy_key, b"legacy online root key").expect("write legacy key");
+
+        let restarted = store.load_or_generate().expect("validated migration");
+        assert!(
+            !legacy_key.exists(),
+            "a validated hierarchy must remove the online root private key"
+        );
+        assert!(
+            restarted.sign_user_cert("acme", &test_spki()).is_ok(),
+            "the restarted hierarchy still mints tenant certificates"
+        );
+        drop(std::fs::remove_dir_all(&dir));
+    }
+
+    #[test]
+    fn legacy_root_key_is_retained_when_hierarchy_validation_fails() {
+        let dir = temp_state_dir("keyring-invalid-hierarchy");
+        let store = KeyringStore::new(&dir);
+        let first = store.load_or_generate().expect("first boot");
+        drop(first);
+
+        let legacy_key = dir.join("keys").join("root.key.der");
+        std::fs::write(&legacy_key, b"legacy online root key").expect("write legacy key");
+        std::fs::write(
+            dir.join("keys").join("intermediate.cert.der"),
+            b"not a certificate",
+        )
+        .expect("corrupt intermediate");
+
+        assert!(matches!(
+            store.load_or_generate(),
+            Err(KeyringError::InvalidMaterial(_))
+        ));
+        assert!(
+            legacy_key.exists(),
+            "the key must not be removed when the hierarchy fails validation"
+        );
+        drop(std::fs::remove_dir_all(&dir));
+    }
+
+    #[test]
+    fn partial_persisted_hierarchies_are_rejected_instead_of_reseeded() {
+        for missing in ["root.cert.der", "intermediate.key.der"] {
+            let dir = temp_state_dir("keyring-partial");
+            let store = KeyringStore::new(&dir);
+            let first = store.load_or_generate().expect("first boot");
+            let intermediate = first.intermediate_cert().to_vec();
+            drop(first);
+            std::fs::remove_file(dir.join("keys").join(missing)).expect("remove hierarchy half");
+
+            assert!(matches!(
+                store.load_or_generate(),
+                Err(KeyringError::InvalidMaterial(_))
+            ));
+            assert_eq!(
+                std::fs::read(dir.join("keys").join("intermediate.cert.der"))
+                    .expect("existing intermediate remains untouched"),
+                intermediate,
+                "a partial load must not silently generate a replacement hierarchy"
+            );
+            drop(std::fs::remove_dir_all(&dir));
+        }
+    }
+
+    #[test]
+    fn unrelated_valid_root_ca_is_rejected_and_legacy_key_is_retained() {
+        let dir = temp_state_dir("keyring-unrelated-root");
+        let store = KeyringStore::new(&dir);
+        let first = store.load_or_generate().expect("first boot");
+        drop(first);
+        let unrelated = Keyring::generate().expect("unrelated valid hierarchy");
+        std::fs::write(
+            dir.join("keys").join("root.cert.der"),
+            unrelated.root_cert().expect("unrelated root certificate"),
+        )
+        .expect("replace root with an unrelated valid CA");
+        let legacy_key = dir.join("keys").join("root.key.der");
+        std::fs::write(&legacy_key, b"legacy online root key").expect("write legacy key");
+
+        let error = match store.load_or_generate() {
+            Err(error) => error,
+            Ok(_) => panic!("unrelated root must fail"),
+        };
+        assert!(
+            error.to_string().contains("does not chain"),
+            "unexpected validation error: {error}"
+        );
+        assert!(
+            legacy_key.exists(),
+            "legacy private material is removed only after chain verification"
+        );
+        drop(std::fs::remove_dir_all(&dir));
+    }
+
+    #[test]
+    fn legacy_root_key_removal_failure_fails_boot_loudly() {
+        let dir = temp_state_dir("keyring-root-key-removal-failure");
+        let store = KeyringStore::new(&dir);
+        let first = store.load_or_generate().expect("first boot");
+        drop(first);
+
+        // A directory at the key path makes `remove_file` fail with an error
+        // other than "not found", which must stop boot rather than be hidden.
+        std::fs::create_dir(dir.join("keys").join("root.key.der")).expect("blocking directory");
+
+        assert!(matches!(
+            store.load_or_generate(),
+            Err(KeyringError::LegacyRootKeyRemoval { .. })
+        ));
+        drop(std::fs::remove_dir_all(&dir));
+    }
+    // scenario: selium-identity/depth-3-certificate-hierarchy/tenant-ca-minted-by-the-intermediate
+
+    // scenario: selium-runtime/host-keyring-persistence/restart-preserves-the-hierarchy
     #[test]
     fn a_certificate_minted_after_a_restart_chains_to_the_recorded_tenant_ca() {
         let dir = temp_state_dir("keyring-restart");

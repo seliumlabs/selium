@@ -53,15 +53,19 @@ cargo test -p selium-guest
 
 - **Rust Edition 2024 only** - Use 2024 edition features. Do not use 2021 edition patterns.
 - **NO WASI** - Never use `wasm32-wasi` target. Use `wasm32-unknown-unknown` exclusively.
-- **Pre-commit checks** - Before creating a commit/PR, you MUST run:
-  1. `cargo fmt --all`
+- **Pre-commit checks** - Before creating a commit/PR, you MUST run
+  `scripts/gate.sh` (the full Linux gate CI runs) or, for a quick local pass,
+  the same steps individually:
+  1. `cargo fmt --all --check`
   2. `cargo clippy --workspace --all-targets -- -D warnings`
-  3. `cargo test --workspace --all-targets`
+  3. `cargo test --workspace --all-targets` (and `cargo test --workspace --doc`)
   4. `cargo build --target wasm32-unknown-unknown -p selium-spine-demo -p selium-discovery`
   5. `cargo test -p selium-runtime --test spine -- --ignored`
   6. `scripts/check-wasm-patches.sh` (guards the ring/getrandom wasm patches against silent fallback to the JS-backed RNG; see `[patch.crates-io]` in `Cargo.toml`)
+  7. `scripts/check-traceability.sh` and `scripts/check-openspec.sh` (scenario
+     evidence and strict OpenSpec/stale-change checks)
 - **Workspace dependencies** - Use `[workspace.dependencies]` in root `Cargo.toml`. Do not pin different versions.
-- **wasmtiny sibling checkout** - The workspace patches `wasmtiny` from `../../wasmtiny`. Keep the two repos side-by-side, and keep changes to the engine minimal and spec-driven.
+- **wasmtiny dependency** - The workspace pins `wasmtiny` and `wasmtiny-aotc` by git revision in `[patch.crates-io]`, so a plain checkout builds without a sibling checkout. For engine work, uncomment the `path = "../wasmtiny/..."` lines in the root `Cargo.toml`, keep the two repos side-by-side, and keep changes to the engine minimal and spec-driven.
 - **International English only** - Do not use American English anywhere in the project unless required for calling third party APIs.
 - **WASM page size is 64 KiB** - `WASM_PAGE_SIZE` (65536) is the page unit for region offsets; `RING_HEADER_SIZE` (4096) is the ring coordination-header layout constant. Never conflate them.
 

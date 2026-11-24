@@ -21,8 +21,16 @@
 //! - [`ROLE_CLAIM_ROUTE`] registers a reserved handler route under a
 //!   host-provisioned claim and stays resident, so a second claimant can be
 //!   refused with a conflict.
+//! - [`ROLE_CONNECTOR_PROVIDER`] publishes a process target for the connector
+//!   resolver recovery test.
+//! - [`ROLE_CONNECTOR_RESOLVER`] runs the real HTTP and QUIC route resolvers
+//!   until both converge on replacement providers.
 
 use anyhow::{Context as _, bail};
+use selium_abi::uri::DomainTable;
+use selium_connector_resolve::{
+    http::RouteResolver as HttpRouteResolver, quic::RouteResolver as QuicRouteResolver,
+};
 use selium_guest::{
     Context, ResourceClass, ResourceTarget, RouteEvent, Serve, entrypoint, info, process_id,
 };
@@ -65,6 +73,12 @@ const ROLE_RESOLVER_UNTIL_GONE: u64 = 8;
 /// host (armed through the runtime's test fault seam), then report whether
 /// either route was published.
 const ROLE_SERVE_DECLARATION_FAILS: u64 = 12;
+/// List the discovery service's durable domain mappings and stay resident.
+pub const ROLE_DOMAINS: u64 = 13;
+/// Publish one process-backed route for the connector resolver test.
+const ROLE_CONNECTOR_PROVIDER: u64 = 14;
+/// Resolve HTTP and QUIC routes until their providers are replaced.
+const ROLE_CONNECTOR_RESOLVER: u64 = 15;
 /// Register, then crash (a trap, not a graceful exit).
 const ROLE_TRAP_AFTER_REGISTER: u64 = 5;
 
@@ -142,6 +156,9 @@ async fn discovery_probe(mut ctx: Context, route: (u64, u64), mode: u64) -> anyh
         ROLE_READY_TIMEOUT => ready(&mut ctx, route_uri(route), READY_TIMEOUT_BOUND).await,
         ROLE_READY_MISS => ready_miss(&mut ctx, route_uri(route)).await,
         ROLE_SERVE_DECLARATION_FAILS => serve_declaration_fails(&mut ctx).await,
+        ROLE_DOMAINS => domains(&mut ctx).await,
+        ROLE_CONNECTOR_PROVIDER => connector_provider(&mut ctx, route_uri(route)).await,
+        ROLE_CONNECTOR_RESOLVER => connector_resolvers(ctx).await,
         other => bail!("discovery-probe: unknown mode {other}"),
     }
 }
@@ -165,7 +182,7 @@ async fn park() -> anyhow::Result<()> {
         let deadline = now
             .checked_add(PROVIDER_PARK)
             .unwrap_or(selium_guest::Instant::MAX);
-        selium_guest::Timer::new(deadline).await;
+        selium_guest::Timer::new(deadline).await?;
     }
 }
 
@@ -187,6 +204,98 @@ async fn provider(ctx: &mut Context, uri: &str) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("provider: register {uri}: {error}"))?;
     info!("provider: registered {uri} {resource_id}");
     park().await
+}
+
+/// Publishes this process as one root route used by the connector resolvers.
+async fn connector_provider(ctx: &mut Context, route: &str) -> anyhow::Result<()> {
+    let uri = format!("sel:///{route}");
+    let process_id = process_id();
+    let target = ResourceTarget {
+        uri: uri.clone(),
+        host_id: "discovery-probe".to_string(),
+        resource_id: process_id,
+        interface: None,
+        tenant: None,
+        class: ResourceClass::Process,
+        labels: Vec::new(),
+    };
+    ctx.register(&uri, target)
+        .await
+        .map_err(|error| anyhow::anyhow!("connector-provider: register {uri}: {error}"))?;
+    info!("connector-provider: registered {uri} {process_id}");
+    park().await
+}
+
+/// Runs the production HTTP and QUIC resolvers through a real discovery swap.
+async fn connector_resolvers(ctx: Context) -> anyhow::Result<()> {
+    let quic_ctx = Context::rediscover()
+        .await
+        .context("connector-resolver: connect second discovery session")?;
+    let mut domains = DomainTable::new();
+    // Map both names into the root namespace without using an apex root
+    // service: http.test -> sel:///http and quic.test -> sel:///quic.
+    domains.seed("test", "");
+    let mut http = HttpRouteResolver::new(ctx, domains.clone());
+    let mut quic = QuicRouteResolver::new(quic_ctx, domains);
+
+    let http_initial = http
+        .resolve("http.test", "/")
+        .await
+        .map_err(|error| anyhow::anyhow!("connector-resolver: initial HTTP lookup: {error:?}"))?
+        .resource_id;
+    let quic_initial = quic
+        .resolve("quic.test")
+        .await
+        .map_err(|error| anyhow::anyhow!("connector-resolver: initial QUIC lookup: {error:?}"))?
+        .resource_id;
+    info!("connector-resolver: http initial {http_initial}");
+    info!("connector-resolver: quic initial {quic_initial}");
+
+    // Give the host time to replace discovery and both providers, then follow
+    // the connector's attach-failure path. This forces an authoritative lookup
+    // through the stale session instead of allowing an unchanged cached target
+    // to short-circuit the recovery assertion.
+    let now = selium_guest::Instant::now().context("connector-resolver: clock")?;
+    let deadline = now
+        .checked_add(std::time::Duration::from_secs(5))
+        .unwrap_or(selium_guest::Instant::MAX);
+    selium_guest::Timer::new(deadline).await?;
+    http.evict("http.test", "/");
+    quic.evict("quic.test");
+    info!("connector-resolver: re-resolving after eviction");
+
+    let mut http_recovered = false;
+    let mut quic_recovered = false;
+    loop {
+        if !http_recovered {
+            match http.resolve("http.test", "/").await {
+                Ok(target) if target.resource_id != http_initial => {
+                    http_recovered = true;
+                    info!("connector-resolver: http recovered {}", target.resource_id);
+                }
+                Ok(_) => {}
+                Err(error) => info!("connector-resolver: http waiting {error:?}"),
+            }
+        }
+        if !quic_recovered {
+            match quic.resolve("quic.test").await {
+                Ok(target) if target.resource_id != quic_initial => {
+                    quic_recovered = true;
+                    info!("connector-resolver: quic recovered {}", target.resource_id);
+                }
+                Ok(_) => {}
+                Err(error) => info!("connector-resolver: quic waiting {error:?}"),
+            }
+        }
+        if http_recovered && quic_recovered {
+            return park().await;
+        }
+        let now = selium_guest::Instant::now().context("connector-resolver: clock")?;
+        let deadline = now
+            .checked_add(std::time::Duration::from_millis(250))
+            .unwrap_or(selium_guest::Instant::MAX);
+        selium_guest::Timer::new(deadline).await?;
+    }
 }
 
 /// Converges on `uri` through the bounded watch-driven readiness path.
@@ -268,6 +377,21 @@ async fn request_register(
         .context("register: discovery request")
 }
 
+/// Lists every domain mapping returned by the current discovery listener.
+async fn domains(ctx: &mut Context) -> anyhow::Result<()> {
+    loop {
+        let domains = ctx.load_domains().await.context("domains: list")?;
+        for (domain, tenant) in domains.entries() {
+            info!("domains: {domain}={tenant}");
+        }
+        let now = selium_guest::Instant::now().context("domains: clock")?;
+        let deadline = now
+            .checked_add(std::time::Duration::from_millis(250))
+            .unwrap_or(selium_guest::Instant::MAX);
+        selium_guest::Timer::new(deadline).await?;
+    }
+}
+
 /// Resolves `uri` once and logs the observable outcome.
 async fn resolver(ctx: &mut Context, uri: &str) -> anyhow::Result<()> {
     let response = ctx
@@ -310,7 +434,7 @@ async fn resolver_until_gone(ctx: &mut Context, uri: &str) -> anyhow::Result<()>
         let deadline = now
             .checked_add(std::time::Duration::from_millis(250))
             .unwrap_or(selium_guest::Instant::MAX);
-        selium_guest::Timer::new(deadline).await;
+        selium_guest::Timer::new(deadline).await?;
     }
 }
 
@@ -403,6 +527,6 @@ async fn trap_after_register(ctx: &mut Context, uri: &str) -> anyhow::Result<()>
     let deadline = now
         .checked_add(std::time::Duration::from_secs(5))
         .unwrap_or(selium_guest::Instant::MAX);
-    selium_guest::Timer::new(deadline).await;
+    selium_guest::Timer::new(deadline).await?;
     panic!("failure-injection: deliberate guest crash after registering {uri}");
 }

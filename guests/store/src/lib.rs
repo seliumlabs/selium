@@ -134,6 +134,7 @@ fn dispatch(store: &Store<HostVolumes>, tenant: &str, request: StoreRequest) -> 
                 Some(sequence) => StoreResponse::Checkpoint { sequence },
                 None => StoreResponse::CheckpointMissing,
             }),
+        StoreRequest::Sync { log } => store.sync_log(tenant, &log).map(|()| StoreResponse::Ok),
         StoreRequest::PutBlob {
             store: name,
             payload,
@@ -320,19 +321,3 @@ mod tests;
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-store` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-store/store-guest-crate/store-bootstraps-from-descriptor
-// scenario: selium-store/served-typed-store-surface/serving-route-registered
-// scenario: selium-store/served-typed-store-surface/session-without-a-resolvable-tenant-refused
-// scenario: selium-store/durable-log-semantics/append-and-replay
-// scenario: selium-store/durable-log-semantics/checkpoint-references-a-missing-sequence
-// scenario: selium-store/blob-store-semantics/put-and-get-round-trip
-// scenario: selium-store/blob-store-semantics/manifest-for-an-absent-blob-rejected
-// scenario: selium-store/durable-slice-resolution/manifest-resolves-to-a-slice
-// scenario: selium-store/durable-slice-resolution/absent-blob-cannot-be-resolved
-// scenario: selium-store/durable-slice-resolution/cross-tenant-resolution-excluded
-// scenario: selium-store/slice-stability/a-slice-never-goes-stale
-// scenario: selium-store/crash-consistent-recovery/torn-tail-record-discarded
-// scenario: selium-store/crash-consistent-recovery/synced-state-survives-restart
-// scenario: selium-store/tenant-scoped-volume-layout/same-name-in-two-tenants-is-distinct
-// scenario: selium-store/tenant-scoped-volume-layout/cross-tenant-read-is-excluded
-// scenario: selium-store/store-owned-durability-policy/durable-acknowledgement-survives-a-power-cycle

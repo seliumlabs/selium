@@ -17,6 +17,21 @@ The layout version SHALL occupy bytes 0–3 (`layout_version: u32`). The layout 
 - **WHEN** a guest attaches to a region
 - **THEN** the runtime SHALL validate that `layout_size` in the region header equals `size_of::<ChannelHeaderLayout>()` — failing the attach if they differ
 
+#### Scenario: Standard coordination layout
+- **WHEN** a shared region is allocated for messaging via `RingBuf::create`
+- **THEN** page 0 SHALL contain the standard coordination fields (generation counter, next_tail, writer_count, reader_slots, next_writer_id, reader_slot_counter) with ring buffer data starting at PAGE_SIZE
+
+
+#### Scenario: Host proxy coordinates via shared fields
+- **WHEN** a kernel proxy thread writes data to a ring buffer
+- **THEN** it SHALL reserve space via CAS on the shared `next_tail`, perform single-phase writes with release fencing, and bump the generation counter, using the same protocol as guest writers
+
+
+#### Scenario: Kernel notifies guest via generation counter
+- **WHEN** a kernel proxy thread bumps the generation counter after writing data
+- **THEN** the guest blocked on `memory.atomic.wait32` at the generation counter offset SHALL be woken
+
+
 ### Requirement: Native Atomic Access to Shared Regions
 Guests SHALL access shared region data and coordination fields using native WASM load, store, and atomic instructions at the page offset returned by attach. Consumer guests SHALL receive read-only mappings; all writes to shared memory by consumers SHALL be mediated through slot hostcalls.
 
@@ -40,6 +55,16 @@ Guests SHALL access shared region data and coordination fields using native WASM
 - **WHEN** a guest executes `memory.atomic.notify` on an address within a mapped shared region
 - **THEN** the instruction SHALL wake waiters blocked on `memory.atomic.wait32` at that address
 
+#### Scenario: Guest reads shared data via RegionMapping::read_u64
+- **WHEN** a guest calls `mapping.read_u64(offset)` within a mapped shared region
+- **THEN** the value SHALL be read directly from the shared memory
+
+
+#### Scenario: Guest uses atomic CAS on coordination field
+- **WHEN** a guest calls `mapping.compare_exchange_u64(offset, current, new)`
+- **THEN** the CAS SHALL be visible to all processes attached to the same region
+
+
 ### Requirement: Shared Region Attach
 The host SHALL provide an `attach_region` hostcall that maps an existing shared region into the calling guest's linear memory. The guest SDK SHALL wrap this hostcall via `SharedRegion::attach(region_id, reader_slot, prot)`, which returns a `SharedRegion` instance. Consumer guests SHALL attach with `RegionProt::ReadOnly` and `reader_slot: None`. The host SHALL validate the region exists and is compatible with the guest's expected layout (version and size match).
 
@@ -58,6 +83,16 @@ The host SHALL provide an `attach_region` hostcall that maps an existing shared 
 #### Scenario: Layout size mismatch on attach
 - **WHEN** a guest attaches to a region whose `layout_size` differs from `size_of::<ChannelHeaderLayout>()`
 - **THEN** the attach SHALL fail with an `IncompatibleLayout` error
+
+#### Scenario: Guest attaches to an existing region via provider
+- **WHEN** a guest calls `provider.attach(region_id, None, ReadWrite)`
+- **THEN** the host SHALL validate the region exists, map it into guest memory, and return a `Region` with the page offset
+
+
+#### Scenario: Guest attaches to a non-existent region
+- **WHEN** a guest calls `provider.attach(invalid_id, ...)`
+- **THEN** the provider SHALL return an error
+
 
 ## ADDED Requirements
 

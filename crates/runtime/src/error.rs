@@ -29,6 +29,20 @@ pub enum Error {
     #[error("guest entrypoint returned an error: {0}")]
     /// Guest entrypoint returned a non-zero exit code.
     EntrypointFailed(String),
+    #[error("guest does not advertise ABI compatibility (host ABI version {host})")]
+    /// A hostcall-using legacy module has no valid ABI custom section.
+    MissingAbiNegotiation {
+        /// Version supported by this host.
+        host: u32,
+    },
+    #[error("host ABI version {host} is incompatible with guest ABI version {guest}")]
+    /// The module advertises an unsupported ABI before request dispatch.
+    AbiVersionMismatch {
+        /// Version supported by this host.
+        host: u32,
+        /// Version advertised by the guest module.
+        guest: u32,
+    },
     #[error("kernel error: {0}")]
     /// Kernel operation failed.
     Kernel(#[from] selium_kernel::Error),

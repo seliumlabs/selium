@@ -52,7 +52,8 @@ pub(crate) fn attach_feed(runtime: &Runtime) -> Subscriber<DiscoveryRequest, Shm
     let feed_region_id = runtime
         .discovery_feed_region_id()
         .expect("discovery feed region id");
-    let channel = Channel::attach(feed_region_id).expect("attach to discovery feed");
+    let channel = Channel::attach_with_provider(runtime.region_provider().as_ref(), feed_region_id)
+        .expect("attach to discovery feed");
     let capacity = channel.ring().capacity();
     let transport = ShmTransport::new_replay(&channel, &channel).expect("feed transport");
     Subscriber::new(FramedRead::new(transport), Some(capacity))
@@ -185,6 +186,10 @@ pub(crate) fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescript
             CapabilityGrant::new(
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
+            ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
             ),
         ],
         tenant: None,

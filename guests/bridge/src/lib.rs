@@ -55,6 +55,7 @@ const NARROWING_TABLE_ROUTE: &str = "sel:///accounting-narrowing";
 /// the bridge refuses the handoff — fail-closed, never conferring on absence.
 pub struct GrantTable {
     table: Option<LiveTableView<Vec<u8>, Vec<u8>, ShmTransport>>,
+    resource_id: Option<u64>,
 }
 
 /// The accountant-published narrowing table: `tenant -> rkyv-encoded
@@ -64,6 +65,7 @@ pub struct GrantTable {
 /// grant table's fail-closed absence for unknown identities.
 pub struct NarrowingTable {
     table: Option<LiveTableView<String, Vec<u8>, ShmTransport>>,
+    resource_id: Option<u64>,
 }
 
 /// What woke the bridge server's main loop.
@@ -79,7 +81,10 @@ enum Wake {
 impl GrantTable {
     /// Builds an empty (unattached) grant table: every lookup misses.
     pub fn empty() -> Self {
-        Self { table: None }
+        Self {
+            table: None,
+            resource_id: None,
+        }
     }
 
     /// Attaches the identity guest's grant table from a resolved target.
@@ -89,6 +94,7 @@ impl GrantTable {
     pub fn from_target(target: &ResourceTarget) -> anyhow::Result<Self> {
         Ok(Self {
             table: Some(open_table_view(target)?),
+            resource_id: Some(target.resource_id),
         })
     }
 
@@ -112,13 +118,17 @@ impl GrantTable {
 impl NarrowingTable {
     /// Builds an empty (unattached) narrowing table: every tenant un-narrowed.
     pub fn empty() -> Self {
-        Self { table: None }
+        Self {
+            table: None,
+            resource_id: None,
+        }
     }
 
     /// Attaches the accountant's narrowing table from a resolved target.
     pub fn from_target(target: &ResourceTarget) -> anyhow::Result<Self> {
         Ok(Self {
             table: Some(open_table_view(target)?),
+            resource_id: Some(target.resource_id),
         })
     }
 
@@ -142,6 +152,23 @@ impl NarrowingTable {
             .flatten()
             .unwrap_or_default();
         selium_abi::decode_rkyv::<Vec<Capability>>(&bytes).unwrap_or_default()
+    }
+}
+
+// A table view attached to a discovery-resolved shared region.
+trait AttachedTable {
+    fn resource_id(&self) -> Option<u64>;
+}
+
+impl AttachedTable for GrantTable {
+    fn resource_id(&self) -> Option<u64> {
+        self.resource_id
+    }
+}
+
+impl AttachedTable for NarrowingTable {
+    fn resource_id(&self) -> Option<u64> {
+        self.resource_id
     }
 }
 
@@ -337,12 +364,18 @@ async fn bridge_server(mut ctx: Context, bridge_channel_module: (u64, u64)) -> a
 
         let incoming = match wake {
             Wake::GrantTable(event) => {
-                grant_table = converge_grant_table(event, &mut grant_watch, &mut ctx).await;
+                grant_table =
+                    converge_grant_table(event, grant_table, &mut grant_watch, &mut ctx).await;
                 continue;
             }
             Wake::NarrowingTable(event) => {
-                narrowing_table =
-                    converge_narrowing_table(event, &mut narrowing_watch, &mut ctx).await;
+                narrowing_table = converge_narrowing_table(
+                    event,
+                    narrowing_table,
+                    &mut narrowing_watch,
+                    &mut ctx,
+                )
+                .await;
                 continue;
             }
             Wake::Handoff(Ok(incoming)) => {
@@ -435,11 +468,13 @@ async fn bridge_server(mut ctx: Context, bridge_channel_module: (u64, u64)) -> a
 /// revocation or any attachment failure.
 async fn converge_grant_table(
     event: anyhow::Result<RouteEvent>,
+    current: GrantTable,
     watch: &mut Option<selium_guest::RouteWatch>,
     ctx: &mut Context,
 ) -> GrantTable {
     converge_table(
         event,
+        current,
         watch,
         "bridge-server: grant table",
         || ctx.lookup(GRANT_TABLE_ROUTE),
@@ -453,11 +488,13 @@ async fn converge_grant_table(
 /// revocation or any attachment failure.
 async fn converge_narrowing_table(
     event: anyhow::Result<RouteEvent>,
+    current: NarrowingTable,
     watch: &mut Option<selium_guest::RouteWatch>,
     ctx: &mut Context,
 ) -> NarrowingTable {
     converge_table(
         event,
+        current,
         watch,
         "bridge-server: narrowing table",
         || ctx.lookup(NARROWING_TABLE_ROUTE),
@@ -471,12 +508,15 @@ async fn converge_narrowing_table(
 /// revocation, a stale appearance, or any attachment failure.
 ///
 /// An appearance is only a convergence signal: `resolve` re-resolves the route
-/// through discovery (which records attach authority) and `attach` builds the
-/// live view from that target. `default` is the caller's policy for *not*
-/// having a table: grants stay fail-closed (unknown identities are refused) and
-/// narrowing stays fail-open (no subtraction).
+/// through discovery (which records attach authority). If it still names the
+/// attached region, `current` remains live and no duplicate attach is
+/// attempted; a different region is attached as the replacement. `default` is
+/// the caller's policy for *not* having a table: grants stay fail-closed
+/// (unknown identities are refused) and narrowing stays fail-open (no
+/// subtraction).
 async fn converge_table<T, Resolve, Fut, Attach>(
     event: anyhow::Result<RouteEvent>,
+    current: T,
     watch: &mut Option<selium_guest::RouteWatch>,
     label: &str,
     resolve: Resolve,
@@ -484,6 +524,7 @@ async fn converge_table<T, Resolve, Fut, Attach>(
     default: fn() -> T,
 ) -> T
 where
+    T: AttachedTable,
     Resolve: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Option<ResourceTarget>, selium_guest::GuestError>>,
     Attach: FnOnce(&ResourceTarget) -> anyhow::Result<T>,
@@ -491,6 +532,9 @@ where
     match event {
         Ok(RouteEvent::Appeared(_)) | Ok(RouteEvent::Replaced(_)) => {
             match resolve().await {
+                Ok(Some(target)) if current.resource_id() == Some(target.resource_id) => {
+                    return current;
+                }
                 Ok(Some(target)) => match attach(&target) {
                     Ok(table) => return table,
                     Err(error) => warn!("{label}: attach failed: {error}"),
@@ -604,6 +648,7 @@ mod tests {
     /// The grant table decodes a published grant set from its rkyv-encoded
     /// value; an empty table reports every fingerprint as unknown (the bridge
     /// refuses the handoff rather than conferring on absence).
+    // scenario: guest-bridge/identity-to-grant-resolution/unknown-identity-refused
     #[test]
     fn empty_grant_table_misses_every_fingerprint() {
         let table = GrantTable::empty();
@@ -723,6 +768,8 @@ mod tests {
 
     /// The narrowing fold removes every baseline grant whose capability is in
     /// the accountant's published narrowing set.
+    // scenario: guest-bridge/accountant-narrowing-at-conferral/baseline-narrowed-before-conferral
+    // scenario: selium-accountant/narrowing-publication/narrowed-conferral
     #[test]
     fn narrow_grants_subtracts_published_capabilities() {
         let baseline = grants();
@@ -736,6 +783,7 @@ mod tests {
     }
 
     /// An empty narrowing set is a no-op: the baseline grants pass through.
+    // scenario: guest-bridge/accountant-narrowing-at-conferral/no-narrowing-is-a-no-op
     #[test]
     fn narrow_grants_with_empty_narrowing_is_a_noop() {
         let baseline = grants();
@@ -743,6 +791,7 @@ mod tests {
     }
 
     /// An unattached narrowing table narrows nothing: every tenant is a no-op.
+    // scenario: guest-bridge/accountant-narrowing-at-conferral/narrowing-table-unreachable-fails-open
     #[test]
     fn empty_narrowing_table_narrows_nothing() {
         let table = NarrowingTable::empty();
@@ -779,7 +828,16 @@ mod tests {
             None,
         );
         let table: selium_wire::LiveTable<Vec<u8>, Vec<u8>, ShmTransport> =
-            selium_wire::LiveTable::new(publisher, subscriber).expect("live table");
+            selium_wire::LiveTable::new(
+                selium_wire::TableWriterAuthority::claim(format!(
+                    "bridge.test.{}",
+                    channel.region_id()
+                ))
+                .expect("authority"),
+                publisher,
+                subscriber,
+            )
+            .expect("live table");
         for (fingerprint, grants) in entries {
             let encoded = selium_abi::encode_rkyv(grants).expect("encode grants");
             table
@@ -825,6 +883,7 @@ mod tests {
     /// A replacement provider publishes a different region: re-attaching from
     /// the replacement's resolved target replaces the view instead of
     /// retaining the stale table.
+    // scenario: guest-bridge/bridge-tables-reconverge/table-provider-is-replaced-or-revoked
     #[test]
     fn grant_table_replacement_switches_the_attached_region() {
         let fingerprint = [3u8; 32];
@@ -848,6 +907,7 @@ mod tests {
 
     /// A grant change published while the bridge waits for a handoff is
     /// visible to the next evaluation after synchronising the view.
+    // scenario: guest-bridge/bridge-tables-reconverge/grant-changes-while-a-handoff-arrives
     #[test]
     fn grant_change_between_handoffs_is_visible_after_sync() {
         let fingerprint = [9u8; 32];
@@ -897,7 +957,16 @@ mod tests {
             None,
         );
         let table: selium_wire::LiveTable<String, Vec<u8>, ShmTransport> =
-            selium_wire::LiveTable::new(publisher, subscriber).expect("live table");
+            selium_wire::LiveTable::new(
+                selium_wire::TableWriterAuthority::claim(format!(
+                    "bridge.test.{}",
+                    channel.region_id()
+                ))
+                .expect("authority"),
+                publisher,
+                subscriber,
+            )
+            .expect("live table");
         let narrowing = vec![Capability::Network];
         table
             .set(
@@ -921,6 +990,7 @@ mod tests {
     /// The convergence helper attaches a table when its route appears: the
     /// watch event alone confers nothing, so the resolver's authoritative
     /// target is what the view is built from.
+    // scenario: guest-bridge/bridge-tables-reconverge/table-publishes-after-bridge-startup
     #[tokio::test]
     async fn grant_watch_appearance_attaches_the_table() {
         let fingerprint = [5u8; 32];
@@ -929,6 +999,7 @@ mod tests {
 
         let attached = converge_table(
             Ok(RouteEvent::Appeared(table_target(region_id))),
+            GrantTable::empty(),
             &mut watch,
             "test grant table",
             || std::future::ready(Ok(Some(table_target(region_id)))),
@@ -936,6 +1007,53 @@ mod tests {
             GrantTable::empty,
         )
         .await;
+        assert_eq!(attached.grants_for(&fingerprint), Some(grants()));
+
+        drop(table);
+        drop(channel);
+    }
+
+    /// Repeated discovery notifications for the same provider must not attach
+    /// its region again: guest memories permit only one attachment per region.
+    #[tokio::test]
+    async fn grant_watch_redundant_events_preserve_the_attached_view() {
+        let fingerprint = [5u8; 32];
+        let (table, region_id, channel) = publish_grant_table(&[(fingerprint, grants())]);
+        let attachments = std::cell::Cell::new(0usize);
+        let attach = |target: &ResourceTarget| {
+            attachments.set(attachments.get() + 1);
+            GrantTable::from_target(target)
+        };
+        let mut watch = None;
+
+        let mut attached = converge_table(
+            Ok(RouteEvent::Appeared(table_target(region_id))),
+            GrantTable::empty(),
+            &mut watch,
+            "test grant table",
+            || std::future::ready(Ok(Some(table_target(region_id)))),
+            &attach,
+            GrantTable::empty,
+        )
+        .await;
+
+        for event in [
+            RouteEvent::Appeared(table_target(region_id)),
+            RouteEvent::Replaced(table_target(region_id)),
+        ] {
+            attached = converge_table(
+                Ok(event),
+                attached,
+                &mut watch,
+                "test grant table",
+                || std::future::ready(Ok(Some(table_target(region_id)))),
+                &attach,
+                GrantTable::empty,
+            )
+            .await;
+        }
+
+        assert_eq!(attachments.get(), 1, "only the initial event attaches");
         assert_eq!(attached.grants_for(&fingerprint), Some(grants()));
 
         drop(table);
@@ -951,6 +1069,7 @@ mod tests {
 
         let attached = converge_table(
             Ok(RouteEvent::Revoked),
+            GrantTable::empty(),
             &mut watch,
             "test grant table",
             || std::future::ready(Ok(Some(table_target(region_id)))),
@@ -974,6 +1093,7 @@ mod tests {
         let mut watch = None;
         let attached = converge_table(
             Ok(RouteEvent::Appeared(table_target(1))),
+            GrantTable::empty(),
             &mut watch,
             "test grant table",
             || std::future::ready(Ok(None)),
@@ -986,6 +1106,7 @@ mod tests {
         let mut watch = None;
         let attached = converge_table(
             Ok(RouteEvent::Replaced(table_target(1))),
+            GrantTable::empty(),
             &mut watch,
             "test grant table",
             || std::future::ready(Ok(None)),
@@ -1004,6 +1125,7 @@ mod tests {
         let unattachable = table_target(9_999);
         let attached = converge_table(
             Ok(RouteEvent::Replaced(unattachable.clone())),
+            GrantTable::empty(),
             &mut watch,
             "test grant table",
             || std::future::ready(Ok(Some(unattachable.clone()))),
@@ -1021,6 +1143,7 @@ mod tests {
         let mut watch = None;
         let attached = converge_table(
             Err(anyhow::anyhow!("watch failed")),
+            GrantTable::empty(),
             &mut watch,
             "test grant table",
             || std::future::ready(Ok(Some(table_target(1)))),
@@ -1043,6 +1166,7 @@ mod tests {
         let mut watch = None;
         let attached = converge_table(
             Ok(RouteEvent::Appeared(table_target(first_region))),
+            GrantTable::empty(),
             &mut watch,
             "test grant table",
             || std::future::ready(Ok(Some(table_target(first_region)))),
@@ -1054,6 +1178,7 @@ mod tests {
 
         let replaced = converge_table(
             Ok(RouteEvent::Replaced(table_target(second_region))),
+            attached,
             &mut watch,
             "test grant table",
             || std::future::ready(Ok(Some(table_target(second_region)))),
@@ -1079,6 +1204,7 @@ mod tests {
         let mut watch = None;
         let table = converge_table(
             Ok(RouteEvent::Revoked),
+            NarrowingTable::empty(),
             &mut watch,
             "test narrowing table",
             || std::future::ready(Ok(Some(table_target(1)))),
@@ -1126,6 +1252,3 @@ mod tests {
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: guest-bridge/bridge-tables-reconverge/table-publishes-after-bridge-startup
-// scenario: guest-bridge/bridge-tables-reconverge/table-provider-is-replaced-or-revoked
-// scenario: guest-bridge/bridge-tables-reconverge/grant-changes-while-a-handoff-arrives

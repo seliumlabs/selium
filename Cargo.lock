@@ -1116,9 +1116,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "once_cell",
  "ring",
@@ -1140,9 +1140,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.15"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -1180,6 +1180,7 @@ dependencies = [
  "selium-service",
  "selium-shm",
  "selium-wire",
+ "tokio",
 ]
 
 [[package]]
@@ -1216,6 +1217,7 @@ version = "1.0.0-alpha.7"
 dependencies = [
  "anyhow",
  "clap",
+ "quinn",
  "selium-client",
  "tokio",
 ]
@@ -1256,6 +1258,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "selium-abi",
+ "selium-connector-resolve",
  "selium-guest",
  "selium-proto-http",
  "selium-service",
@@ -1279,6 +1282,7 @@ dependencies = [
  "ring",
  "rustls-pki-types",
  "selium-abi",
+ "selium-connector-resolve",
  "selium-guest",
  "selium-memory",
  "selium-service",
@@ -1289,6 +1293,17 @@ dependencies = [
  "tokio",
  "tracing",
  "web-time",
+]
+
+[[package]]
+name = "selium-connector-resolve"
+version = "1.0.0-alpha.7"
+dependencies = [
+ "selium-abi",
+ "selium-guest",
+ "selium-service",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1343,6 +1358,7 @@ version = "1.0.0-alpha.7"
 dependencies = [
  "anyhow",
  "selium-abi",
+ "selium-connector-resolve",
  "selium-guest",
  "selium-service",
  "selium-shm",
@@ -1392,6 +1408,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "selium-http-demo"
+version = "1.0.0-alpha.7"
+dependencies = [
+ "anyhow",
+ "selium-guest",
+ "selium-proto-http",
+]
+
+[[package]]
 name = "selium-identity"
 version = "1.0.0-alpha.7"
 dependencies = [
@@ -1403,6 +1428,7 @@ dependencies = [
  "selium-shm",
  "selium-wire",
  "sha2",
+ "tokio",
 ]
 
 [[package]]
@@ -1493,6 +1519,7 @@ dependencies = [
  "parking_lot",
  "quinn",
  "rcgen",
+ "rustls",
  "rustls-pki-types",
  "selium-abi",
  "selium-accountant",
@@ -1510,6 +1537,7 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "wasmtiny",
  "wasmtiny-aotc",
@@ -1549,8 +1577,6 @@ version = "1.0.0-alpha.7"
 dependencies = [
  "anyhow",
  "selium-guest",
- "selium-shm",
- "selium-wire",
 ]
 
 [[package]]
@@ -1873,9 +1899,9 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokio"
-version = "1.53.2"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",

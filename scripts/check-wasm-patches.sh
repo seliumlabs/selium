@@ -59,8 +59,9 @@ command -v wasm-tools >/dev/null 2>&1 ||
 
 cargo build --target wasm32-unknown-unknown -p selium-connector-http -p selium-connector-quic >/dev/null
 
+target_root="${CARGO_TARGET_DIR:-target}"
 for guest in selium-connector-http selium-connector-quic; do
-    artifact="target/wasm32-unknown-unknown/debug/${guest//-/_}.wasm"
+    artifact="$target_root/wasm32-unknown-unknown/debug/${guest//-/_}.wasm"
     [ -f "$artifact" ] || fail "wasm artifact missing: $artifact"
 
     foreign=$(wasm-tools print "$artifact" 2>/dev/null |

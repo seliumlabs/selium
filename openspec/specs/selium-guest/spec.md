@@ -100,11 +100,11 @@
 - **THEN** a new `Publisher<T, ShmTransport>` SHALL be returned providing backpressure protection to readers
 
 ### Requirement: Safety Comments on Unsafe Impls
-The `unsafe impl Send for RegionMappingInner` and `unsafe impl Sync for RegionMappingInner` blocks SHALL include safety comments explaining why the raw-pointer-bearing struct satisfies these auto-traits in both WASM and native modes.
+The `unsafe impl Send for PointerBackend` and `unsafe impl Sync for PointerBackend` blocks SHALL include safety comments explaining why the raw-pointer-bearing struct satisfies these auto-traits in both WASM and native modes.
 
 #### Scenario: Safety comment documents Send/Sync rationale
-- **WHEN** a developer reads the `unsafe impl` blocks in `region.rs`
-- **THEN** they SHALL find comments explaining that in WASM mode the pointer references shared linear memory valid for the guest's lifetime, and in native mode the pointer is into an `Arc<Vec<u8>>` kept alive by `_backing`
+- **WHEN** a developer reads the `unsafe impl` blocks in `selium-memory`
+- **THEN** they SHALL find comments explaining that in WASM mode the pointer references shared linear memory valid for the guest's lifetime, and in native mode the pointer is into aligned backing kept alive by an `Arc`
 
 ### Requirement: LiveTable in selium-wire
 `LiveTable<K, V>` SHALL reside in `selium-wire::tables` as the single canonical implementation, generic over `MessageTransport`.
@@ -114,7 +114,7 @@ The `unsafe impl Send for RegionMappingInner` and `unsafe impl Sync for RegionMa
 - **THEN** the import SHALL resolve to the canonical `LiveTable` type
 
 #### Scenario: LiveTable is re-exported from selium-guest
-- **WHEN** a guest crate imports `selium_guest::io::tables::LiveTable`
+- **WHEN** a guest crate imports `selium_guest::LiveTable`
 - **THEN** the import SHALL resolve to `selium_wire::tables::LiveTable` via re-export
 
 ### Requirement: RPC Types in selium-wire
@@ -125,7 +125,7 @@ The `unsafe impl Send for RegionMappingInner` and `unsafe impl Sync for RegionMa
 - **THEN** the import SHALL resolve to the canonical `RpcClient` type
 
 #### Scenario: RpcClient is re-exported from selium-guest
-- **WHEN** a guest crate imports `selium_guest::io::rpc::RpcClient`
+- **WHEN** a guest crate imports `selium_guest::RpcClient`
 - **THEN** the import SHALL resolve to `selium_wire::rpc::RpcClient` via re-export
 
 ### Requirement: Guest log transport module

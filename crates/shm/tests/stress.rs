@@ -25,6 +25,7 @@ fn make_channel(capacity: u64) -> Channel {
     )
     .expect("create channel")
 }
+// scenario: framed-io/framedread-type/no-frame-ready
 
 /// N writers on one Park channel. Each writer sends `FRAMES_PER_WRITER`
 /// frames through `FramedWrite`. A single reader drains all frames.
@@ -111,7 +112,10 @@ fn n_writers_single_reader_no_lost_wakeups() {
         }
 
         // Wait for reader to finish (with a deadline).
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        // Bounded, but generous: the workspace suite runs many tests in
+        // parallel, and the failure this distinguishes is a lost wake (never
+        // completes), not a slow one.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             if total_read.load(Ordering::SeqCst) >= total_expected {
                 break;

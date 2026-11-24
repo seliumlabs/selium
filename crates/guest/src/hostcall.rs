@@ -2,7 +2,7 @@ use std::{future::Future, pin::Pin, task::Poll};
 
 use selium_abi::{
     CompletionState, HostcallEnvelope, HostcallOutput, HostcallRequest, OperationId, TaskId,
-    decode_rkyv, encode_rkyv, unpack_hostcall_status,
+    decode_rkyv, encode_hostcall_request, unpack_hostcall_status,
 };
 
 use crate::{
@@ -35,17 +35,16 @@ impl Future for HostcallFuture {
                 request,
                 task_id: Some(task_id),
             };
-            let encoded = match encode_rkyv(&envelope) {
+            let encoded = match encode_hostcall_request(&envelope) {
                 Ok(encoded) => encoded,
                 Err(error) => return Poll::Ready(Err(error.into())),
             };
             // SAFETY: `encoded` is a valid byte buffer; the host validates the request.
-            let create_status = unsafe { selium_hostcall_create(encoded.as_ptr(), encoded.len()) };
-            let (status, operation_id) = unpack_hostcall_status(create_status);
-            if status == selium_abi::HOSTCALL_STATUS_FAILED {
-                return Poll::Ready(Err(GuestError::Host("hostcall create failed".to_string())));
+            let operation_id = unsafe { selium_hostcall_create(encoded.as_ptr(), encoded.len()) };
+            if operation_id == 0 {
+                return Poll::Ready(Err(create_failure()));
             }
-            self.operation_id = Some(operation_id as OperationId);
+            self.operation_id = Some(operation_id);
         }
 
         let operation_id = self.operation_id.expect("operation id set above");
@@ -279,6 +278,21 @@ pub fn resource_authority(
     }
 }
 
+/// Resolves the current discovery listener after a discovery session failure.
+///
+/// This is the bootstrap complement to discovery's published route: a dead
+/// discovery service cannot resolve its own replacement. The host returns the
+/// current queue only after its owner declared it attachable by resolution and
+/// records that resolution as this process's attach basis.
+pub fn discovery_listener() -> Result<selium_abi::SharedResourceId> {
+    match hostcall_ready(HostcallRequest::DiscoveryListener)? {
+        HostcallOutput::SharedId(shared_id) => Ok(shared_id),
+        other => Err(GuestError::Host(format!(
+            "unexpected hostcall output for DiscoveryListener: {other:?}"
+        ))),
+    }
+}
+
 /// Deletes a tenant CA key from the host keyring. Requires the
 /// `MintCertificate` capability.
 pub fn revoke_ca(tenant: &str) -> Result<()> {
@@ -316,6 +330,26 @@ pub fn sign_tenant_ca(tenant: &str) -> Result<Vec<u8>> {
     }
 }
 
+/// Discards the host-private CA rollback snapshot after the tenant registry
+/// record is durable. Requires the `MintCertificate` capability.
+pub fn commit_tenant_ca(tenant: &str, ca_cert_der: &[u8]) -> Result<()> {
+    hostcall_ready(HostcallRequest::CommitTenantCa {
+        tenant: tenant.to_string(),
+        ca_cert_der: ca_cert_der.to_vec(),
+    })
+    .map(|_| ())
+}
+
+/// Restores the CA displaced by a mint whose registry append definitely
+/// failed. Requires the `MintCertificate` capability.
+pub fn rollback_tenant_ca(tenant: &str, ca_cert_der: &[u8]) -> Result<()> {
+    hostcall_ready(HostcallRequest::RollbackTenantCa {
+        tenant: tenant.to_string(),
+        ca_cert_der: ca_cert_der.to_vec(),
+    })
+    .map(|_| ())
+}
+
 /// Signs a client-supplied SPKI into a short-TTL user leaf certificate,
 /// returning the DER-encoded leaf. Requires the `MintCertificate` capability.
 pub fn sign_user_cert(tenant: &str, spki_der: &[u8]) -> Result<Vec<u8>> {
@@ -342,32 +376,41 @@ pub(crate) fn hostcall_ready(request: HostcallRequest) -> Result<HostcallOutput>
         request,
         task_id: None,
     };
-    let request = encode_rkyv(&envelope)?;
+    let request = encode_hostcall_request(&envelope)?;
     // SAFETY: `request` is a valid byte buffer; the host validates the contents.
-    let create_status = unsafe { selium_hostcall_create(request.as_ptr(), request.len()) };
-    let (status, operation_id) = unpack_hostcall_status(create_status);
-    if status == selium_abi::HOSTCALL_STATUS_FAILED {
-        return Err(GuestError::Host("hostcall create failed".to_string()));
+    let operation_id = unsafe { selium_hostcall_create(request.as_ptr(), request.len()) };
+    if operation_id == 0 {
+        return Err(create_failure());
     }
 
-    match poll_operation(operation_id as OperationId) {
+    match poll_operation(operation_id) {
         Ok(Some(output)) => {
             // SAFETY: `operation_id` was returned by `selium_hostcall_create` and is still valid.
-            unsafe { selium_hostcall_drop(operation_id as OperationId) };
+            unsafe { selium_hostcall_drop(operation_id) };
             Ok(output)
         }
         Ok(None) => {
             // SAFETY: `operation_id` was returned by `selium_hostcall_create` and is still valid.
-            unsafe { selium_hostcall_drop(operation_id as OperationId) };
+            unsafe { selium_hostcall_drop(operation_id) };
             Err(GuestError::Host(
                 "hostcall returned pending; await the async API instead".to_string(),
             ))
         }
         Err(error) => {
             // SAFETY: `operation_id` was returned by `selium_hostcall_create` and is still valid.
-            unsafe { selium_hostcall_drop(operation_id as OperationId) };
+            unsafe { selium_hostcall_drop(operation_id) };
             Err(error)
         }
+    }
+}
+
+/// A zero create result means the host exhausted the process's operation
+/// budget before it could register an operation. Every nonzero result is an
+/// operation whose ready, pending, or failed status is obtained by polling.
+fn create_failure() -> GuestError {
+    GuestError::Hostcall {
+        code: selium_abi::AbiErrorCode::MalformedPayload,
+        message: "host rejected the hostcall without a structured reason".to_string(),
     }
 }
 
@@ -382,30 +425,29 @@ pub(crate) fn hostcall_ready_with_task(
         request,
         task_id: Some(task_id),
     };
-    let encoded = encode_rkyv(&envelope)?;
+    let encoded = encode_hostcall_request(&envelope)?;
     // SAFETY: `encoded` is a valid byte buffer; the host validates the contents.
-    let create_status = unsafe { selium_hostcall_create(encoded.as_ptr(), encoded.len()) };
-    let (status, operation_id) = unpack_hostcall_status(create_status);
-    if status == selium_abi::HOSTCALL_STATUS_FAILED {
-        return Err(GuestError::Host("hostcall create failed".to_string()));
+    let operation_id = unsafe { selium_hostcall_create(encoded.as_ptr(), encoded.len()) };
+    if operation_id == 0 {
+        return Err(create_failure());
     }
 
-    match poll_operation(operation_id as OperationId) {
+    match poll_operation(operation_id) {
         Ok(Some(output)) => {
             // SAFETY: `operation_id` was returned by `selium_hostcall_create` and is still valid.
-            unsafe { selium_hostcall_drop(operation_id as OperationId) };
+            unsafe { selium_hostcall_drop(operation_id) };
             Ok(output)
         }
         Ok(None) => {
             // SAFETY: `operation_id` was returned by `selium_hostcall_create` and is still valid.
-            unsafe { selium_hostcall_drop(operation_id as OperationId) };
+            unsafe { selium_hostcall_drop(operation_id) };
             Err(GuestError::Host(
                 "hostcall returned pending; await the async API instead".to_string(),
             ))
         }
         Err(error) => {
             // SAFETY: `operation_id` was returned by `selium_hostcall_create` and is still valid.
-            unsafe { selium_hostcall_drop(operation_id as OperationId) };
+            unsafe { selium_hostcall_drop(operation_id) };
             Err(error)
         }
     }
@@ -455,5 +497,123 @@ mod tests {
             namespace_from_tenant(Some("acme")),
             Namespace::Tenant("acme".to_string())
         );
+    }
+
+    // scenario: selium-guest/guest-errors-preserve-stable-abi-causes/immediate-hostcall-rejection
+    #[test]
+    fn a_valid_immediately_failed_operation_is_polled_and_dropped() {
+        let operation_id = u64::from(u32::MAX) + 7;
+        crate::platform::install_native_hostcall_script(crate::platform::NativeHostcallScript {
+            immediate_failure: Some(selium_abi::AbiError::new(
+                selium_abi::AbiErrorCode::QuotaExceeded,
+                "region quota exhausted",
+            )),
+            next_operation: Some(operation_id),
+            ..crate::platform::NativeHostcallScript::default()
+        });
+        let result = hostcall_ready(HostcallRequest::AllocRegion {
+            pages: 1,
+            prot: selium_abi::RegionProt::ReadWrite,
+            purpose: selium_abi::ResourceKind::SharedMemory,
+            serving_tenant: None,
+        });
+        let error = result.expect_err("the failed operation must surface its ABI error");
+        assert_eq!(
+            error.abi_code(),
+            Some(selium_abi::AbiErrorCode::QuotaExceeded),
+            "unexpected error: {error:?}"
+        );
+        assert!(matches!(
+            &error,
+            GuestError::Hostcall { message, .. } if message == "region quota exhausted"
+        ));
+        assert_eq!(
+            crate::platform::native_hostcall_drops(),
+            vec![operation_id],
+            "the full-width failed operation must be dropped"
+        );
+        assert_eq!(crate::platform::native_hostcall_live_operations(), 0);
+        crate::platform::clear_native_hostcall_script();
+    }
+
+    #[test]
+    fn synchronous_create_paths_preserve_operation_ids_above_u32() {
+        // The high word deliberately equals the legacy packed FAILED status:
+        // create no longer has a status word, so this remains a valid id.
+        let operation_id = (u64::from(selium_abi::HOSTCALL_STATUS_FAILED) << 32) | 0x1234;
+        crate::platform::install_native_hostcall_script(crate::platform::NativeHostcallScript {
+            next_operation: Some(operation_id),
+            time: std::collections::VecDeque::from([
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(42)),
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(43)),
+            ]),
+            ..crate::platform::NativeHostcallScript::default()
+        });
+
+        assert_eq!(
+            hostcall_ready(HostcallRequest::TimeMonotonic).expect("poll the full-width operation"),
+            HostcallOutput::U64(42)
+        );
+        assert_eq!(
+            hostcall_ready_with_task(HostcallRequest::TimeMonotonic, 99)
+                .expect("the task-aware path also preserves the id"),
+            HostcallOutput::U64(43)
+        );
+        assert_eq!(
+            crate::platform::native_hostcall_drops(),
+            vec![operation_id, operation_id + 1]
+        );
+        assert_eq!(crate::platform::native_hostcall_live_operations(), 0);
+        crate::platform::clear_native_hostcall_script();
+    }
+
+    #[test]
+    fn asynchronous_create_preserves_the_u64_max_operation_id() {
+        crate::platform::install_native_hostcall_script(crate::platform::NativeHostcallScript {
+            next_operation: Some(u64::MAX),
+            time: std::collections::VecDeque::from([selium_abi::CompletionState::Ready(
+                HostcallOutput::U64(43),
+            )]),
+            ..crate::platform::NativeHostcallScript::default()
+        });
+        let mut future = hostcall_async(HostcallRequest::TimeMonotonic);
+        let waker = crate::async_runtime::test_task_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+
+        assert!(matches!(
+            std::pin::Pin::new(&mut future).poll(&mut context),
+            Poll::Ready(Ok(HostcallOutput::U64(43)))
+        ));
+        assert_eq!(crate::platform::native_hostcall_drops(), vec![u64::MAX]);
+        assert_eq!(crate::platform::native_hostcall_live_operations(), 0);
+        crate::platform::clear_native_hostcall_script();
+    }
+
+    #[test]
+    fn a_zero_create_result_reports_operation_exhaustion_without_polling() {
+        crate::platform::install_native_hostcall_script(crate::platform::NativeHostcallScript {
+            next_operation: Some(0),
+            time: std::collections::VecDeque::from([selium_abi::CompletionState::Ready(
+                HostcallOutput::U64(44),
+            )]),
+            ..crate::platform::NativeHostcallScript::default()
+        });
+
+        let error = hostcall_ready(HostcallRequest::TimeMonotonic)
+            .expect_err("zero is exhaustion, not an operation id");
+        assert_eq!(
+            error.abi_code(),
+            Some(selium_abi::AbiErrorCode::MalformedPayload)
+        );
+        assert!(matches!(
+            error,
+            GuestError::Hostcall {
+                code: selium_abi::AbiErrorCode::MalformedPayload,
+                ..
+            }
+        ));
+        assert!(crate::platform::native_hostcall_drops().is_empty());
+        assert_eq!(crate::platform::native_hostcall_live_operations(), 0);
+        crate::platform::clear_native_hostcall_script();
     }
 }

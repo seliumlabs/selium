@@ -272,6 +272,12 @@ impl MessageTransport for ShmTransport {
     fn region_id(&self) -> u64 {
         self.read_region_id()
     }
+
+    fn table_writer_arbiter(&self) -> Option<Arc<dyn selium_wire::TableWriterArbiter>> {
+        self.writer.as_ref().map(|writer| {
+            Arc::new(writer.region().clone()) as Arc<dyn selium_wire::TableWriterArbiter>
+        })
+    }
 }
 
 impl Reader {

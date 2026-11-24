@@ -40,13 +40,28 @@ pub fn build_connect_options(cli: &Cli) -> Result<ConnectOptions> {
         key: selium_client::private_key_from_pem(&key_pem)?,
     });
 
+    // The connector runs interpreted in a WASM guest, so a mutual-TLS
+    // handshake takes far longer than a native endpoint's. Size the transport
+    // for that: quinn's defaults would reap the connection mid-handshake as
+    // an idle timeout, which reads as "the control plane is down" to an
+    // operator. The initial RTT avoids the first PTO stalling the handshake.
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(quinn::IdleTimeout::from(quinn::VarInt::from(
+        CONNECTION_IDLE_TIMEOUT_MS,
+    ))));
+    transport.initial_rtt(std::time::Duration::from_millis(250));
+
     Ok(ConnectOptions {
         server_name: cli.server_name(),
         server_root,
         identity,
-        transport: None,
+        transport: Some(std::sync::Arc::new(transport)),
     })
 }
+
+/// Idle budget for one CLI connection, sized for the interpreted connector's
+/// handshake and for a control-plane reply that waits on guest scheduling.
+const CONNECTION_IDLE_TIMEOUT_MS: u32 = 300_000;
 
 /// Builds the typed control request for a parsed command.
 ///
@@ -234,6 +249,7 @@ mod tests {
         );
     }
 
+    // scenario: selium-cli/upload-stores-module-bytes/upload-stores-a-module
     #[test]
     fn upload_reads_module_bytes() {
         let file = temp_path("upload");
@@ -256,6 +272,7 @@ mod tests {
         std::fs::remove_file(file).unwrap();
     }
 
+    // scenario: selium-cli/upload-stores-module-bytes/upload-fails-on-an-unreadable-file
     #[test]
     #[expect(
         clippy::assertions_on_result_states,
@@ -282,6 +299,7 @@ mod tests {
         }
     }
 
+    // scenario: selium-cli/deploy-expresses-desired-state/deploy-is-accepted
     #[test]
     fn renders_deploy_accepted_as_success() {
         let command = Command::Deploy {
@@ -297,6 +315,7 @@ mod tests {
         );
     }
 
+    // scenario: selium-cli/scale-and-stop-maintain-desired-state/scale-changes-the-replica-count
     #[test]
     fn renders_scale_accepted_as_scaled() {
         let command = Command::Scale {
@@ -320,6 +339,7 @@ mod tests {
         assert_eq!(line, "workload api scaled to 5 replicas");
     }
 
+    // scenario: selium-cli/scale-and-stop-maintain-desired-state/stop-removes-a-workload
     #[test]
     fn renders_stop_accepted_as_stopped() {
         let command = Command::Stop {
@@ -330,6 +350,7 @@ mod tests {
         assert_eq!(line, "workload api stopped");
     }
 
+    // scenario: selium-cli/typed-failure-mapping/deferred-delegation-surfaces-as-failure
     #[test]
     fn renders_deferred_delegation_as_failure() {
         let command = Command::Deploy {
@@ -358,6 +379,7 @@ mod tests {
         assert_eq!(code, std::process::ExitCode::FAILURE);
     }
 
+    // scenario: selium-cli/typed-failure-mapping/typed-error-carries-step-and-context
     #[test]
     fn renders_typed_error_with_step_and_context() {
         let command = Command::Deploy {
@@ -392,6 +414,8 @@ mod tests {
         assert_eq!(line, "module stored under manifest api/v1");
     }
 
+    // scenario: selium-cli/status-reads-the-recorded-deployment/status-returns-the-recorded-deployment
+    // scenario: selium-cli/status-reads-the-recorded-deployment/status-reports-an-unknown-workload
     #[test]
     fn renders_status_recorded_and_not_found() {
         let command = Command::Status {
@@ -415,6 +439,7 @@ mod tests {
         assert_eq!(line, "not found");
     }
 
+    // scenario: selium-cli/resolve-queries-discovery/resolve-returns-a-target
     #[test]
     fn renders_resolved_target_and_not_found() {
         let command = Command::Resolve {
@@ -438,6 +463,8 @@ mod tests {
         assert_eq!(line, "not found");
     }
 
+    // scenario: selium-cli/bridge-derived-connection/tenant-drives-server-name-and-control-route
+    // scenario: selium-cli/bridge-derived-connection/client-identity-is-presented
     #[test]
     fn builds_connect_options_from_fixture_certificates() {
         let dir = concat!(

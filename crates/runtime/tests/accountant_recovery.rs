@@ -45,6 +45,8 @@ const DELINQUENT: &str = "acme";
 /// loaded runner only delays it.
 const RECOVERY_BOUND: Duration = Duration::from_secs(60);
 
+// scenario: selium-guest/durable-storage-handles/log-operations-served-by-the-store
+// scenario: guest-context/context-store-client/durable-log-through-the-context
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the discovery and accountant guests built for wasm32-unknown-unknown"]
 async fn accountant_ledger_survives_restart_and_reauthors_enforcement() {

@@ -52,6 +52,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
             ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
+            ),
         ],
         tenant: None,
         discovery_service: true,
@@ -59,6 +63,9 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
     }
 }
 
+// scenario: route-watch/registration-leases/lease-expiry-fires-on-the-timer-schedule
+// scenario: discovery-registration/lease-sweep-on-the-monotonic-timer/sweep-ticks-in-a-wasm32-guest
+// scenario: discovery-registration/lease-sweep-on-the-monotonic-timer/a-dead-sweep-is-observable
 #[test]
 #[ignore = "requires the discovery guest built for wasm32-unknown-unknown"]
 fn discovery_lease_sweep_ticks_on_its_timer() {

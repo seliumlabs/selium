@@ -34,6 +34,7 @@ mod spine_common;
 /// metadata — the deployment shape for user guests deliberately serving
 /// public, unauthorised endpoints. The identity-requiring bridge refuses the
 /// unauthenticated handoff: it can confer grants for no one.
+// scenario: quic-connector/authenticated-client-identity-on-handoff/handoff-without-mtls
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the discovery, connector and bridge guests built for wasm32-unknown-unknown"]
 async fn no_mtls_connector_serves_but_bridge_refuses_unauthenticated_handoffs() {

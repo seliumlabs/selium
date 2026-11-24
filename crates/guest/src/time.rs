@@ -97,17 +97,15 @@ impl Instant {
     /// Returns `Some(t)` where `t` is the time `self + duration`, or `None`
     /// if overflow occurred.
     pub fn checked_add(&self, duration: Duration) -> Option<Self> {
-        self.nanos
-            .checked_add(duration.as_nanos() as u64)
-            .map(|nanos| Self { nanos })
+        let nanos = u64::try_from(duration.as_nanos()).ok()?;
+        self.nanos.checked_add(nanos).map(|nanos| Self { nanos })
     }
 
     /// Returns `Some(t)` where `t` is the time `self - duration`, or `None`
     /// if underflow occurred.
     pub fn checked_sub(&self, duration: Duration) -> Option<Self> {
-        self.nanos
-            .checked_sub(duration.as_nanos() as u64)
-            .map(|nanos| Self { nanos })
+        let nanos = u64::try_from(duration.as_nanos()).ok()?;
+        self.nanos.checked_sub(nanos).map(|nanos| Self { nanos })
     }
 }
 
@@ -125,9 +123,8 @@ impl Add<Duration> for Instant {
 
 impl AddAssign<Duration> for Instant {
     fn add_assign(&mut self, rhs: Duration) {
-        self.nanos = self
-            .nanos
-            .checked_add(rhs.as_nanos() as u64)
+        *self = self
+            .checked_add(rhs)
             .expect("overflow when adding duration to instant");
     }
 }
@@ -185,38 +182,75 @@ impl std::fmt::Debug for Timer {
 }
 
 impl std::future::Future for Timer {
-    type Output = ();
+    type Output = Result<()>;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<()> {
-        let Ok(now) = Instant::now() else {
-            return std::task::Poll::Pending;
-        };
-        if now >= self.deadline {
-            self.sleep_future = None;
-            return std::task::Poll::Ready(());
-        }
-
-        if self.sleep_future.is_none() {
-            let remaining = self.deadline - now;
-            let millis = remaining.as_millis() as u64;
-            self.sleep_future = Some(hostcall_async(HostcallRequest::Sleep { millis }));
-        }
-
-        if let Some(ref mut fut) = self.sleep_future {
-            match std::pin::Pin::new(fut).poll(cx) {
-                std::task::Poll::Ready(_) => {
-                    self.sleep_future = None;
-                    std::task::Poll::Ready(())
-                }
-                std::task::Poll::Pending => std::task::Poll::Pending,
+    ) -> std::task::Poll<Result<()>> {
+        loop {
+            let now = match Instant::now() {
+                Ok(now) => now,
+                Err(error) => return std::task::Poll::Ready(Err(error)),
+            };
+            // Re-check on every poll, including after a sleep wake: a spurious
+            // or truncated wake must not complete the timer early.
+            if now >= self.deadline {
+                self.sleep_future = None;
+                return std::task::Poll::Ready(Ok(()));
             }
-        } else {
-            std::task::Poll::Pending
+
+            let slept = match self.sleep_future.as_mut() {
+                Some(future) => match std::pin::Pin::new(future).poll(cx) {
+                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                    std::task::Poll::Ready(result) => Some(result),
+                },
+                None => None,
+            };
+
+            match slept {
+                Some(Ok(_)) => {
+                    // The sleep returned; loop back and re-check the deadline.
+                    self.sleep_future = None;
+                }
+                Some(Err(error)) => {
+                    self.sleep_future = None;
+                    return std::task::Poll::Ready(Err(error));
+                }
+                None => {
+                    // A wake that returns before the deadline (a truncated or
+                    // spurious sleep) leaves a positive remainder, so the timer
+                    // asks again instead of reporting early completion.
+                    let Some(millis) = remaining_sleep(now, self.deadline) else {
+                        self.sleep_future = None;
+                        return std::task::Poll::Ready(Ok(()));
+                    };
+                    self.sleep_future = Some(hostcall_async(HostcallRequest::Sleep { millis }));
+                }
+            }
         }
     }
+}
+
+/// The sleep a timer must still request to reach `deadline` from `now`, or
+/// `None` when the deadline has been reached.
+///
+/// This is the at-or-after-deadline rule in one place: a wake that arrives
+/// early yields a positive duration (so the timer sleeps again), never an
+/// early completion.
+fn remaining_sleep(now: Instant, deadline: Instant) -> Option<u64> {
+    if now >= deadline {
+        return None;
+    }
+    Some(sleep_millis(deadline.saturating_duration_since(now)))
+}
+
+/// Converts a positive remaining duration to the sleep request's millisecond
+/// granularity, rounding up so the requested sleep cannot complete before the
+/// deadline.
+fn sleep_millis(remaining: Duration) -> u64 {
+    let millis = remaining.as_nanos().div_ceil(1_000_000);
+    u64::try_from(millis).unwrap_or(u64::MAX).max(1)
 }
 
 impl Drop for Timer {
@@ -254,6 +288,24 @@ mod tests {
     }
 
     #[test]
+    fn durations_above_u64_nanoseconds_never_truncate() {
+        let too_large = Duration::new(u64::MAX, 999_999_999);
+        assert!(too_large.as_nanos() > u128::from(u64::MAX));
+        let instant = Instant::from_nanos(7);
+        assert_eq!(instant.checked_add(too_large), None);
+        assert_eq!(instant.checked_sub(too_large), None);
+
+        let mut assigned = instant;
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                assigned += too_large;
+            }))
+            .is_err()
+        );
+        assert_eq!(assigned, instant);
+    }
+
+    #[test]
     fn instant_duration_since_normal_order() {
         let t0 = Instant::from_nanos(2_000_000);
         let t1 = Instant::from_nanos(1_000_000);
@@ -283,5 +335,128 @@ mod tests {
         assert!(b > a);
         assert!(a <= a);
         assert!(b >= b);
+    }
+
+    // scenario: channel-wake-wait/timer-completion-is-deadline-and-error-honest/sub-millisecond-remainder
+    #[test]
+    fn positive_sub_millisecond_remainders_round_up() {
+        assert_eq!(sleep_millis(Duration::from_nanos(1)), 1);
+        assert_eq!(sleep_millis(Duration::from_micros(999)), 1);
+        assert_eq!(sleep_millis(Duration::from_millis(1)), 1);
+        assert_eq!(sleep_millis(Duration::from_micros(1_500)), 2);
+    }
+
+    // scenario: channel-wake-wait/timer-completion-is-deadline-and-error-honest/spurious-early-wake
+    #[test]
+    fn a_spurious_early_wake_re_sleeps_for_the_remainder() {
+        let deadline = Instant::from_nanos(2_000_000);
+        assert_eq!(
+            remaining_sleep(Instant::from_nanos(1_000_000), deadline),
+            Some(1),
+            "a wake a millisecond early still has a remainder to sleep"
+        );
+        assert_eq!(
+            remaining_sleep(Instant::from_nanos(1_999_999), deadline),
+            Some(1),
+            "a sub-millisecond remainder rounds up so completion cannot be early"
+        );
+        assert_eq!(
+            remaining_sleep(deadline, deadline),
+            None,
+            "reaching the deadline completes the timer"
+        );
+        assert_eq!(
+            remaining_sleep(Instant::from_nanos(2_000_001), deadline),
+            None
+        );
+    }
+
+    #[test]
+    fn poll_level_early_sleep_wake_re_sleeps_until_the_deadline() {
+        let deadline = Instant::from_nanos(2_000_000);
+        crate::platform::install_native_hostcall_script(crate::platform::NativeHostcallScript {
+            time: std::collections::VecDeque::from([
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(0)),
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(0)),
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(0)),
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(0)),
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(0)),
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(deadline.as_nanos())),
+            ]),
+            sleep: std::collections::VecDeque::from([
+                std::collections::VecDeque::from([
+                    selium_abi::CompletionState::Pending { operation_id: 3 },
+                    selium_abi::CompletionState::Ready(HostcallOutput::U64(0)),
+                ]),
+                std::collections::VecDeque::from([selium_abi::CompletionState::Pending {
+                    operation_id: 8,
+                }]),
+            ]),
+            ..crate::platform::NativeHostcallScript::default()
+        });
+        let mut timer = Timer::new(deadline);
+        let waker = crate::async_runtime::test_task_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+        assert!(
+            std::pin::Pin::new(&mut timer)
+                .poll(&mut context)
+                .is_pending()
+        );
+        let second = std::pin::Pin::new(&mut timer).poll(&mut context);
+        assert!(
+            second.is_pending(),
+            "an early sleep completion must re-arm for the remaining deadline: {second:?}"
+        );
+        assert!(matches!(
+            std::pin::Pin::new(&mut timer).poll(&mut context),
+            std::task::Poll::Ready(Ok(()))
+        ));
+        assert_eq!(crate::platform::native_hostcall_live_operations(), 0);
+        crate::platform::clear_native_hostcall_script();
+    }
+
+    #[test]
+    fn a_real_sleep_hostcall_failure_is_returned_from_timer_poll() {
+        crate::platform::install_native_hostcall_script(crate::platform::NativeHostcallScript {
+            time: std::collections::VecDeque::from([
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(0)),
+                selium_abi::CompletionState::Ready(HostcallOutput::U64(0)),
+            ]),
+            sleep: std::collections::VecDeque::from([std::collections::VecDeque::from([
+                selium_abi::CompletionState::Failed(selium_abi::AbiError::new(
+                    selium_abi::AbiErrorCode::Internal,
+                    "sleep failed",
+                )),
+            ])]),
+            ..crate::platform::NativeHostcallScript::default()
+        });
+        let mut timer = Timer::new(Instant::MAX);
+        let waker = crate::async_runtime::test_task_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+        let error = match std::pin::Pin::new(&mut timer).poll(&mut context) {
+            std::task::Poll::Ready(Err(error)) => error,
+            other => panic!("expected a real sleep failure, got {other:?}"),
+        };
+        assert_eq!(
+            error.abi_code(),
+            Some(selium_abi::AbiErrorCode::Internal),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(crate::platform::native_hostcall_live_operations(), 0);
+        crate::platform::clear_native_hostcall_script();
+    }
+
+    // scenario: channel-wake-wait/timer-completion-is-deadline-and-error-honest/sleep-hostcall-fails
+    #[test]
+    fn timer_propagates_a_sleep_failure_instead_of_pending_forever() {
+        // On the native test target the clock hostcall has no host, so the
+        // timer must surface that failure rather than park the task.
+        let mut timer = Timer::new(Instant::MAX);
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        match std::pin::Pin::new(&mut timer).poll(&mut context) {
+            std::task::Poll::Ready(Err(_)) => {}
+            other => panic!("expected a surfaced clock failure, got {other:?}"),
+        }
     }
 }

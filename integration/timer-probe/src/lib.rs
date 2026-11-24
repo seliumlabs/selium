@@ -25,7 +25,7 @@ async fn timer_probe() -> Result<()> {
     let deadline = start
         .checked_add(std::time::Duration::from_nanos(PROBE_NANOS))
         .ok_or_else(|| anyhow::anyhow!("timer-probe: deadline overflow"))?;
-    Timer::new(deadline).await;
+    Timer::new(deadline).await?;
 
     // Logged only after the deadline: a host that polls the guest would also
     // get here, so the test asserts the *wake latency* as well (see the test).

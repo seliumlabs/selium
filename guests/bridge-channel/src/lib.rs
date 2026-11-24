@@ -916,6 +916,8 @@ mod tests {
 
     /// 5.1/5.3 + 5.5: full handshake, resolve-and-attach, tagged frame
     /// round-trip, and client-FIN teardown of the whole pipe.
+    // scenario: guest-bridge/discovery-resolved-channel-binding/uri-resolves-to-a-channel-within-the-tenant
+    // scenario: guest-bridge/self-cleaning-pipe-teardown/client-disconnects
     #[tokio::test]
     async fn splice_preserves_tags_and_client_fin_tears_down() {
         setup();
@@ -978,6 +980,8 @@ mod tests {
     }
 
     /// 5.4: a denied/broken resolve yields a typed termination frame.
+    // scenario: guest-bridge/bridge-enforces-capability-grants/bridge-attempts-to-attach-to-unauthorised-channel
+    // scenario: guest-bridge/typed-pipe-handshake/pipe-instantiation-fails
     #[tokio::test]
     async fn denied_attach_sends_termination_frame() {
         setup();
@@ -1078,6 +1082,7 @@ mod tests {
     /// closes (all inner writers gone), the bridge-channel finishes the
     /// client's stream and the whole pipe terminates — the client peer
     /// observes the final frame followed by EOF, not a hang.
+    // scenario: guest-bridge/self-cleaning-pipe-teardown/fabric-channel-closes
     #[tokio::test]
     async fn fabric_close_finishes_client_stream_and_tears_down() {
         setup();
@@ -1177,6 +1182,7 @@ mod tests {
     /// The handshake is deterministic: a successful resolve/attach replies
     /// with a typed accepted control frame before the relay begins, so an
     /// external client can surface handshake failures at channel open.
+    // scenario: guest-bridge/typed-pipe-handshake/client-opens-a-pipe
     #[tokio::test]
     async fn successful_handshake_replies_accepted_frame() {
         setup();
@@ -1266,6 +1272,7 @@ mod tests {
     /// fabric membership — inner guests observe `writer_count == 0` — while a
     /// sibling pipe on another fabric channel is unaffected and keeps
     /// relaying.
+    // scenario: guest-bridge/bridge-failure-isolation/bridge-crashes
     #[tokio::test]
     async fn killing_bridge_pipe_mid_stream_is_isolated_from_siblings() {
         setup();
@@ -1437,6 +1444,10 @@ mod tests {
     /// rendezvous — the pipe allocates the session region, enqueues it into
     /// the served queue, and relays a correlated typed request/reply
     /// between the stream and the serving guest's `rpc::accept` session.
+    // scenario: guest-bridge/transparent-frame-proxy/rpc-correlation-preserved-through-bridge
+    // scenario: guest-bridge/discovery-resolved-channel-binding/uri-resolves-to-a-served-host-queue
+    // scenario: guest-bridge/host-queue-rpc-rendezvous/external-rpc-client-reaches-a-served-host-queue
+    // scenario: guest-bridge/host-queue-rpc-rendezvous/session-ends-with-the-client
     #[tokio::test]
     async fn rendezvous_round_trips_typed_rpc_frames_and_frees_session() {
         setup();
@@ -1655,6 +1666,7 @@ mod tests {
         );
     }
 
+    // scenario: guest-bridge/bridge-sessions-share-peer-lifecycle-semantics/serving-guest-accepts-and-closes-immediately
     /// A serving guest that accepts and immediately closes (no reply) must
     /// finish the client's stream: acceptance and withdrawal are both
     /// observable even though they land before the pumps' first poll.
@@ -1792,6 +1804,7 @@ mod tests {
         );
     }
 
+    // scenario: guest-bridge/bridge-sessions-share-peer-lifecycle-semantics/serving-guest-speaks-before-any-request
     /// A serving guest that speaks before the client sends anything must have
     /// its frames relayed: the reply direction may not wait for a request.
     #[tokio::test]
@@ -1857,6 +1870,7 @@ mod tests {
             .expect("guest task succeeds");
     }
 
+    // scenario: guest-bridge/bridge-sessions-share-peer-lifecycle-semantics/client-finishes-before-acceptance
     /// A client that finishes before the serving guest accepts must cancel the
     /// session: the pipe tears down and frees the region instead of waiting
     /// for an acceptance that may never come.
@@ -1958,6 +1972,7 @@ mod tests {
             .expect("guest task succeeds");
     }
 
+    // scenario: guest-bridge/control-reply-delivery-precedes-relay/acceptance-write-fails
     /// An acceptance control frame that cannot be written (the client-facing
     /// ring is too small for it) must skip the relay and reclaim the session.
     #[tokio::test]
@@ -2014,6 +2029,7 @@ mod tests {
         );
     }
 
+    // scenario: guest-bridge/control-reply-delivery-precedes-relay/acceptance-is-backpressured
     /// A backpressured acceptance frame parks until the client-facing ring has
     /// room, then completes before any application frame is relayed.
     #[tokio::test]
@@ -2119,8 +2135,3 @@ mod tests {
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: guest-bridge/control-reply-delivery-precedes-relay/acceptance-write-fails
-// scenario: guest-bridge/control-reply-delivery-precedes-relay/acceptance-is-backpressured
-// scenario: guest-bridge/bridge-sessions-share-peer-lifecycle-semantics/serving-guest-accepts-and-closes-immediately
-// scenario: guest-bridge/bridge-sessions-share-peer-lifecycle-semantics/serving-guest-speaks-before-any-request
-// scenario: guest-bridge/bridge-sessions-share-peer-lifecycle-semantics/client-finishes-before-acceptance

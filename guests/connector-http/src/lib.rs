@@ -109,8 +109,13 @@ unsafe extern "Rust" fn __getrandom_v03_custom(
 /// Each accepted connection is handled by its own task: TLS handshake, then
 /// the windowed forwarding pipeline. Connections are served concurrently;
 /// one slow (or parked-on-backpressure) connection never blocks the others.
+/// The listener used when no address is supplied at bootstrap. Port 443 is
+/// the conventional HTTPS port; a deployment that cannot bind a privileged
+/// port supplies an explicit address instead (pointer entrypoint argument).
+const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:443";
+
 #[entrypoint]
-async fn connector_http(mut ctx: Context) -> anyhow::Result<()> {
+async fn connector_http(mut ctx: Context, listen_addr: (u64, u64)) -> anyhow::Result<()> {
     // On wasm32 the host provides randomness and time through hostcalls;
     // register both backends before any TLS operation touches `ring`/
     // `getrandom` or `rustls-pki-types`/`web-time`.
@@ -140,9 +145,13 @@ async fn connector_http(mut ctx: Context) -> anyhow::Result<()> {
     )?;
     info!("http-connector: TLS configured");
 
-    let listener =
-        TcpListener::bind("0.0.0.0:443").with_context(|| "http-connector: bind failed")?;
-    info!("http-connector: bound to 0.0.0.0:443");
+    // SAFETY: the runtime wrote the listen address into this guest's linear
+    // memory for this entrypoint invocation.
+    let listen_addr = unsafe { selium_guest::args::str(listen_addr.0, listen_addr.1) }
+        .unwrap_or(DEFAULT_LISTEN_ADDR);
+    let listener = TcpListener::bind(listen_addr)
+        .with_context(|| format!("http-connector: bind {listen_addr} failed"))?;
+    info!("http-connector: bound to {listen_addr}");
 
     // Fetch the advisory domain table once, so Host resolution can project
     // wire names onto the tenant tree locally before the discovery lookup.
@@ -278,12 +287,3 @@ async fn load_tls_config(ctx: &mut Context) -> Result<Arc<rustls::ServerConfig>,
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `connector-channel-forwarding` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: connector-channel-forwarding/route-resolution-to-typed-session/forwarded-request-reaches-registered-guest
-// scenario: connector-channel-forwarding/route-resolution-to-typed-session/session-establishment-contacts-only-the-resolved-guest
-// scenario: connector-channel-forwarding/per-connection-region-lifecycle/distinct-regions-per-external-connection
-// scenario: connector-channel-forwarding/per-connection-region-lifecycle/reclamation-on-disconnect
-// scenario: connector-channel-forwarding/per-connection-region-lifecycle/reclamation-on-serving-guest-close
-// scenario: connector-channel-forwarding/queue-derived-receiver-rights/zero-grant-serving-guest-attaches-session-region
-// scenario: connector-channel-forwarding/queue-derived-receiver-rights/third-party-cannot-claim-handoff-rights
-// scenario: connector-channel-forwarding/stale-route-failure-semantics/revoked-route-fails-loudly
-// scenario: connector-channel-forwarding/stale-route-failure-semantics/failed-forward-does-not-poison-the-connector

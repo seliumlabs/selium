@@ -21,10 +21,14 @@
 
 use selium_guest::{entrypoint, spawn};
 
-/// Iterations per CPU-bound task: long enough to be measured in wall time
-/// (two tasks must complete faster on two workers than one), short enough to
-/// keep the test fast.
-const ITERATIONS: u64 = 1 << 26;
+/// Iterations per CPU-bound task. The end-to-end test asserts a clean exit
+/// and no trap (the wall-clock concurrency factor is asserted deterministically
+/// by the native wat fixture), so the loop only has to be real work that
+/// cannot be folded away. The guest is interpreted on a shared host: `1 << 26`
+/// took tens of minutes per phase and made the lane a timeout, and even
+/// `1 << 22` exceeded it. `1 << 16` keeps the loop-carried dependency intact
+/// and finishes in well under a minute.
+const ITERATIONS: u64 = 1 << 16;
 
 /// A CPU-bound task: `iterations` updates of a task-local accumulator. The
 /// loop-carried dependency (a multiply-add chain) cannot be folded into a

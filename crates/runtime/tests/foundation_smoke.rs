@@ -4,6 +4,9 @@ use selium_abi::{
 };
 use selium_runtime::{Runtime, RuntimeConfig, SystemGuestDescriptor};
 
+// scenario: capability-enforcement/owner-scoped-resource-handoff/owner-authorises-attach
+// scenario: capability-enforcement/ownership-checked-attach/owner-authorisation-admits-a-peer
+// scenario: selium-abi/owner-scoped-attach-authorisation/owner-authorises-a-peer
 /// The push form of owner-scoped handoff: the owner authorises exactly one
 /// client process, that client's attach succeeds on that basis alone, and no
 /// other process gains one.
@@ -101,9 +104,13 @@ fn an_owner_push_authorisation_admits_exactly_the_named_peer() {
         "an authorisation names one peer; nobody else gains a basis"
     );
 }
+// scenario: guest-networking/guest-tcp-listener/each-connection-is-a-hot-attached-region
 
 /// Task 4.2 & 3.1: Concurrent connections use distinct regions; all reclaim
 /// on disconnect.
+// scenario: connector-channel-forwarding/per-connection-region-lifecycle/distinct-regions-per-external-connection
+// scenario: connector-channel-forwarding/per-connection-region-lifecycle/reclamation-on-disconnect
+// scenario: selium-kernel/host-queue-primitives/runtime-sends-value-to-queue
 #[test]
 fn concurrent_connections_use_distinct_regions() {
     let runtime = Runtime::default();
@@ -338,6 +345,7 @@ fn foundation_crates_work_together_through_hostcalls() {
     assert!(allocation.region_id > 0);
 }
 
+// scenario: selium-runtime/shared-memory-hostcall-passthrough/unauthorised-region-allocation-denied
 #[test]
 fn hostcalls_enforce_session_grants() {
     let runtime = Runtime::default();
@@ -423,11 +431,15 @@ fn owner_declares_and_records_resolve(
         "a resolve recording under a live declaration must be accepted"
     );
 }
+// scenario: capability-enforcement/owner-scoped-resource-handoff/role-confers-nothing
+// scenario: selium-abi/owner-scoped-attach-authorisation/non-owner-caller-is-denied
+// scenario: selium-abi/owner-declared-resolvable-attach/declaration-scope-enforced
 
 /// Attach authority flows from ownership and owner declarations only: a
 /// process that neither owns the resource nor holds an explicit capability
 /// cannot authorise or declare it, an undeclared resource refuses a resolve
 /// recording, and a declaration's scope bounds who a recording admits.
+// scenario: selium-abi/owner-scoped-attach-authorisation/no-privileged-guest-identity
 #[test]
 fn owner_scoped_attach_authorisation() {
     let runtime = Runtime::default();
@@ -585,6 +597,8 @@ fn owner_scoped_attach_authorisation() {
         CompletionState::Ready(_)
     ));
 }
+// scenario: resource-handshake/queue-attach-authorisation/discovery-resolved-attach-permitted
+// scenario: resource-handshake/queue-attach-authorisation/owner-attach-always-permitted
 
 #[test]
 fn resolve_basis_allows_foreign_queue_attach() {
@@ -900,6 +914,9 @@ fn spawn_guest(
         .expect("bootstrap guest");
     report.guests[0].process_id
 }
+// scenario: resource-handshake/host-mediated-connection-queue-resourcesender-resourcelistener/client-sends-connection-request-via-resourcesender
+// scenario: resource-handshake/host-mediated-connection-queue-resourcesender-resourcelistener/server-accepts-connection-via-resourcelistener
+// scenario: resource-handshake/queue-attach-authorisation/ungranted-attach-denied
 
 /// Task 4.1: Zero-grant app guest round-trip.
 ///

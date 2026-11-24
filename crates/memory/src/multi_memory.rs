@@ -37,7 +37,7 @@ pub struct MultiMemoryEntry {
 }
 
 /// Parsed multi-memory region header.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiMemoryHeader {
     /// Total region capacity.
     pub capacity: u64,
@@ -59,6 +59,24 @@ impl MultiMemoryHeader {
         entries: [(u64, u64); 2],
     ) -> Result<()> {
         let off = base_offset;
+        let table_len = HEADER_ENTRY_OFFSET
+            .checked_add(2 * HEADER_ENTRY_SIZE)
+            .ok_or(MemoryError::InvalidLayout)?;
+        if capacity < table_len {
+            return Err(MemoryError::InvalidLayout);
+        }
+        for (entry_offset, entry_length) in entries {
+            let end = entry_offset
+                .checked_add(entry_length)
+                .ok_or(MemoryError::InvalidLayout)?;
+            if entry_offset < table_len || end > capacity {
+                return Err(MemoryError::InvalidLayout);
+            }
+            // Entries are stored as `u32` offset/length pairs; refuse silent
+            // truncation of a caller-supplied geometry.
+            u32::try_from(entry_offset).map_err(|_error| MemoryError::InvalidLayout)?;
+            u32::try_from(entry_length).map_err(|_error| MemoryError::InvalidLayout)?;
+        }
         backend.write(off, &SHARED_REGION_MAGIC.to_le_bytes())?;
         backend.write(off + HEADER_CAPACITY_OFFSET, &capacity.to_le_bytes())?;
         backend.write(off + HEADER_COUNT_OFFSET, &2u32.to_le_bytes())?;
@@ -72,10 +90,21 @@ impl MultiMemoryHeader {
 
     /// Parses a multi-memory header from the given backend at offset 0.
     ///
-    /// Validates the magic constant and entry count. Returns an error for
-    /// invalid magic or malformed entries.
+    /// Validates the magic constant, bounds the entry count by the containing
+    /// mapping, and validates the capacity and every entry range (including
+    /// overlap with the header table and with other entries) before allocating
+    /// the parsed entry table. Malformed input returns [`MemoryError::InvalidLayout`]
+    /// without allocating from an untrusted count.
     pub fn parse(backend: &dyn MappingBackend, base_offset: u64) -> Result<Self> {
         let off = base_offset;
+        let mapping_size = backend.size();
+
+        let header_end = off
+            .checked_add(HEADER_ENTRY_OFFSET)
+            .ok_or(MemoryError::InvalidLayout)?;
+        if header_end > mapping_size {
+            return Err(MemoryError::InvalidLayout);
+        }
 
         let magic_bytes = backend.read(off, 8)?;
         let magic = u64::from_le_bytes(
@@ -101,25 +130,72 @@ impl MultiMemoryHeader {
                 .map_err(|_invalid_layout| MemoryError::InvalidLayout)?,
         );
 
-        let mut entries = Vec::with_capacity(count as usize);
+        // Bound the declared count by the bytes actually present in the
+        // mapping. This check happens before any allocation proportional to
+        // `count`, so a hostile count cannot request a huge allocation.
+        let available = mapping_size - header_end;
+        let max_entries = available / HEADER_ENTRY_SIZE;
+        if u64::from(count) > max_entries {
+            return Err(MemoryError::InvalidLayout);
+        }
+
+        let table_len = HEADER_ENTRY_OFFSET
+            .checked_add(u64::from(count) * HEADER_ENTRY_SIZE)
+            .ok_or(MemoryError::InvalidLayout)?;
+        let usable = mapping_size - off;
+        if capacity < table_len || capacity > usable {
+            return Err(MemoryError::InvalidLayout);
+        }
+
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(count as usize)
+            .map_err(|_error| MemoryError::InvalidLayout)?;
+
         for i in 0..count {
-            let entry_off = off + HEADER_ENTRY_OFFSET + (i as u64) * HEADER_ENTRY_SIZE;
+            let entry_off = off
+                .checked_add(HEADER_ENTRY_OFFSET)
+                .and_then(|value| value.checked_add(u64::from(i) * HEADER_ENTRY_SIZE))
+                .ok_or(MemoryError::InvalidLayout)?;
             let offset_bytes = backend.read(entry_off, 4)?;
             let length_bytes = backend.read(entry_off + 4, 4)?;
-            let entry_offset = u32::from_le_bytes(
+            let entry_offset = u64::from(u32::from_le_bytes(
                 offset_bytes
                     .try_into()
                     .map_err(|_invalid_layout| MemoryError::InvalidLayout)?,
-            ) as u64;
-            let entry_length = u32::from_le_bytes(
+            ));
+            let entry_length = u64::from(u32::from_le_bytes(
                 length_bytes
                     .try_into()
                     .map_err(|_invalid_layout| MemoryError::InvalidLayout)?,
-            ) as u64;
+            ));
+            let end = entry_offset
+                .checked_add(entry_length)
+                .ok_or(MemoryError::InvalidLayout)?;
+            // Entries are relative to `base_offset`; they must follow the
+            // header table and fit within the declared capacity.
+            if entry_offset < table_len || end > capacity {
+                return Err(MemoryError::InvalidLayout);
+            }
             entries.push(MultiMemoryEntry {
                 offset: entry_offset,
                 length: entry_length,
             });
+        }
+
+        // Overlapping sub-memories would alias unrelated ring state.
+        let mut spans: Vec<(u64, u64)> = entries
+            .iter()
+            .filter(|entry| entry.length > 0)
+            .map(|entry| (entry.offset, entry.offset + entry.length))
+            .collect();
+        spans.sort_unstable_by_key(|span| span.0);
+        for pair in spans.windows(2) {
+            if let [first, second] = pair
+                && first.1 > second.0
+            {
+                return Err(MemoryError::InvalidLayout);
+            }
         }
 
         Ok(Self {
@@ -162,6 +238,7 @@ mod tests {
         assert_eq!(header.entries[1].length, 2048);
     }
 
+    // scenario: ring-protocol-core/single-ring-protocol-definition/multi-memory-header-parsed-identically
     #[test]
     #[expect(
         clippy::assertions_on_result_states,
@@ -177,11 +254,136 @@ mod tests {
     fn write_and_parse_at_offset() {
         let b = backend(8192);
         let base = 4096u64;
-        let entries = [(128u64, 2048u64), (2176u64, 2048u64)];
+        let entries = [(128u64, 1024u64), (2048u64, 1024u64)];
         MultiMemoryHeader::write_two_entries(&b, base, 4096, entries).expect("write");
 
         let header = MultiMemoryHeader::parse(&b, base).expect("parse");
         assert_eq!(header.entries[0].offset, 128);
-        assert_eq!(header.entries[1].offset, 2176);
+        assert_eq!(header.entries[1].offset, 2048);
+    }
+
+    /// Writes a header with an arbitrary (possibly hostile) count/entry table.
+    fn write_raw_header(
+        b: &dyn crate::MappingBackend,
+        capacity: u64,
+        count: u32,
+        entries: &[(u32, u32)],
+    ) {
+        b.write(0, &SHARED_REGION_MAGIC.to_le_bytes())
+            .expect("write magic");
+        b.write(HEADER_CAPACITY_OFFSET, &capacity.to_le_bytes())
+            .expect("write capacity");
+        b.write(HEADER_COUNT_OFFSET, &count.to_le_bytes())
+            .expect("write count");
+        for (i, (offset, length)) in entries.iter().enumerate() {
+            let entry_off = HEADER_ENTRY_OFFSET + (i as u64) * HEADER_ENTRY_SIZE;
+            b.write(entry_off, &offset.to_le_bytes())
+                .expect("write entry offset");
+            b.write(entry_off + 4, &length.to_le_bytes())
+                .expect("write entry length");
+        }
+    }
+
+    // scenario: guest-shared-memory/multi-memory-layout-is-validated-before-allocation/hostile-entry-count
+    #[test]
+    fn parse_rejects_hostile_entry_count_without_allocating_from_it() {
+        let b = backend(64);
+        write_raw_header(&b, 64, u32::MAX, &[]);
+        assert_eq!(
+            MultiMemoryHeader::parse(&b, 0),
+            Err(MemoryError::InvalidLayout)
+        );
+    }
+
+    #[test]
+    fn parse_rejects_entry_table_larger_than_mapping() {
+        // A 64-byte mapping can hold at most (64 - 24) / 8 = 5 entries.
+        let b = backend(64);
+        write_raw_header(&b, 64, 6, &[]);
+        assert_eq!(
+            MultiMemoryHeader::parse(&b, 0),
+            Err(MemoryError::InvalidLayout)
+        );
+    }
+
+    #[test]
+    fn parse_rejects_capacity_beyond_mapping() {
+        let b = backend(4096);
+        write_raw_header(&b, u64::MAX, 0, &[]);
+        assert_eq!(
+            MultiMemoryHeader::parse(&b, 0),
+            Err(MemoryError::InvalidLayout)
+        );
+    }
+
+    // scenario: guest-shared-memory/multi-memory-layout-is-validated-before-allocation/invalid-entry-geometry
+    #[test]
+    fn parse_rejects_entry_out_of_range() {
+        let b = backend(8192);
+        write_raw_header(&b, 4096, 2, &[(128, 1024), (3000, 2000)]);
+        assert_eq!(
+            MultiMemoryHeader::parse(&b, 0),
+            Err(MemoryError::InvalidLayout)
+        );
+    }
+
+    #[test]
+    fn parse_rejects_entry_overlapping_header() {
+        let b = backend(8192);
+        write_raw_header(&b, 4096, 2, &[(0, 1024), (2048, 1024)]);
+        assert_eq!(
+            MultiMemoryHeader::parse(&b, 0),
+            Err(MemoryError::InvalidLayout)
+        );
+    }
+
+    #[test]
+    fn parse_rejects_overlapping_entries() {
+        let b = backend(8192);
+        write_raw_header(&b, 4096, 2, &[(128, 1024), (512, 1024)]);
+        assert_eq!(
+            MultiMemoryHeader::parse(&b, 0),
+            Err(MemoryError::InvalidLayout)
+        );
+    }
+
+    #[test]
+    fn parse_rejects_overflowing_entry_range() {
+        let b = backend(8192);
+        write_raw_header(&b, 8192, 1, &[(u32::MAX, u32::MAX)]);
+        assert_eq!(
+            MultiMemoryHeader::parse(&b, 0),
+            Err(MemoryError::InvalidLayout)
+        );
+    }
+
+    #[test]
+    fn parse_accepts_adjacent_and_zero_length_entries() {
+        let b = backend(8192);
+        write_raw_header(&b, 4096, 3, &[(128, 1024), (1152, 1024), (3000, 0)]);
+        let header = MultiMemoryHeader::parse(&b, 0).expect("adjacent entries are valid");
+        assert_eq!(header.entries.len(), 3);
+    }
+
+    #[test]
+    fn write_rejects_entry_geometry_that_would_truncate_or_overflow() {
+        let b = backend(8192);
+        assert_eq!(
+            MultiMemoryHeader::write_two_entries(
+                &b,
+                0,
+                4096,
+                [(u64::from(u32::MAX) + 1, 8), (128, 1024)],
+            ),
+            Err(MemoryError::InvalidLayout)
+        );
+        assert_eq!(
+            MultiMemoryHeader::write_two_entries(&b, 0, 4096, [(128, 4096), (4096, 0)]),
+            Err(MemoryError::InvalidLayout)
+        );
+        assert_eq!(
+            MultiMemoryHeader::write_two_entries(&b, 0, 4096, [(0, 128), (128, 128)]),
+            Err(MemoryError::InvalidLayout)
+        );
     }
 }

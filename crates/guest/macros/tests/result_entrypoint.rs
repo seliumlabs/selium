@@ -4,6 +4,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[error("{0}")]
 struct TestError(String);
+// scenario: selium-guest-macros/guest-entrypoint-macro/macro-generated-entrypoint-glue-returns-i32-for-result
+// scenario: selium-guest-macros/result-entrypoint-error-type-validation/thiserror-derived-error-type-accepted
 
 #[test]
 fn entrypoint_with_result_generates_metadata_and_returns_i32() {

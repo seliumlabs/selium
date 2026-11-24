@@ -27,7 +27,6 @@
 //! This rule is documented in `AGENTS.md` and asserted in debug builds via
 //! `layout::reserve_tail` when a domain tag is available.
 
-use selium_memory::Region;
 use selium_wire::error::Error;
 
 pub use channels::{Channel, ChannelBackpressure, WeakReader};
@@ -60,28 +59,6 @@ pub fn free_region(region_id: u64) -> Result<(), Error> {
         .map_err(Error::from)
 }
 
-/// Allocates a shared memory region via the global provider.
-pub(crate) fn allocate_region(
-    pages: u32,
-    prot: selium_abi::RegionProt,
-    purpose: selium_abi::ResourceKind,
-) -> Result<Region, Error> {
-    selium_memory::region_provider()?
-        .allocate(pages, prot, purpose)
-        .map_err(Error::from)
-}
-
-/// Attaches to an existing shared memory region via the global provider.
-pub(crate) fn attach_region(
-    region_id: u64,
-    reader_slot: Option<u32>,
-    prot: selium_abi::RegionProt,
-) -> Result<Region, Error> {
-    selium_memory::region_provider()?
-        .attach(region_id, reader_slot, prot)
-        .map_err(Error::from)
-}
-
 /// Ensures a heap provider is installed when running under `cfg(test)`.
 #[cfg(test)]
 pub(crate) fn ensure_heap_provider() {
@@ -101,7 +78,3 @@ pub(crate) fn install_heap_provider() {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-shm` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-shm/reader-writer-wait-semantics/pending-implies-registered
-// scenario: selium-shm/reader-writer-wait-semantics/disconnect-is-observable
-// scenario: selium-shm/layout-plumbing-separation/layout-usable-without-a-provider
-// scenario: selium-shm/layout-plumbing-separation/public-api-stability

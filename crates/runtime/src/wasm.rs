@@ -67,12 +67,38 @@ pub(crate) fn read_guest_memory(
     len: usize,
 ) -> wasmtiny::runtime::Result<Vec<u8>> {
     let memory = guest_memory(caller)?;
-    let mut bytes = vec![0; len];
-    memory
+    let guard = memory
         .lock()
-        .map_err(|_lock_err| WasmError::Runtime("guest memory lock poisoned".to_string()))?
-        .read(ptr, &mut bytes)?;
+        .map_err(|_lock_err| WasmError::Runtime("guest memory lock poisoned".to_string()))?;
+    // Validate the declared range against the guest's addressable memory
+    // before allocating the destination buffer, so a hostile length cannot
+    // request an allocation for a range that cannot exist.
+    let limit = guest_memory_limit(&guard);
+    let end = (ptr as usize)
+        .checked_add(len)
+        .ok_or_else(|| WasmError::Runtime("guest memory range overflows".to_string()))?;
+    if end > limit {
+        return Err(WasmError::Runtime(
+            "guest memory range is outside the guest address space".to_string(),
+        ));
+    }
+    let mut bytes = vec![0; len];
+    guard.read(ptr, &mut bytes)?;
     Ok(bytes)
+}
+
+/// Returns the highest address the guest can access through owned pages or a
+/// live shared range. This is an upper bound used before allocation; the
+/// memory backend still performs the exact per-range check.
+fn guest_memory_limit(memory: &wasmtiny::runtime::Memory) -> usize {
+    let owned = memory.len_bytes();
+    let shared = memory
+        .shared_ranges()
+        .iter()
+        .map(|range| range.page_offset as usize * WASM_PAGE_SIZE as usize + range.len as usize)
+        .max()
+        .unwrap_or(0);
+    owned.max(shared)
 }
 
 pub(crate) fn register_optional_host_function(
@@ -199,6 +225,8 @@ mod tests {
         (app, index)
     }
 
+    // scenario: selium-runtime/entrypoint-argument-injection/integer-argument-encoded-as-i64
+    // scenario: selium-runtime/discovery-enabled-bootstrap/discovery-wiring-uses-tagged-argument-encoding
     #[test]
     fn integer_arguments_encode_as_i64_slots() {
         let (mut app, index) = load_module("1");
@@ -222,6 +250,8 @@ mod tests {
         );
     }
 
+    // scenario: selium-runtime/entrypoint-argument-injection/pointer-argument-bytes-injected-into-guest-memory
+    // scenario: selium-runtime/entrypoint-argument-injection/pointer-argument-layout-is-declaration-ordered
     #[test]
     fn pointer_argument_bytes_land_in_guest_memory() {
         let (mut app, index) = load_module("1");
@@ -265,6 +295,7 @@ mod tests {
         assert_eq!(values[1], WasmValue::I64(0));
     }
 
+    // scenario: selium-runtime/entrypoint-argument-injection/oversized-pointer-payload-rejected
     #[test]
     fn oversized_pointer_payload_fails_instead_of_truncating() {
         // The module caps its memory at one page, so a payload requiring a

@@ -184,8 +184,7 @@ impl HttpServe {
     /// A guest running in the root/system tenant (an empty tenant label)
     /// additionally requires a host-issued route claim to serve.
     pub async fn bind(ctx: &mut Context, path: &str) -> Result<Self, GuestError> {
-        let mut listener = ResourceListener::create()
-            .map_err(|e| GuestError::Host(format!("create listener: {e}")))?;
+        let mut listener = ResourceListener::create()?;
         super::pin_to_scheme_handler(ctx, &mut listener, HTTP_SCHEME).await?;
 
         let target = http_target(&listener, None);
@@ -287,8 +286,7 @@ impl HttpServeStream {
     /// tenant; see [`HttpServe::bind`] for the derived names and the
     /// capability model.
     pub async fn bind(ctx: &mut Context, path: &str) -> Result<Self, GuestError> {
-        let mut listener = ResourceListener::create()
-            .map_err(|e| GuestError::Host(format!("create listener: {e}")))?;
+        let mut listener = ResourceListener::create()?;
         super::pin_to_scheme_handler(ctx, &mut listener, HTTP_SCHEME).await?;
 
         let target = http_target(

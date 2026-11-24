@@ -12,7 +12,7 @@ Expose Selium's low-level host primitives for shared memory, network, storage, p
 - **THEN** both guests SHALL be able to access the region according to the runtime memory model
 
 ### Requirement: Protocol-Neutral Network Primitives
-`selium-kernel` SHALL expose a `NetworkState` sub-struct that tracks metadata for network resources (listeners, streams, sockets). The kernel SHALL NOT spawn I/O threads, perform socket I/O, or own live OS socket handles. Network I/O is the responsibility of `selium-runtime`.
+`selium-kernel` SHALL expose a `NetworkState` sub-struct that tracks lifecycle metadata and running flags for network resources and owns the listener handles needed for lifecycle inspection. Socket readiness and stream proxying SHALL use the kernel's mio poller and runtime-owned proxy threads rather than Tokio socket tasks.
 
 #### Scenario: Kernel tracks listener metadata
 - **WHEN** the runtime creates a TCP listener
@@ -86,7 +86,7 @@ kernel.
 - `MemoryRegistry` — shared memory regions, mappings, Store
 - `ProcessTable` — process lifecycle, activity log, guest logs, metering
 - `VolumeRegistry` — durable volume containers
-- `NetworkState` — network resource metadata (no I/O)
+- `NetworkState` — network lifecycle metadata, running flags, and listener handles
 - `HostQueueRegistry` — host-mediated connection queues
 
 #### Scenario: Sub-structs are independently usable
@@ -108,7 +108,7 @@ kernel.
 `selium-kernel` shared memory regions SHALL support a layout header (magic, capacity, memory count, per-memory offset/length pairs) so that multiple parties can discover sub-memories after attaching via `shared_id`. Each sub-memory SHALL use the standard ring buffer coordination layout with generation counter, `next_tail`, `writer_count`, and `reader_slots` in page 0.
 
 #### Scenario: Two guests attach the same region and agree on layout
-- **WHEN** a guest seals a region built with `SharedRegionBuilder` and another guest attaches the same `shared_id`
+- **WHEN** a guest constructs a region through the shared multi-memory layout API and another guest attaches the same `shared_id`
 - **THEN** both parties SHALL read the identical layout header and enumerate the same sub-memories, each with the standard coordination fields
 
 ### Requirement: Per-Connection RPC Session Isolation

@@ -63,6 +63,10 @@ pub(crate) fn bump_wake_word() -> u32 {
 }
 
 pub(crate) fn drain_mailbox() {
+    drain_mailbox_with(|| {});
+}
+
+fn drain_mailbox_with(on_before_flag_clear: impl FnOnce()) {
     // SAFETY: The mailbox is a static mutable array. Ring access is
     // serialised against the host by the head/tail handshake (the host is the
     // single producer) and against the guest's workers by the executor's
@@ -100,6 +104,7 @@ pub(crate) fn drain_mailbox() {
     let head_ptr = unsafe { mailbox_cell(selium_abi::mailbox::HEAD_OFFSET) };
     // SAFETY: Same mailbox serialisation as above.
     unsafe { (*head_ptr).store(head, std::sync::atomic::Ordering::Release) };
+    on_before_flag_clear();
 
     // Advisory only: the producer sets the flag on enqueue; clearing it here
     // keeps it a rough "ring drained" hint. Nothing gates on it (see above).
@@ -127,6 +132,14 @@ pub(crate) fn mailbox_has_pending() -> bool {
     let head = unsafe { (*head_cell).load(std::sync::atomic::Ordering::Acquire) };
     // SAFETY: `tail_cell` points to a valid AtomicU32 within the mailbox.
     let tail = unsafe { (*tail_cell).load(std::sync::atomic::Ordering::Acquire) };
+    ring_has_pending(head, tail)
+}
+
+/// Pending-wake rule: the ring holds unread entries exactly when the atomic
+/// indices differ. The advisory flag is deliberately not consulted: an
+/// enqueue that races a drain can set it before the consumer clears it, and a
+/// gate that trusted the flag would strand that wake.
+fn ring_has_pending(head: u32, tail: u32) -> bool {
     head != tail
 }
 
@@ -251,19 +264,176 @@ pub(crate) fn register_mailbox() {
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[derive(Default)]
+pub(crate) struct NativeHostcallScript {
+    pub immediate_failure: Option<selium_abi::AbiError>,
+    pub next_operation: Option<u64>,
+    pub time: std::collections::VecDeque<selium_abi::CompletionState>,
+    pub sleep: std::collections::VecDeque<std::collections::VecDeque<selium_abi::CompletionState>>,
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[derive(Default)]
+struct NativeHostcallState {
+    script: Option<NativeHostcallScript>,
+    operations:
+        std::collections::HashMap<u64, std::collections::VecDeque<selium_abi::CompletionState>>,
+    dropped: Vec<u64>,
+    next_operation: u64,
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+thread_local! {
+    static NATIVE_HOSTCALLS: std::cell::RefCell<NativeHostcallState> =
+        std::cell::RefCell::new(NativeHostcallState {
+            next_operation: 1,
+            ..NativeHostcallState::default()
+        });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn install_native_hostcall_script(script: NativeHostcallScript) {
+    NATIVE_HOSTCALLS.with(|state| {
+        let mut state = state.borrow_mut();
+        state.operations.clear();
+        state.dropped.clear();
+        state.next_operation = script.next_operation.unwrap_or(1);
+        state.script = Some(script);
+    });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn clear_native_hostcall_script() {
+    NATIVE_HOSTCALLS.with(|state| {
+        let mut state = state.borrow_mut();
+        state.operations.clear();
+        state.dropped.clear();
+        state.script = None;
+    });
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn native_hostcall_drops() -> Vec<u64> {
+    NATIVE_HOSTCALLS.with(|state| state.borrow().dropped.clone())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn native_hostcall_live_operations() -> usize {
+    NATIVE_HOSTCALLS.with(|state| state.borrow().operations.len())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn native_create(request_ptr: *const u8, request_len: usize) -> u64 {
+    NATIVE_HOSTCALLS.with(|state| {
+        let mut state = state.borrow_mut();
+        let operation_id = state.next_operation;
+        state.next_operation = operation_id.checked_add(1).unwrap_or(1);
+        let Some(script) = state.script.as_mut() else {
+            return 0;
+        };
+        if operation_id == 0 {
+            return 0;
+        }
+        if let Some(error) = script.immediate_failure.take() {
+            state.operations.insert(
+                operation_id,
+                std::collections::VecDeque::from([selium_abi::CompletionState::Failed(error)]),
+            );
+            return operation_id;
+        }
+
+        // SAFETY: the hostcall module passes a live encoded request for this call.
+        let bytes = unsafe { std::slice::from_raw_parts(request_ptr, request_len) };
+        let Ok(payload) = selium_abi::hostcall_request_payload(bytes) else {
+            return 0;
+        };
+        let Ok(envelope) = selium_abi::decode_rkyv::<selium_abi::HostcallEnvelope>(payload) else {
+            return 0;
+        };
+        let completions = match envelope.request {
+            selium_abi::HostcallRequest::TimeMonotonic => script
+                .time
+                .pop_front()
+                .map(|completion| std::collections::VecDeque::from([completion])),
+            selium_abi::HostcallRequest::Sleep { .. } => script.sleep.pop_front(),
+            _ => None,
+        };
+        let Some(completions) = completions else {
+            return 0;
+        };
+        state.operations.insert(operation_id, completions);
+        operation_id
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) unsafe fn selium_hostcall_create(_: *const u8, _: usize) -> u64 {
+pub(crate) unsafe fn selium_hostcall_create(request_ptr: *const u8, request_len: usize) -> u64 {
+    #[cfg(test)]
+    {
+        native_create(request_ptr, request_len)
+    }
+    #[cfg(not(test))]
+    {
+        let _ = (request_ptr, request_len);
+        0
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) unsafe fn selium_hostcall_drop(operation_id: u64) -> u32 {
+    #[cfg(test)]
+    {
+        NATIVE_HOSTCALLS.with(|state| {
+            let mut state = state.borrow_mut();
+            state.operations.remove(&operation_id);
+            state.dropped.push(operation_id);
+        });
+    }
+    #[cfg(not(test))]
+    let _ = operation_id;
     0
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) unsafe fn selium_hostcall_drop(_: u64) -> u32 {
-    0
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) unsafe fn selium_hostcall_poll(_: u64, _: *mut u8, _: usize) -> u64 {
-    0
+pub(crate) unsafe fn selium_hostcall_poll(
+    operation_id: u64,
+    out_ptr: *mut u8,
+    out_capacity: usize,
+) -> u64 {
+    #[cfg(test)]
+    {
+        NATIVE_HOSTCALLS.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(completions) = state.operations.get_mut(&operation_id) else {
+                return 0;
+            };
+            let Some(completion) = completions.pop_front() else {
+                return 0;
+            };
+            let encoded = match selium_abi::encode_rkyv(&completion) {
+                Ok(encoded) => encoded,
+                Err(_) => return 0,
+            };
+            if out_capacity < encoded.len() {
+                return selium_abi::pack_hostcall_status(
+                    selium_abi::HOSTCALL_STATUS_OUTPUT_TOO_SMALL,
+                    encoded.len() as u32,
+                );
+            }
+            // SAFETY: the caller supplied a writable output buffer of out_capacity bytes.
+            unsafe { std::ptr::copy_nonoverlapping(encoded.as_ptr(), out_ptr, encoded.len()) };
+            selium_abi::pack_hostcall_status(
+                selium_abi::HOSTCALL_STATUS_READY,
+                encoded.len() as u32,
+            )
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let _ = (operation_id, out_ptr, out_capacity);
+        0
+    }
 }
 
 /// Returns whether the host has requested the guest process to stop (the ABI
@@ -318,4 +488,73 @@ unsafe fn selium_mailbox_register(_: *mut u8, _: usize) {}
 #[cfg(not(target_arch = "wasm32"))]
 unsafe fn selium_process_id() -> u64 {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{drain_mailbox_with, mailbox_has_pending, register_mailbox, ring_has_pending};
+
+    #[expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "test enqueue uses the same statically bounded mailbox cells as the production drain"
+    )]
+    fn enqueue(task_id: u32) {
+        let tail = unsafe { super::mailbox_cell(selium_abi::mailbox::TAIL_OFFSET) };
+        let tail_value = unsafe { (*tail).load(std::sync::atomic::Ordering::Acquire) };
+        let slot = selium_abi::mailbox::RING_OFFSET
+            + (tail_value as usize % selium_abi::mailbox::CAPACITY)
+                * selium_abi::mailbox::SLOT_SIZE;
+        let slot = unsafe { super::mailbox_cell(slot) };
+        unsafe { (*slot).store(task_id, std::sync::atomic::Ordering::Relaxed) };
+        unsafe {
+            (*tail).store(
+                tail_value.wrapping_add(1),
+                std::sync::atomic::Ordering::Release,
+            )
+        };
+        let flag = unsafe { super::mailbox_cell(selium_abi::mailbox::FLAG_OFFSET) };
+        unsafe { (*flag).store(1, std::sync::atomic::Ordering::Release) };
+    }
+
+    #[test]
+    #[expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "test reset uses the same statically bounded mailbox cells as the production drain"
+    )]
+    fn an_actual_enqueue_during_drain_survives_the_flag_clear() {
+        register_mailbox();
+        for offset in [
+            selium_abi::mailbox::HEAD_OFFSET,
+            selium_abi::mailbox::TAIL_OFFSET,
+            selium_abi::mailbox::FLAG_OFFSET,
+        ] {
+            let cell = unsafe { super::mailbox_cell(offset) };
+            unsafe { (*cell).store(0, std::sync::atomic::Ordering::Release) };
+        }
+        enqueue(0);
+        drain_mailbox_with(|| enqueue(0));
+        assert!(
+            mailbox_has_pending(),
+            "the enqueue raced the drain's flag clear but remains visible in the ring"
+        );
+        super::drain_mailbox();
+        assert!(!mailbox_has_pending());
+    }
+
+    /// A wake enqueued while the guest drains must still be visible after the
+    /// advisory flag is cleared: pending state derives from the indices.
+    // scenario: channel-wake-wait/mailbox-pending-state-is-authoritative/wake-races-guest-drain
+    // scenario: channel-wake-wait/mailbox-pending-state-is-authoritative/drained-mailbox-permits-stall
+    #[test]
+    fn enqueue_during_drain_is_observed_from_indices_not_the_advisory_flag() {
+        // Consumer drained to head == tail and cleared the flag; the producer
+        // then enqueued, advancing tail while the flag write was lost to the
+        // consumer's clear.
+        assert!(ring_has_pending(1, 2));
+        // Draining the entry (head catches tail) permits the guest to stall.
+        assert!(!ring_has_pending(2, 2));
+        // Wrapping indices compare as unequal while entries remain unread.
+        assert!(ring_has_pending(u32::MAX, 0));
+        assert!(!ring_has_pending(0, 0));
+    }
 }

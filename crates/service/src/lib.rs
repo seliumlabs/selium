@@ -975,6 +975,17 @@ pub enum StoreRequest {
         /// Blob id to resolve (mutually exclusive with `manifest`).
         blob_id: Option<String>,
     },
+    /// Force the log's appended records to stable storage.
+    ///
+    /// The acknowledgement boundary for a caller that must not report success
+    /// before the data would survive a power cycle (identity, accounting, and
+    /// control-plane policy writes). The store still owns durability policy: it
+    /// also syncs on its own threshold, so this is an explicit barrier rather
+    /// than the only time data is synced.
+    Sync {
+        /// Durable log name.
+        log: String,
+    },
 }
 
 /// Response from the durable store service.
@@ -1290,6 +1301,7 @@ mod tests {
         assert_eq!(decoded, vec![1u8, 2, 3]);
     }
 
+    // scenario: selium-abi/host-guest-boundary-only/service-messages-are-not-part-of-the-abi
     #[test]
     fn discovery_request_round_trips() {
         let request = DiscoveryRequest::Resolve("sel://tenant/app/api".to_string());
@@ -1425,6 +1437,9 @@ mod tests {
     /// Strict decode: a retired discovery request tag is rejected rather than
     /// mapped onto a surviving variant. Retired tags are left as gaps so an
     /// old-format message can never decode as a different variant.
+    // scenario: selium-service/discovery-message-vocabulary/retired-variants-are-absent
+    // scenario: selium-service/discovery-message-vocabulary/strict-decode-rejects-retired-variant-tags
+    // scenario: selium-service/discovery-message-vocabulary/retired-tags-are-left-as-gaps
     #[test]
     fn retired_request_variant_tags_are_decode_errors() {
         for variant in [5u8, 6u8, 8u8, 11u8, 15u8] {
@@ -1657,6 +1672,7 @@ mod tests {
         assert_eq!(decoded, response);
     }
 
+    // scenario: selium-service/pipe-control-frames-are-service-messages/handshake-is-flatbuffers
     #[test]
     fn pipe_control_handshake_round_trips() {
         let control = PipeControl::Handshake {
@@ -1684,6 +1700,7 @@ mod tests {
     }
 
     /// Strict decode: an unknown pipe-control variant tag is a decode error.
+    // scenario: schema-wire-generation/enum-strict-decode-errors/unknown-tag-rejected
     #[test]
     fn unknown_pipe_control_variant_is_decode_error() {
         let mut builder = flatbuffers::FlatBufferBuilder::new();
@@ -1873,6 +1890,7 @@ mod tests {
 
     /// Strict decode: an unknown control request variant tag is a decode
     /// error, not a silently reinterpreted default variant.
+    // scenario: selium-service/strict-flatbuffers-service-decode/unknown-variant-tag-fails-decode
     #[test]
     fn unknown_control_request_variant_is_decode_error() {
         let mut builder = flatbuffers::FlatBufferBuilder::new();
@@ -1937,6 +1955,7 @@ mod tests {
         assert_eq!(decoded, request);
     }
 
+    // scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/optional-scalar-field-uses-sentinel-in-wire-type
     #[test]
     fn discovery_register_without_owner_round_trips() {
         let request = DiscoveryRequest::Register {
@@ -1958,6 +1977,7 @@ mod tests {
         assert_eq!(decoded, request);
     }
 
+    // scenario: selium-service/discovery-message-vocabulary/revocation-variants-round-trip
     #[test]
     fn discovery_process_gone_round_trips() {
         let request = DiscoveryRequest::ProcessGone { process_id: 99 };
@@ -1977,6 +1997,7 @@ mod tests {
         assert_eq!(decoded, request);
     }
 
+    // scenario: selium-service/discovery-message-vocabulary/conflict-is-distinct-from-forbidden
     #[test]
     fn discovery_conflict_round_trips() {
         let response = DiscoveryResponse::Conflict;
@@ -2013,6 +2034,7 @@ mod tests {
         assert_eq!(decoded, response);
     }
 
+    // scenario: selium-service/desired-state-records-are-flatbuffers-encodable/desired-state-record-round-trips
     #[test]
     fn desired_state_record_deployment_round_trips() {
         let record = DesiredStateRecord::Deployment {
@@ -2147,6 +2169,8 @@ mod tests {
         Remove { workload_id: String },
     }
 
+    // scenario: schema-wire-generation/enum-field-mapping-attributes/field-rename-maps-to-table-field
+    // scenario: schema-wire-generation/enum-field-mapping-attributes/skipped-field-is-omitted-then-defaulted
     #[test]
     fn data_enum_field_rename_and_skip() {
         let original = AttrEnum::Locate {
@@ -2164,6 +2188,8 @@ mod tests {
         );
     }
 
+    // scenario: schema-wire-generation/data-carrying-enum-flatmsg-generation/unit-only-enum-behaviour-unchanged
+    // scenario: schema-wire-generation/mixed-unit-and-data-variants/unit-variant-round-trips-alongside-data-variants
     #[test]
     fn data_enum_unit_variant_round_trips_alongside_data_variants() {
         let value = AttrEnum::Ping;
@@ -2180,6 +2206,9 @@ mod tests {
         assert_eq!(decoded, value);
     }
 
+    // scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/concrete-field-passes-through-unchanged
+    // scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/string-field-passes-through-unchanged
+    // scenario: schema-wire-generation/data-carrying-enum-flatmsg-generation/enum-decodes-from-flattened-table
     #[test]
     fn data_enum_scalar_and_string_round_trip() {
         let value = AttrEnum::Scale {
@@ -2190,6 +2219,7 @@ mod tests {
         assert_eq!(decoded, value);
     }
 
+    // scenario: schema-wire-generation/data-carrying-enum-flatmsg-generation/enum-encodes-as-flattened-table
     #[test]
     fn data_enum_nested_field_round_trips() {
         let deployment = Deployment {
@@ -2204,6 +2234,8 @@ mod tests {
         assert_eq!(decoded, NestedEnum::Replace { deployment });
     }
 
+    // scenario: schema-wire-generation/enum-strict-decode-errors/missing-required-field-rejected
+    // scenario: selium-service/strict-flatbuffers-service-decode/missing-required-nested-field-fails-decode
     #[test]
     fn data_enum_missing_required_nested_field_is_decode_error() {
         let mut builder = flatbuffers::FlatBufferBuilder::new();
@@ -2224,6 +2256,8 @@ mod tests {
         );
     }
 
+    // scenario: selium-service/single-canonical-type-per-message/record-message-has-one-type
+    // scenario: schema-wire-generation/non-generic-struct-without-wire-works-unchanged/existing-wire-type-annotation-still-compiles
     #[test]
     fn catalogue_record_round_trips() {
         let record = CatalogueRecord {
@@ -2285,6 +2319,8 @@ mod tests {
         }
     }
 
+    // scenario: selium-service/data-carrying-enums-encode-via-generated-codec/control-response-encodes-and-decodes
+    // scenario: selium-service/service-message-crate/crate-renamed-and-authoritative
     #[test]
     fn control_catalogue_responses_round_trip() {
         let record = CatalogueRecord {
@@ -2317,38 +2353,7 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `schema-wire-generation` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/generic-field-becomes-bytes-in-wire-type
-// scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/optional-generic-field-becomes-bytes-in-wire-type
-// scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/optional-scalar-field-uses-sentinel-in-wire-type
-// scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/concrete-field-passes-through-unchanged
-// scenario: schema-wire-generation/wire-type-generation-from-generic-domain-type/string-field-passes-through-unchanged
-// scenario: schema-wire-generation/flatmsg-bridge-impl-generation/encode-round-trips-through-generated-bridge
-// scenario: schema-wire-generation/flatmsg-bridge-impl-generation/hasschema-delegates-to-wire-type-schema
-// scenario: schema-wire-generation/error-on-generic-struct-without-wire-parameter/generic-struct-without-wire-fails-with-clear-error
-// scenario: schema-wire-generation/non-generic-struct-without-wire-works-unchanged/existing-wire-type-annotation-still-compiles
-// scenario: schema-wire-generation/data-carrying-enum-flatmsg-generation/enum-encodes-as-flattened-table
-// scenario: schema-wire-generation/data-carrying-enum-flatmsg-generation/enum-decodes-from-flattened-table
-// scenario: schema-wire-generation/data-carrying-enum-flatmsg-generation/unit-only-enum-behaviour-unchanged
-// scenario: schema-wire-generation/enum-variant-tag-assignment/tags-follow-declaration-order
-// scenario: schema-wire-generation/enum-variant-tag-assignment/duplicate-tag-is-a-compile-error
-// scenario: schema-wire-generation/enum-field-mapping-attributes/field-rename-maps-to-table-field
-// scenario: schema-wire-generation/enum-field-mapping-attributes/skipped-field-is-omitted-then-defaulted
-// scenario: schema-wire-generation/enum-strict-decode-errors/unknown-tag-rejected
-// scenario: schema-wire-generation/enum-strict-decode-errors/missing-required-field-rejected
-// scenario: schema-wire-generation/mixed-unit-and-data-variants/unit-variant-round-trips-alongside-data-variants
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-service` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-service/service-message-crate/crate-renamed-and-authoritative
-// scenario: selium-service/single-canonical-type-per-message/record-message-has-one-type
-// scenario: selium-service/data-carrying-enums-encode-via-generated-codec/control-response-encodes-and-decodes
-// scenario: selium-service/desired-state-records-are-flatbuffers-encodable/desired-state-record-round-trips
-// scenario: selium-service/pipe-control-frames-are-service-messages/handshake-is-flatbuffers
-// scenario: selium-service/strict-flatbuffers-service-decode/unknown-variant-tag-fails-decode
-// scenario: selium-service/strict-flatbuffers-service-decode/missing-required-nested-field-fails-decode
-// scenario: selium-service/discovery-message-vocabulary/revocation-variants-round-trip
-// scenario: selium-service/discovery-message-vocabulary/retired-variants-are-absent
-// scenario: selium-service/discovery-message-vocabulary/conflict-is-distinct-from-forbidden
-// scenario: selium-service/discovery-message-vocabulary/strict-decode-rejects-retired-variant-tags
-// scenario: selium-service/discovery-message-vocabulary/retired-tags-are-left-as-gaps

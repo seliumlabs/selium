@@ -266,7 +266,10 @@ mod tests {
         assert_eq!(tracing::Level::from(LogLevel::Warn), tracing::Level::WARN);
         assert_eq!(tracing::Level::from(LogLevel::Error), tracing::Level::ERROR);
     }
+    // scenario: selium-guest-macros/wire-parameter-on-schema-macro/wire-parameter-is-optional
 
+    // scenario: selium-guest/log-record-types-re-exported/log-record-fields-are-accessible
+    // scenario: guest-log-transport/log-record-wire-format/log-record-encodes-and-decodes-round-trip
     #[test]
     fn log_record_encode_decode_round_trip() {
         let record = LogRecord {

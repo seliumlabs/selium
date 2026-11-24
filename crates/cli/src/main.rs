@@ -6,10 +6,10 @@
 //! [`ControlResponse`] to a line and an exit code, and exits.
 //!
 //! The command-mapping seams (`build_request`, `render`) are pure and
-//! unit-tested natively. A full external end-to-end test against the WASM
-//! guests — the CLI half of [`crates/runtime/tests/control_plane_bridge.rs`]
-//! minus its test harness — is deferred to a follow-up: this crate stays
-//! connection-agnostic and is exercised here against the typed seams only.
+//! unit-tested natively. The `identity_spine` runtime integration test also
+//! executes this binary as a subprocess against the real connector, bridge,
+//! and control-plane guests, asserting successful and missing-workload output
+//! on stdout, diagnostics on stderr, and process exit status.
 
 use std::process::ExitCode;
 

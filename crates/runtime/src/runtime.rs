@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
-        Arc, OnceLock,
+        Arc, OnceLock, Weak,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -53,9 +53,68 @@ pub(crate) struct WaitEntry {
     pub(crate) generation: u64,
 }
 
+/// Zero-sized token whose strong count tracks embedder-owned runtime handles.
+#[derive(Debug)]
+struct RuntimeOwnership;
+
+/// Maximum wait for each background thread during shutdown. A thread wedged in
+/// guest execution is detached and accounted for rather than hanging Drop.
+pub(crate) const SHUTDOWN_JOIN_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Joins a finished thread, or detaches it after a bounded wait. `is_finished`
+/// avoids a bare join on a thread stuck in a non-cooperative guest or callback.
+pub(crate) fn join_bounded(handle: std::thread::JoinHandle<()>) {
+    let deadline = std::time::Instant::now() + SHUTDOWN_JOIN_BUDGET;
+    while !handle.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    if handle.is_finished() {
+        drop(handle.join());
+    } else {
+        drop(handle);
+    }
+}
+
 /// Runtime coordinating guest execution, hostcalls, and kernel resources.
+///
+/// Clones made by an embedder share strong ownership of [`RuntimeState`].
+/// Background callbacks instead hold [`WeakRuntime`], so a detached wedged
+/// thread cannot keep the runtime or any of its state maps alive.
 #[derive(Clone)]
 pub struct Runtime {
+    /// External ownership token. Its final clone initiates shutdown from Drop.
+    ownership: Option<Arc<RuntimeOwnership>>,
+    state: Arc<RuntimeState>,
+}
+
+/// A non-owning runtime handle for host imports and background threads.
+#[derive(Clone)]
+pub(crate) struct WeakRuntime {
+    state: Weak<RuntimeState>,
+}
+
+impl WeakRuntime {
+    /// Upgrades only for the duration of one callback or bookkeeping pass.
+    pub(crate) fn upgrade(&self) -> Option<Runtime> {
+        self.state.upgrade().map(|state| Runtime {
+            ownership: None,
+            state,
+        })
+    }
+}
+
+impl std::ops::Deref for Runtime {
+    type Target = RuntimeState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+/// Shared runtime state. Public only because it is `Runtime`'s `Deref` target;
+/// its fields remain crate-private.
+#[doc(hidden)]
+pub struct RuntimeState {
     pub(crate) kernel: Kernel,
     pub(crate) process_authorities: Arc<Mutex<HashMap<ProcessId, ProcessAuthority>>>,
     pub(crate) loaded_guests: Arc<Mutex<HashMap<ProcessId, LoadedGuest>>>,
@@ -147,6 +206,14 @@ pub struct Runtime {
     /// projects fresh per-process observations on the sampling cadence so
     /// the bookkeeper's `MeteringRead` polls observe live consumption.
     pub(crate) metering_ticker_started: Arc<std::sync::atomic::AtomicBool>,
+    /// Wakes the metering ticker on shutdown so it joins promptly.
+    pub(crate) metering_ticker_stop: Arc<(Mutex<bool>, parking_lot::Condvar)>,
+    /// The metering ticker's join handle, owned until shutdown.
+    pub(crate) metering_ticker_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    /// The network poller's background join handle, owned until shutdown.
+    pub(crate) poller_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    /// Makes [`Runtime::shutdown`] idempotent.
+    shutdown_started: Arc<AtomicBool>,
     /// Per-guest worker-count overrides for multithreaded execution, keyed by
     /// system guest name. Absent entries default to the number of available
     /// CPU cores (the pool never exceeds it unless explicitly configured).
@@ -156,10 +223,21 @@ pub struct Runtime {
     /// the spawn-time anchor and the per-second `refresh_cpu_budgets`, removed
     /// at process teardown.
     pub(crate) cpu_budget_windows: Arc<Mutex<HashMap<ProcessId, CpuBudgetWindow>>>,
+    /// The runtime's explicit region provider (its own kernel), used for
+    /// runtime-owned shared-memory I/O. The process-global provider remains a
+    /// guest-local ambient installation so multiple runtimes do not collide.
+    pub(crate) region_provider: Arc<crate::region_provider::RuntimeRegionProvider>,
     /// Guards the one-shot state-root preparation: rooting the volume layer,
     /// loading or generating the host keyring, and reconstructing per-tenant
-    /// volume usage all happen exactly once, before any guest runs.
+    /// volume usage all happen exactly once, before any guest runs. Each step
+    /// records completion separately, so a failed attempt can be retried
+    /// without repeating work that already succeeded (notably volume-usage
+    /// seeding, which would otherwise double-count resident bytes).
     state_root_prepared: Arc<AtomicBool>,
+    /// The volume layer has been rooted at the configured state directory.
+    volumes_rooted: Arc<AtomicBool>,
+    /// Resident per-tenant volume bytes have been seeded into the quota table.
+    volume_usage_seeded: Arc<AtomicBool>,
     /// The discovery service's process id, recorded at bootstrap so its
     /// teardown can release the host-created listener queue.
     pub(crate) discovery_process_id: Arc<Mutex<Option<ProcessId>>>,
@@ -198,6 +276,19 @@ pub(crate) struct RuntimeFaults {
     /// Nanoseconds added to guest-visible clocks (`TimeNow`/`TimeMonotonic`),
     /// so a lease can be aged past its TTL without waiting for wall time.
     pub(crate) clock_offset_nanos: std::sync::atomic::AtomicU64,
+    /// Fail a region allocation after its quota reservation and ownership
+    /// claim, exercising the rollback guard.
+    pub(crate) region_allocation_failure: std::sync::atomic::AtomicBool,
+    /// Fail a volume append after its quota reservation.
+    pub(crate) volume_append_failure: std::sync::atomic::AtomicBool,
+    /// Fail a volume sync after a successful append.
+    pub(crate) volume_sync_failure: std::sync::atomic::AtomicBool,
+    /// Fail a queue send after its pipe-slot reservation.
+    pub(crate) queue_send_failure: std::sync::atomic::AtomicBool,
+    /// Fail state-root volume preparation (before rooting the volume layer).
+    pub(crate) state_root_volume_failure: std::sync::atomic::AtomicBool,
+    /// Fail state-root keyring preparation (after volume preparation).
+    pub(crate) state_root_keyring_failure: std::sync::atomic::AtomicBool,
 }
 
 /// Per-process CPU budget window: the wall-clock minute the process's engine
@@ -222,8 +313,11 @@ pub(crate) struct CpuBudgetWindow {
 impl Runtime {
     /// Creates a runtime backed by the supplied kernel.
     pub fn new(kernel: Kernel) -> Self {
-        // Install the runtime's kernel-backed region provider so that the
-        // runtime can use selium-shm directly (e.g. for discovery pub/sub).
+        // Install the runtime's kernel-backed region provider so that guests in
+        // this process have an ambient provider. Runtime-owned I/O uses the
+        // explicit `region_provider` field instead, so two runtimes with
+        // distinct kernels do not allocate through each other.
+        let region_provider = Arc::new(RuntimeRegionProvider::new(kernel.clone()));
         if selium_memory::region_provider().is_err() {
             drop(selium_memory::set_region_provider(Box::new(
                 RuntimeRegionProvider::new(kernel.clone()),
@@ -233,8 +327,9 @@ impl Runtime {
         let operations = Arc::new(Mutex::new(HashMap::<OperationId, HostOperation>::new()));
         let mailboxes = Arc::new(Mutex::new(HashMap::<ProcessId, Arc<GuestMailbox>>::new()));
 
-        let runtime = Self {
+        let state = RuntimeState {
             kernel,
+            region_provider,
             process_authorities: Arc::new(Mutex::new(HashMap::new())),
             loaded_guests: Arc::new(Mutex::new(HashMap::new())),
             local_handle_owners: Arc::new(Mutex::new(HashMap::new())),
@@ -260,27 +355,47 @@ impl Runtime {
             keyring: Arc::new(Mutex::new(None)),
             metering: Arc::new(Mutex::new(crate::metering::MeteringProjector::default())),
             metering_ticker_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            metering_ticker_stop: Arc::new((Mutex::new(false), parking_lot::Condvar::new())),
+            metering_ticker_handle: Arc::new(Mutex::new(None)),
+            poller_handle: Arc::new(Mutex::new(None)),
+            shutdown_started: Arc::new(AtomicBool::new(false)),
             worker_counts: Arc::new(Mutex::new(HashMap::new())),
             cpu_budget_windows: Arc::new(Mutex::new(HashMap::new())),
             state_root_prepared: Arc::new(AtomicBool::new(false)),
+            volumes_rooted: Arc::new(AtomicBool::new(false)),
+            volume_usage_seeded: Arc::new(AtomicBool::new(false)),
             discovery_process_id: Arc::new(Mutex::new(None)),
             guest_region_memories: Arc::new(Mutex::new(HashMap::new())),
             handed_off_sessions: Arc::new(Mutex::new(HashMap::new())),
             faults: Arc::new(RuntimeFaults::default()),
+        };
+        let runtime = Self {
+            ownership: Some(Arc::new(RuntimeOwnership)),
+            state: Arc::new(state),
         };
 
         // Initialise the mio network poller if possible (best-effort).
         // Tests that don't need networking can use Runtime::default()
         // without a poller; it simply won't drive any sockets.
         if let Ok(poller) = runtime.kernel.init_poller() {
-            let rt = runtime.clone();
+            let rt = runtime.background_handle();
             poller.set_generation_advance(move |region_id, new_gen| {
-                rt.note_generation_advance(region_id, new_gen);
+                if let Some(rt) = rt.upgrade() {
+                    rt.note_generation_advance(region_id, new_gen);
+                }
             });
-            poller.start_background();
+            let handle = poller.start_background();
+            *runtime.poller_handle.lock() = Some(handle);
         }
 
         runtime
+    }
+
+    /// Non-owning handle used by runtime callbacks, host imports, and workers.
+    pub(crate) fn background_handle(&self) -> WeakRuntime {
+        WeakRuntime {
+            state: Arc::downgrade(&self.state),
+        }
     }
 
     /// Prepares the durable state root, once, before any guest runs.
@@ -292,16 +407,39 @@ impl Runtime {
     /// no volume has been opened yet; see
     /// [`selium_kernel::VolumeRegistry::set_root`].
     pub(crate) fn prepare_state_root(&self, state_dir: Option<&Path>) -> Result<()> {
-        if self.state_root_prepared.swap(true, Ordering::SeqCst) {
+        if self.state_root_prepared.load(Ordering::Acquire) {
             return Ok(());
         }
-        if let Some(dir) = state_dir {
+        if let Some(dir) = state_dir
+            && !self.volumes_rooted.load(Ordering::Acquire)
+        {
+            if self.faults.state_root_volume_failure.load(Ordering::SeqCst) {
+                return Err(Error::Host(
+                    "injected state-root volume preparation failure".to_string(),
+                ));
+            }
             self.kernel.volumes().set_root(dir)?;
+            self.volumes_rooted.store(true, Ordering::Release);
         }
-        self.seed_volume_usage()?;
+        if !self.volume_usage_seeded.load(Ordering::Acquire) {
+            self.seed_volume_usage()?;
+            self.volume_usage_seeded.store(true, Ordering::Release);
+        }
         if let Some(dir) = state_dir {
+            if self
+                .faults
+                .state_root_keyring_failure
+                .load(Ordering::SeqCst)
+            {
+                return Err(Error::Host(
+                    "injected state-root keyring preparation failure".to_string(),
+                ));
+            }
             self.load_or_generate_keyring(dir)?;
         }
+        // Only now is preparation complete; a failed attempt above leaves it
+        // retryable.
+        self.state_root_prepared.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -337,6 +475,91 @@ impl Runtime {
             .map_err(|error| Error::Host(error.to_string()))?;
         *self.keyring.lock() = Some(keyring);
         Ok(())
+    }
+
+    /// Returns the runtime's explicit region provider for host-side channel
+    /// attachment in tests/tooling (runtime-owned I/O never uses the ambient
+    /// guest provider).
+    #[doc(hidden)]
+    pub fn region_provider(&self) -> Arc<crate::region_provider::RuntimeRegionProvider> {
+        Arc::clone(&self.region_provider)
+    }
+
+    /// Marks a handed-off RPC session closed through this runtime's own
+    /// provider. Runtime teardown must never attach through the process-global
+    /// guest provider: a second runtime would otherwise touch (or fail on) the
+    /// first runtime's regions.
+    pub(crate) fn close_handed_off_session(
+        &self,
+        shared_id: u64,
+    ) -> std::result::Result<selium_shm::rpc::ClosedSession, selium_shm::rpc::RpcError> {
+        use selium_memory::RegionProvider as _;
+
+        let region = self
+            .region_provider
+            .attach(shared_id, None, selium_abi::RegionProt::ReadWrite)
+            .map_err(|error| selium_shm::rpc::RpcError::Serialisation(error.to_string()))?;
+        let (request_channel, _reply_channel) =
+            selium_shm::byte_channel::channels_from_region(&region)
+                .map_err(|error| selium_shm::rpc::RpcError::Serialisation(error.to_string()))?;
+        let generation = request_channel
+            .ring()
+            .region()
+            .mark_peer_closed()
+            .map_err(|error| selium_shm::rpc::RpcError::Serialisation(error.to_string()))?;
+        Ok(selium_shm::rpc::ClosedSession {
+            region_id: request_channel.region_id(),
+            generation,
+        })
+    }
+
+    /// Stops guests and owned background activity, joining each thread within
+    /// a bounded budget. Idempotent; a wedged non-cooperative thread is
+    /// detached after its stop signal rather than allowed to hang shutdown.
+    pub fn shutdown(&self) {
+        if self.shutdown_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        // Reclaim live guests first. Besides stopping multithreaded pools this
+        // closes sockets and running flags used by outbound proxy threads and
+        // removes callbacks that could otherwise retain runtime state.
+        let processes: Vec<ProcessId> = self.process_authorities.lock().keys().copied().collect();
+        for process_id in processes {
+            drop(self.stop_process(process_id));
+        }
+        // Outbound proxy threads remove their wait key after observing the
+        // socket/running-flag teardown above. Account for their termination,
+        // but do not let a wedged proxy make shutdown unbounded.
+        let proxy_deadline = std::time::Instant::now() + SHUTDOWN_JOIN_BUDGET;
+        while !self.network_wait_keys.lock().is_empty()
+            && std::time::Instant::now() < proxy_deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        if let Some(driver) = self.timer_driver.get() {
+            driver.shutdown();
+        }
+
+        {
+            let (stopped, wake) = &*self.metering_ticker_stop;
+            *stopped.lock() = true;
+            wake.notify_all();
+        }
+        if let Some(handle) = self.metering_ticker_handle.lock().take() {
+            join_bounded(handle);
+        }
+
+        if let Some(poller) = self.kernel.poller() {
+            poller.shutdown();
+            // Break the runtime → kernel → poller → runtime cycle: the
+            // generation callback captured this runtime.
+            poller.clear_generation_advance();
+        }
+        if let Some(handle) = self.poller_handle.lock().take() {
+            join_bounded(handle);
+        }
     }
 
     /// Returns a clone of the runtime kernel handle.
@@ -399,6 +622,54 @@ impl Runtime {
         self.faults
             .clock_offset_nanos
             .fetch_add(nanos, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Test-only: fail region allocation after quota reservation.
+    #[doc(hidden)]
+    pub fn inject_region_allocation_failure(&self, armed: bool) {
+        self.faults
+            .region_allocation_failure
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Test-only: fail volume append after quota reservation.
+    #[doc(hidden)]
+    pub fn inject_volume_append_failure(&self, armed: bool) {
+        self.faults
+            .volume_append_failure
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Test-only: fail volume sync after a successful append.
+    #[doc(hidden)]
+    pub fn inject_volume_sync_failure(&self, armed: bool) {
+        self.faults
+            .volume_sync_failure
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Test-only: fail queue send after pipe-slot reservation.
+    #[doc(hidden)]
+    pub fn inject_queue_send_failure(&self, armed: bool) {
+        self.faults
+            .queue_send_failure
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Test-only: fail state-root volume preparation.
+    #[doc(hidden)]
+    pub fn inject_state_root_volume_failure(&self, armed: bool) {
+        self.faults
+            .state_root_volume_failure
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Test-only: fail state-root keyring preparation.
+    #[doc(hidden)]
+    pub fn inject_state_root_keyring_failure(&self, armed: bool) {
+        self.faults
+            .state_root_keyring_failure
+            .store(armed, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Returns the shared region id of the discovery pub/sub feed ring, if discovery was started.
@@ -638,5 +909,442 @@ impl Runtime {
 impl Default for Runtime {
     fn default() -> Self {
         Self::new(Kernel::default())
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        let final_external_handle = self
+            .ownership
+            .as_ref()
+            .is_some_and(|ownership| Arc::strong_count(ownership) == 1);
+        if final_external_handle {
+            self.shutdown();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use selium_memory::RegionProvider as _;
+
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        use std::sync::atomic::AtomicU64;
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "selium-state-root-{tag}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn failed_volume_preparation_leaves_state_root_retryable() {
+        let dir = temp_dir("volume-failure");
+        let runtime = Runtime::default();
+
+        runtime.inject_state_root_volume_failure(true);
+        assert!(
+            runtime.prepare_state_root(Some(&dir)).is_err(),
+            "the injected volume failure must fail bootstrap"
+        );
+        assert!(
+            !runtime.state_root_prepared.load(Ordering::Acquire),
+            "a failed attempt must not publish the completed marker"
+        );
+
+        runtime.inject_state_root_volume_failure(false);
+        runtime
+            .prepare_state_root(Some(&dir))
+            .expect("a corrected retry performs the incomplete work");
+        assert!(runtime.state_root_prepared.load(Ordering::Acquire));
+        assert!(
+            runtime.keyring.lock().is_some(),
+            "the retry must complete keyring preparation"
+        );
+        drop(std::fs::remove_dir_all(&dir));
+    }
+
+    /// Two runtimes in one process must allocate and attach only through their
+    /// own kernel-backed provider; the ambient provider stays guest-local.
+    // scenario: region-provider/global-regionprovider-installation/independent-native-runtimes
+    #[test]
+    fn coexisting_runtimes_use_their_own_region_provider() {
+        use selium_shm::{Channel, ChannelBackpressure};
+
+        let first = Runtime::new(Kernel::default());
+        let second = Runtime::new(Kernel::default());
+
+        let channel = |runtime: &Runtime| {
+            Channel::create_with_provider(
+                runtime.region_provider.as_ref(),
+                4096,
+                ChannelBackpressure::Park,
+                selium_abi::ResourceKind::SharedMemory,
+            )
+            .expect("channel created through the owning runtime")
+        };
+        let first_channel = channel(&first);
+        let second_channel = channel(&second);
+
+        let first_id = first_channel.region_id();
+        let second_id = second_channel.region_id();
+
+        assert!(
+            first.kernel().memory().shared_region_len(first_id).is_ok(),
+            "the first runtime's kernel owns its region"
+        );
+        assert!(
+            second
+                .kernel()
+                .memory()
+                .shared_region_len(second_id)
+                .is_ok(),
+            "the second runtime's kernel owns its region"
+        );
+        assert!(
+            second
+                .kernel()
+                .memory()
+                .shared_region_len(first_id)
+                .is_err(),
+            "a runtime must not see another runtime's region"
+        );
+        assert!(
+            first
+                .kernel()
+                .memory()
+                .shared_region_len(second_id)
+                .is_err(),
+            "a runtime must not see another runtime's region"
+        );
+
+        assert!(
+            first
+                .region_provider
+                .attach(first_id, None, selium_abi::RegionProt::ReadWrite)
+                .is_ok(),
+            "the owning provider attaches its own region"
+        );
+        assert!(
+            second
+                .region_provider
+                .attach(first_id, None, selium_abi::RegionProt::ReadWrite)
+                .is_err(),
+            "a foreign provider cannot attach another runtime's region"
+        );
+    }
+
+    /// Allocates the standard two-ring RPC layout through the explicit runtime
+    /// provider, without consulting the ambient guest provider.
+    fn rpc_session(runtime: &Runtime) -> (u64, selium_memory::Region) {
+        use selium_shm::{ChannelBackpressure, ChannelRegion};
+
+        let region = runtime
+            .region_provider
+            .allocate(
+                1,
+                selium_abi::RegionProt::ReadWrite,
+                selium_abi::ResourceKind::RpcRing,
+            )
+            .expect("allocate RPC parent through owning runtime");
+        let shared_id = region.region_id();
+        let mapping = region.mapping();
+        let first_offset = 48_u64;
+        let ring_len = selium_memory::RING_HEADER_SIZE + 4096;
+        let second_offset = first_offset + ring_len;
+        selium_memory::MultiMemoryHeader::write_two_entries(
+            mapping.backend(),
+            0,
+            region.size(),
+            [(first_offset, ring_len), (second_offset, ring_len)],
+        )
+        .expect("write RPC parent header");
+        for offset in [first_offset, second_offset] {
+            let submapping = mapping
+                .sub_region(offset, ring_len)
+                .expect("RPC submapping");
+            let channel = ChannelRegion::from_mapping_with_id(submapping, 4096, shared_id);
+            channel.initialise().expect("initialise RPC ring");
+            channel
+                .store_backpressure(ChannelBackpressure::Park.to_u8())
+                .expect("store RPC backpressure");
+            channel
+                .store_shared_capacity(4096)
+                .expect("store RPC capacity");
+        }
+        (shared_id, region)
+    }
+
+    #[test]
+    fn second_runtime_teardown_closes_its_own_rpc_session() {
+        let _first = Runtime::default();
+        let second = Runtime::default();
+        let guest = second
+            .spawn_system_guest(crate::SystemGuestDescriptor {
+                name: "second-runtime-rpc".to_string(),
+                module_id: "second-runtime-rpc-module".to_string(),
+                module_bytes: wat::parse_str("(module (memory 1) (func (export \"boot\")))")
+                    .expect("compile guest"),
+                entrypoint: "boot".to_string(),
+                arguments: Vec::new(),
+                grants: Vec::new(),
+                tenant: None,
+                discovery_service: false,
+                handlers: Vec::new(),
+            })
+            .expect("spawn second-runtime guest");
+        let (shared_id, region) = rpc_session(&second);
+        second
+            .handed_off_sessions
+            .lock()
+            .insert(guest.process_id, vec![shared_id]);
+
+        second.stop_process(guest.process_id).expect("teardown");
+
+        let attached = second
+            .region_provider
+            .attach(shared_id, None, selium_abi::RegionProt::ReadWrite)
+            .expect("owning runtime still attaches its session");
+        let (request, _reply) = selium_shm::byte_channel::channels_from_region(&attached)
+            .expect("parse closed RPC session");
+        assert!(request.ring().region().peer_closed().expect("peer flag"));
+        drop(region);
+    }
+
+    // scenario: selium-runtime/runtime-shutdown-reclaims-background-execution/runtime-is-dropped-or-shut-down
+    #[test]
+    fn shutdown_is_idempotent_and_releases_owned_threads() {
+        for _ in 0..5 {
+            let runtime = Runtime::default();
+            let guest = runtime
+                .spawn_system_guest(crate::SystemGuestDescriptor {
+                    name: "shutdown-guest".to_string(),
+                    module_id: "shutdown-guest-module".to_string(),
+                    module_bytes: wat::parse_str("(module (memory 1) (func (export \"boot\")))")
+                        .expect("compile wat"),
+                    entrypoint: "boot".to_string(),
+                    arguments: Vec::new(),
+                    grants: Vec::new(),
+                    tenant: None,
+                    discovery_service: false,
+                    handlers: Vec::new(),
+                })
+                .expect("spawn guest");
+            // Start both the timer driver and the metering ticker.
+            runtime
+                .bootstrap_system_guests(crate::RuntimeConfig {
+                    start_discovery: false,
+                    system_guests: Vec::new(),
+                    state_dir: None,
+                })
+                .expect("bootstrap starts the ticker");
+            let (status, _operation) = runtime.begin_hostcall_with_task(
+                guest.process_id,
+                selium_abi::HostcallRequest::Sleep { millis: 3_600_000 },
+                Some(1),
+                None,
+            );
+            assert_eq!(status, selium_abi::HOSTCALL_STATUS_PENDING);
+            assert_eq!(runtime.pending_timer_count(), 1);
+
+            runtime.shutdown();
+            runtime.shutdown();
+            assert_eq!(
+                runtime.pending_timer_count(),
+                0,
+                "shutdown must release queued deadlines"
+            );
+            assert_eq!(
+                Arc::strong_count(&runtime.metering_ticker_stop),
+                1,
+                "the metering ticker must not retain the runtime after shutdown"
+            );
+            assert_eq!(
+                Arc::strong_count(&runtime.timer_driver),
+                1,
+                "the timer driver must not retain the runtime after shutdown"
+            );
+            assert!(
+                runtime.metering_ticker_handle.lock().is_none(),
+                "the ticker handle is joined and released"
+            );
+            assert!(
+                runtime.poller_handle.lock().is_none(),
+                "the poller handle is joined and released"
+            );
+        }
+    }
+
+    fn parked_worker_module(stop_on_mailbox: bool) -> Vec<u8> {
+        let mailbox_base = 0x1000_u32;
+        let mailbox_len = selium_abi::mailbox::BYTE_LEN;
+        let wake_word = mailbox_base + selium_abi::mailbox::WAKE_WORD_OFFSET as u32;
+        let wait_address = if stop_on_mailbox { wake_word } else { 0 };
+        wat::parse_str(format!(
+            r#"(module
+                (import "selium" "mailbox_register" (func $mb (param i32 i32)))
+                (memory 1)
+                (func (export "boot") (result i32)
+                  (i32.const {mailbox_base}) (i32.const {mailbox_len}) (call $mb)
+                  (i32.const {wake_word}) (i32.const 0) (i32.store)
+                  i32.const 0)
+                (func (export "__selium_guest_worker") (param i32) (result i32)
+                  (memory.atomic.wait32
+                    (i32.const {wait_address}) (i32.const 0) (i64.const -1))
+                  drop
+                  i32.const 0))"#
+        ))
+        .expect("compile worker shutdown fixture")
+    }
+
+    fn worker_descriptor(name: &str, module_bytes: Vec<u8>) -> crate::SystemGuestDescriptor {
+        crate::SystemGuestDescriptor {
+            name: name.to_string(),
+            module_id: format!("{name}-module"),
+            module_bytes,
+            entrypoint: "boot".to_string(),
+            arguments: Vec::new(),
+            grants: Vec::new(),
+            tenant: None,
+            discovery_service: false,
+            handlers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn dropping_the_final_external_handle_stops_live_workers() {
+        let runtime = Runtime::default();
+        runtime.set_worker_count("drop-worker", 1);
+        runtime
+            .spawn_system_guest(worker_descriptor("drop-worker", parked_worker_module(true)))
+            .expect("spawn live worker");
+        let ownership = Arc::downgrade(
+            runtime
+                .ownership
+                .as_ref()
+                .expect("external runtime has ownership"),
+        );
+
+        drop(runtime);
+        assert!(
+            ownership.upgrade().is_none(),
+            "worker, monitor, timer, and callback handles must not retain external ownership"
+        );
+    }
+
+    #[test]
+    fn shutdown_reclaims_a_live_worker_pool() {
+        let runtime = Runtime::default();
+        runtime.set_worker_count("shutdown-worker", 2);
+        let guest = runtime
+            .spawn_system_guest(worker_descriptor(
+                "shutdown-worker",
+                parked_worker_module(true),
+            ))
+            .expect("spawn live workers");
+        assert_eq!(
+            runtime.multithreaded_worker_count(guest.process_id),
+            Some(2)
+        );
+
+        runtime.shutdown();
+        assert_eq!(runtime.loaded_guest_count(), 0);
+        assert!(!runtime.is_guest_resident(guest.process_id));
+        assert_eq!(runtime.multithreaded_worker_count(guest.process_id), None);
+    }
+
+    #[test]
+    fn wedged_worker_shutdown_is_bounded_and_releases_runtime_state() {
+        let runtime = Runtime::default();
+        runtime.set_worker_count("wedged-worker", 1);
+        let guest = runtime
+            .spawn_system_guest(worker_descriptor(
+                "wedged-worker",
+                // This worker parks on a private word, not the ABI stop word,
+                // so teardown cannot wake it and must honour the stop budget.
+                parked_worker_module(false),
+            ))
+            .expect("spawn wedged worker");
+        let ownership = Arc::downgrade(
+            runtime
+                .ownership
+                .as_ref()
+                .expect("external runtime has ownership"),
+        );
+        let state = Arc::downgrade(&runtime.state);
+        let loaded_guests = Arc::downgrade(&runtime.loaded_guests);
+
+        let started = std::time::Instant::now();
+        runtime.shutdown();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "shutdown must detach a wedged pool instead of bare-joining it"
+        );
+        assert_eq!(runtime.loaded_guest_count(), 0);
+        assert!(runtime.activity_log().iter().any(|event| {
+            event.process_id == Some(guest.process_id) && event.message.contains("wedged")
+        }));
+        assert_eq!(
+            Arc::strong_count(&runtime.state),
+            1,
+            "detached workers and their AOT imports must hold only Weak runtime handles"
+        );
+        drop(runtime);
+        assert!(ownership.upgrade().is_none());
+        assert!(
+            state.upgrade().is_none(),
+            "the wedged AOT instance must not keep RuntimeState alive"
+        );
+        assert!(
+            loaded_guests.upgrade().is_none(),
+            "runtime-owned guest state must be released with the runtime"
+        );
+    }
+
+    // scenario: selium-runtime/state-preparation-completes-before-its-success-marker/initial-key-loading-fails
+    #[test]
+    fn keyring_retry_does_not_reseed_resident_volume_usage() {
+        let dir = temp_dir("keyring-failure");
+        let kernel = Kernel::default();
+        kernel.volumes().set_root(&dir).expect("root volumes");
+        let volume = kernel
+            .volumes()
+            .open(Some("acme"), "data")
+            .expect("open volume");
+        kernel
+            .volumes()
+            .append(volume.local_id, b"data")
+            .expect("seed bytes");
+
+        let runtime = Runtime::new(kernel);
+        runtime.inject_state_root_keyring_failure(true);
+        assert!(runtime.prepare_state_root(Some(&dir)).is_err());
+        assert_eq!(
+            runtime
+                .kernel()
+                .quota()
+                .used("acme", selium_abi::ResourceClass::Volume),
+            4,
+            "the first attempt seeds the resident bytes once"
+        );
+
+        runtime.inject_state_root_keyring_failure(false);
+        runtime
+            .prepare_state_root(Some(&dir))
+            .expect("retry after the keyring failure");
+        assert_eq!(
+            runtime
+                .kernel()
+                .quota()
+                .used("acme", selium_abi::ResourceClass::Volume),
+            4,
+            "retrying must not double-count resident volume usage"
+        );
+        drop(std::fs::remove_dir_all(&dir));
     }
 }

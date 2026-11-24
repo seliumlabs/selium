@@ -102,5 +102,7 @@ async fn sleep(duration: Duration) {
         Ok(now) => now.checked_add(duration).unwrap_or(Instant::MAX),
         Err(_) => Instant::MAX,
     };
-    Timer::new(deadline).await;
+    if let Err(error) = Timer::new(deadline).await {
+        selium_guest::warn!("quic-demo: sleep failed: {error}");
+    }
 }

@@ -22,6 +22,10 @@ selium-guest.workspace = true
 selium-service.workspace = true
 selium-shm.workspace = true
 selium-wire.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
 
 [lints]
 workspace = true

@@ -35,6 +35,7 @@ fn alloc_region(runtime: &Runtime, process_id: ProcessId, purpose: ResourceKind)
     }
 }
 
+// scenario: selium-guest/resourcekind-threading-in-ringbuf/ringbuf-created-with-logchannel-purpose
 #[test]
 fn alloc_region_with_log_channel_publishes_no_registration() {
     let (runtime, mut subscriber) = runtime_with_discovery_feed();
@@ -59,6 +60,7 @@ fn alloc_region_with_log_channel_publishes_no_registration() {
     );
 }
 
+// scenario: selium-guest/guest-log-handle-deprecation/deprecated-guestlog-write-still-functions
 #[test]
 fn deprecated_guest_log_write_still_functions() {
     let runtime = Runtime::default();
@@ -170,6 +172,7 @@ fn drain_revoke_uris(
     (uris, owners, resources)
 }
 
+// scenario: guest-log-transport/guest-log-channel-creation/log-channel-is-created-with-drop-backpressure
 #[test]
 fn drop_backpressure_channel_writer_never_blocks() {
     ensure_heap_provider();
@@ -202,6 +205,7 @@ fn ensure_heap_provider() {
     }
 }
 
+// scenario: guest-log-transport/kernel-log-channel-subscription/kernel-receives-log-channel-registration
 #[test]
 fn guest_log_register_end_to_end() {
     let runtime = Runtime::default();
@@ -255,6 +259,9 @@ fn park_backpressure_channel_accepts_blocking_writer() {
         .expect("blocking writer on Park channel");
 }
 
+// scenario: selium-runtime/process-teardown-revocation/runtime-revokes-all-process-uris-on-exit
+// scenario: selium-runtime/process-teardown-revocation/runtime-revokes-freed-resource-identities
+// scenario: selium-runtime/owner-published-process-nodes/process-node-revoked-at-teardown
 #[test]
 fn process_termination_publishes_discovery_revoke_events() {
     let (runtime, mut subscriber) = runtime_with_discovery_feed();
@@ -308,7 +315,8 @@ fn runtime_with_discovery_feed() -> (Runtime, Subscriber<DiscoveryRequest, ShmTr
     let feed_region_id = runtime
         .discovery_feed_region_id()
         .expect("discovery feed region id");
-    let channel = Channel::attach(feed_region_id).expect("attach to discovery feed");
+    let channel = Channel::attach_with_provider(runtime.region_provider().as_ref(), feed_region_id)
+        .expect("attach to discovery feed");
     let capacity = channel.ring().capacity();
     let transport = ShmTransport::new(&channel, &channel).expect("feed transport");
     let subscriber = Subscriber::new(FramedRead::new(transport), Some(capacity));
@@ -346,15 +354,3 @@ fn spawn_shared_memory_guest(runtime: &Runtime, name: &str) -> ProcessId {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `guest-log-transport` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: guest-log-transport/guest-log-channel-creation/log-channel-is-created-with-drop-backpressure
-// scenario: guest-log-transport/guest-log-channel-creation/log-channel-capacity-is-configurable
-// scenario: guest-log-transport/log-channel-allocated-with-logchannel-purpose/runtime-auto-registers-log-channel
-// scenario: guest-log-transport/tracing-subscriber-integration/tracing-info-publishes-to-log-channel
-// scenario: guest-log-transport/tracing-subscriber-integration/tracing-error-with-fields-publishes-structured-record
-// scenario: guest-log-transport/tracing-subscriber-integration/subscriber-init-is-idempotent
-// scenario: guest-log-transport/re-entrancy-guard/re-entrant-log-event-is-suppressed
-// scenario: guest-log-transport/third-party-log-stream-discovery/third-party-guest-subscribes-via-process-uri
-// scenario: guest-log-transport/third-party-log-stream-discovery/third-party-guest-subscribes-via-custom-uri
-// scenario: guest-log-transport/log-record-wire-format/log-record-encodes-and-decodes-round-trip
-// scenario: guest-log-transport/kernel-log-channel-subscription/kernel-receives-log-channel-registration
-// scenario: guest-log-transport/kernel-log-channel-subscription/host-side-consumer-reads-logs-from-kernel

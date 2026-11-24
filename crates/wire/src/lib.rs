@@ -30,7 +30,10 @@ pub use stream::{
     RpcBidiStreamConnection, RpcBidiStreamRequest, RpcServerStream, RpcServerStreamClient,
     RpcServerStreamConnection, RpcServerStreamRequest,
 };
-pub use tables::{LiveTable, LiveTableMessage, LiveTableRecord, LiveTableView};
+pub use tables::{
+    LiveTable, LiveTableMessage, LiveTableRecord, LiveTableView, TableWriterArbiter,
+    TableWriterAuthority,
+};
 
 pub mod control;
 pub mod error;
@@ -74,26 +77,45 @@ pub trait MessageTransport: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
     fn region_id(&self) -> u64 {
         0
     }
+
+    /// Returns the shared arbiter used to coordinate a live-table writer, or
+    /// `None` when this transport cannot enforce cross-writer CAS. Transports
+    /// without a real shared arbiter must not substitute a local topic string
+    /// and pretend to offer distributed atomicity.
+    fn table_writer_arbiter(&self) -> Option<std::sync::Arc<dyn TableWriterArbiter>> {
+        None
+    }
 }
 
-/// Waits until the generation counter for `region_id` advances past
-/// `observed_generation`, or parks the current task through the
-/// generation-wait callback installed by the reactor.
+/// Waits until the reader's generation advances past `observed_generation`,
+/// or parks the current task through the generation-wait callback installed by
+/// the reactor.
 ///
-/// Falls back to a waker wake if no callback is installed.
-pub(crate) async fn generation_wait(region_id: u64, observed_generation: u64) {
+/// Falls back to a waker wake if no callback is installed. Frame, generation,
+/// and EOF state are re-checked after registration so a producer that commits
+/// between the caller's empty read and the registration cannot strand the task.
+pub(crate) async fn generation_wait<M: MessageTransport>(
+    reader: &mut FramedRead<M>,
+    observed_generation: u64,
+) {
+    let region_id = reader.inner().region_id();
     let mut yielded = false;
     std::future::poll_fn(move |cx| {
         if yielded {
-            Poll::Ready(())
-        } else {
-            yielded = true;
-            if !selium_memory::register_generation_wait(region_id, observed_generation, cx.waker())
-            {
-                cx.waker().wake_by_ref();
-            }
-            Poll::Pending
+            return Poll::Ready(());
         }
+        yielded = true;
+        if !selium_memory::register_generation_wait(region_id, observed_generation, cx.waker()) {
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+        if reader.generation().ok() != Some(observed_generation)
+            || reader.poll_ready().unwrap_or(true)
+            || reader.poll_peer_closed().unwrap_or(true)
+        {
+            cx.waker().wake_by_ref();
+        }
+        Poll::Pending
     })
     .await
 }

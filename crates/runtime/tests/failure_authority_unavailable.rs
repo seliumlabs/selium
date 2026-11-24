@@ -16,6 +16,7 @@ use selium_runtime::Runtime;
 mod common;
 mod failure_common;
 
+// scenario: verification-gate/failure-injection-coverage/authority-failure-fails-closed
 #[test]
 #[ignore = "requires the discovery and discovery-probe guests built for wasm32-unknown-unknown"]
 fn authority_unavailable_at_admission_denies_registration() {

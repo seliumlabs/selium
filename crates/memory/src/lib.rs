@@ -24,11 +24,13 @@
 )]
 
 use std::{
+    alloc::{Layout, alloc_zeroed, dealloc},
     any::Any,
     collections::HashMap,
     fmt::Debug,
-    sync::atomic::Ordering,
-    sync::{Arc, OnceLock, atomic::AtomicU64},
+    ptr::NonNull,
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    sync::{Arc, OnceLock},
 };
 
 use selium_abi::{RegionAllocation, RegionProt, ResourceKind};
@@ -233,6 +235,13 @@ pub trait RegionProvider: Send + Sync {
 
     /// Frees a previously allocated region.
     fn free(&self, region_id: u64) -> Result<()>;
+
+    /// Returns the number of live regions, when the provider can count them.
+    ///
+    /// Used by lifecycle/soak tests; production providers may return `None`.
+    fn live_region_count(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// Error type for selium-memory operations.
@@ -250,6 +259,8 @@ pub enum MemoryError {
     ProviderNotSet,
     #[error("region not found: {0}")]
     RegionNotFound(u64),
+    #[error("ABI error: {0:?}")]
+    Abi(selium_abi::AbiError),
     #[error("region operation failed: {0}")]
     Other(String),
 }
@@ -261,14 +272,88 @@ pub struct Region {
     backend: Arc<dyn MappingBackend>,
 }
 
+/// Alignment guaranteed for owned heap-backed mappings.
+///
+/// Backing storage must be aligned for the widest atomic the mapping exposes
+/// (`AtomicU64`), so that a mapping base plus any 8-byte-aligned offset is a
+/// valid atomic address. Using a plain `Vec<u8>` would only guarantee
+/// byte alignment and make safe atomic APIs depend on undocumented allocator
+/// behaviour.
+pub const BACKING_ALIGNMENT: usize = std::mem::align_of::<AtomicU64>();
+
+/// Owned, atomically-aligned backing storage for heap-backed mappings.
+///
+/// The buffer is zero-initialised, exposes raw byte access for the mapping
+/// backend, and keeps the allocation alive for the lifetime of the value.
+pub struct AlignedBuffer {
+    ptr: NonNull<u8>,
+    size: usize,
+}
+
+// SAFETY: `AlignedBuffer` owns its allocation exclusively; raw pointer access
+// through `MappingBackend` performs its own bounds and alignment checks.
+unsafe impl Send for AlignedBuffer {}
+// SAFETY: see `Send`. Concurrent atomic access uses the atomics themselves;
+// non-atomic access follows the caller's synchronisation contract.
+unsafe impl Sync for AlignedBuffer {}
+
+impl AlignedBuffer {
+    /// Allocates zeroed storage of `size` bytes with [`BACKING_ALIGNMENT`].
+    pub fn zeroed(size: u64) -> Result<Self> {
+        let size = usize::try_from(size).map_err(|_error| MemoryError::CapacityExceeded)?;
+        let layout = Layout::from_size_align(size.max(1), BACKING_ALIGNMENT)
+            .map_err(|_error| MemoryError::InvalidLayout)?;
+        // SAFETY: `layout` has a non-zero size.
+        let ptr = unsafe { alloc_zeroed(layout) };
+        let ptr = NonNull::new(ptr).ok_or_else(|| {
+            MemoryError::Other("failed to allocate aligned region backing".to_string())
+        })?;
+        Ok(Self { ptr, size })
+    }
+
+    /// Returns the logical length of the buffer in bytes.
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    /// Returns whether the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    /// Returns a raw pointer to the start of the allocation.
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.ptr.as_ptr()
+    }
+}
+
+impl Debug for AlignedBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AlignedBuffer")
+            .field("ptr", &self.ptr)
+            .field("size", &self.size)
+            .finish()
+    }
+}
+
+impl Drop for AlignedBuffer {
+    fn drop(&mut self) {
+        // SAFETY: the layout is identical to the one used in `zeroed`.
+        let layout =
+            unsafe { Layout::from_size_align_unchecked(self.size.max(1), BACKING_ALIGNMENT) };
+        // SAFETY: `ptr` was allocated with `layout` and is deallocated once.
+        unsafe { dealloc(self.ptr.as_ptr(), layout) };
+    }
+}
+
 /// Default, heap-backed region provider for native tests and in-process use.
 ///
-/// Regions are backed by `Arc<Vec<u8>>` and registered in a process-local map
-/// so that [`RegionProvider::attach`] can share the same memory.
+/// Regions are backed by [`AlignedBuffer`] and registered in a process-local
+/// map so that [`RegionProvider::attach`] can share the same memory.
 #[derive(Default, Debug)]
 pub struct HeapRegionProvider {
     counter: AtomicU64,
-    registry: std::sync::Mutex<HashMap<u64, Arc<Vec<u8>>>>,
+    registry: std::sync::Mutex<HashMap<u64, Arc<AlignedBuffer>>>,
 }
 
 /// A raw-pointer backend used by WASM guests and native tests.
@@ -282,7 +367,7 @@ pub struct PointerBackend {
     size: u64,
     /// Heap-allocated backing store (native mode only). `None` for WASM
     /// mappings whose lifetime is managed by the runtime.
-    backing: Option<Arc<Vec<u8>>>,
+    backing: Option<Arc<AlignedBuffer>>,
 }
 
 /// A direct-memory mapping of a shared region.
@@ -304,7 +389,11 @@ impl Region {
     /// from [`RegionAllocation::page_offset`]. This constructor is a
     /// convenience wrapper around [`Self::with_backend`] that uses a raw
     /// pointer backend.
-    pub fn new(allocation: RegionAllocation, size: u64, backing: Option<Arc<Vec<u8>>>) -> Self {
+    pub fn new(
+        allocation: RegionAllocation,
+        size: u64,
+        backing: Option<Arc<AlignedBuffer>>,
+    ) -> Self {
         let backend: Arc<dyn MappingBackend> = match backing {
             Some(backing) => Arc::new(PointerBackend::from_backing(backing, size)),
             None => {
@@ -367,8 +456,8 @@ impl HeapRegionProvider {
 
 impl RegionProvider for HeapRegionProvider {
     fn allocate(&self, _pages: u32, _prot: RegionProt, _purpose: ResourceKind) -> Result<Region> {
-        let size = _pages as u64 * WASM_PAGE_SIZE;
-        let backing = Arc::new(vec![0u8; size as usize]);
+        let size = u64::from(_pages) * WASM_PAGE_SIZE;
+        let backing = Arc::new(AlignedBuffer::zeroed(size)?);
         let region_id = self.counter.fetch_add(1, Ordering::SeqCst);
         self.registry
             .lock()
@@ -415,23 +504,22 @@ impl RegionProvider for HeapRegionProvider {
             .remove(&region_id);
         Ok(())
     }
+
+    fn live_region_count(&self) -> Option<usize> {
+        self.registry.lock().ok().map(|registry| registry.len())
+    }
 }
 
 impl PointerBackend {
-    /// Creates a backend backed by a heap allocation.
+    /// Creates a backend backed by an aligned heap allocation.
     pub fn allocate(size: u64) -> Result<Self> {
-        let backing = Arc::new(vec![0u8; size as usize]);
-        let base = backing.as_ptr() as *mut u8;
-        Ok(Self {
-            base,
-            size,
-            backing: Some(backing),
-        })
+        let backing = Arc::new(AlignedBuffer::zeroed(size)?);
+        Ok(Self::from_backing(backing, size))
     }
 
-    /// Creates a backend that shares an existing heap allocation.
-    pub fn from_backing(backing: Arc<Vec<u8>>, size: u64) -> Self {
-        let base = backing.as_ptr() as *mut u8;
+    /// Creates a backend that shares an existing aligned heap allocation.
+    pub fn from_backing(backing: Arc<AlignedBuffer>, size: u64) -> Self {
+        let base = backing.as_ptr();
         Self {
             base,
             size,
@@ -463,6 +551,29 @@ impl PointerBackend {
         }
         // SAFETY: bounds checked; offset is within the mapping.
         Ok(unsafe { self.base.add(offset as usize) })
+    }
+
+    /// Bounds-check and alignment-check a 64-bit atomic address.
+    ///
+    /// The effective address (`base + offset`) must satisfy `AtomicU64`
+    /// alignment. This is the contract of the safe atomic APIs; a mapping whose
+    /// base is unaligned (raw constructor) still rejects misaligned effective
+    /// addresses rather than invoking undefined behaviour.
+    fn checked_atomic_u64(&self, offset: u64) -> Result<*const AtomicU64> {
+        let ptr = self.checked_offset(offset, 8)?;
+        if !(ptr as usize).is_multiple_of(std::mem::align_of::<AtomicU64>()) {
+            return Err(MemoryError::InvalidLayout);
+        }
+        Ok(ptr as *const AtomicU64)
+    }
+
+    /// Bounds-check and alignment-check a 32-bit atomic address.
+    fn checked_atomic_u32(&self, offset: u64) -> Result<*const AtomicU32> {
+        let ptr = self.checked_offset(offset, 4)?;
+        if !(ptr as usize).is_multiple_of(std::mem::align_of::<AtomicU32>()) {
+            return Err(MemoryError::InvalidLayout);
+        }
+        Ok(ptr as *const AtomicU32)
     }
 }
 
@@ -503,24 +614,16 @@ impl MappingBackend for PointerBackend {
     }
 
     fn atomic_load_u64(&self, offset: u64, ordering: Ordering) -> Result<u64> {
-        if offset + 8 > self.size {
-            return Err(MemoryError::IndexOutOfBounds);
-        }
-        // SAFETY: bounds checked above; offset is within the mapping and
-        // aligned for `AtomicU64` access.
-        let ptr = unsafe { self.base.add(offset as usize) as *const AtomicU64 };
-        // SAFETY: `ptr` points to `AtomicU64`-aligned memory within the mapping.
+        let ptr = self.checked_atomic_u64(offset)?;
+        // SAFETY: bounds and alignment checked above; `ptr` points to a valid
+        // `AtomicU64` within the mapping.
         Ok(unsafe { (*ptr).load(ordering) })
     }
 
     fn atomic_store_u64(&self, offset: u64, value: u64, ordering: Ordering) -> Result<()> {
-        if offset + 8 > self.size {
-            return Err(MemoryError::IndexOutOfBounds);
-        }
-        // SAFETY: bounds checked above; offset is within the mapping and
-        // aligned for `AtomicU64` access.
-        let ptr = unsafe { self.base.add(offset as usize) as *const AtomicU64 };
-        // SAFETY: `ptr` points to `AtomicU64`-aligned memory within the mapping.
+        let ptr = self.checked_atomic_u64(offset)?;
+        // SAFETY: bounds and alignment checked above; `ptr` points to a valid
+        // `AtomicU64` within the mapping.
         unsafe {
             (*ptr).store(value, ordering);
         }
@@ -528,24 +631,16 @@ impl MappingBackend for PointerBackend {
     }
 
     fn fetch_add_u64(&self, offset: u64, value: u64, ordering: Ordering) -> Result<u64> {
-        if offset + 8 > self.size {
-            return Err(MemoryError::IndexOutOfBounds);
-        }
-        // SAFETY: bounds checked above; offset is within the mapping and
-        // aligned for `AtomicU64` access.
-        let ptr = unsafe { self.base.add(offset as usize) as *const AtomicU64 };
-        // SAFETY: `ptr` points to `AtomicU64`-aligned memory within the mapping.
+        let ptr = self.checked_atomic_u64(offset)?;
+        // SAFETY: bounds and alignment checked above; `ptr` points to a valid
+        // `AtomicU64` within the mapping.
         Ok(unsafe { (*ptr).fetch_add(value, ordering) })
     }
 
     fn compare_exchange_u64(&self, offset: u64, current: u64, new: u64) -> Result<u64> {
-        if offset + 8 > self.size {
-            return Err(MemoryError::IndexOutOfBounds);
-        }
-        // SAFETY: bounds checked above; offset is within the mapping and
-        // aligned for `AtomicU64` access.
-        let ptr = unsafe { self.base.add(offset as usize) as *const AtomicU64 };
-        // SAFETY: `ptr` points to `AtomicU64`-aligned memory within the mapping.
+        let ptr = self.checked_atomic_u64(offset)?;
+        // SAFETY: bounds and alignment checked above; `ptr` points to a valid
+        // `AtomicU64` within the mapping.
         let result = unsafe {
             (*ptr).compare_exchange_weak(current, new, Ordering::SeqCst, Ordering::SeqCst)
         };
@@ -556,7 +651,7 @@ impl MappingBackend for PointerBackend {
     }
 
     fn atomic_notify(&self, offset: u64, count: u32) -> Result<u32> {
-        let ptr = self.checked_offset(offset, 4)?;
+        let ptr = self.checked_atomic_u32(offset)?;
         let addr = ptr as usize;
 
         // Nightly-only: genuine `memory.atomic.notify` WASM intrinsic. Requires
@@ -590,7 +685,7 @@ impl MappingBackend for PointerBackend {
     }
 
     fn atomic_wait32(&self, offset: u64, expected: u32, timeout_ms: u64) -> Result<()> {
-        let ptr = self.checked_offset(offset, 4)?;
+        let ptr = self.checked_atomic_u32(offset)?;
         let addr = ptr as usize;
 
         // Nightly-only: genuine `memory.atomic.wait32` WASM intrinsic. Requires
@@ -637,10 +732,9 @@ impl MappingBackend for PointerBackend {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // SAFETY: addr was computed from base+offset which is
-            // bounds-checked by checked_offset; the pointed-to memory
-            // is valid for reads of u32.
-            let actual = unsafe { (*(addr as *const u32)).to_le() };
+            // SAFETY: `ptr` was computed from a bounds- and alignment-checked
+            // atomic address and points to a valid `AtomicU32`.
+            let actual = unsafe { (*ptr).load(Ordering::SeqCst) };
             if actual != expected {
                 return Ok(());
             }
@@ -701,7 +795,7 @@ impl RegionMapping {
     }
 
     /// Creates a mapping that shares an existing backing store.
-    pub fn from_shared_backing(backing: Arc<Vec<u8>>, size: u64) -> Self {
+    pub fn from_shared_backing(backing: Arc<AlignedBuffer>, size: u64) -> Self {
         Self::new(Arc::new(PointerBackend::from_backing(backing, size)))
     }
 
@@ -886,6 +980,8 @@ pub fn wake_generation_waiters(region_id: u64, new_generation: u64) {
 mod tests {
     use super::*;
 
+    // scenario: region-provider/regionprovider-trait/provider-allocates-a-region
+    // scenario: region-provider/regionprovider-trait/provider-frees-a-region
     #[test]
     fn heap_provider_allocate_and_free() {
         set_provider_for_test();
@@ -903,6 +999,8 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // scenario: region-provider/regionprovider-trait/provider-attaches-to-existing-region
+    // scenario: region-provider/heapregionprovider-for-testing/two-heapregions-share-memory
     #[test]
     fn heap_provider_attach_shares_memory() {
         set_provider_for_test();
@@ -931,6 +1029,29 @@ mod tests {
         provider.free(region_id).expect("free");
     }
 
+    // scenario: guest-shared-memory/shared-region-attach/guest-attaches-to-a-non-existent-region
+    /// Installing a second provider must fail loudly rather than silently
+    /// keep or replace the wrong context: a guest that cannot install its
+    /// hostcall-backed provider would otherwise allocate through another
+    /// runtime's kernel.
+    // scenario: region-provider/global-regionprovider-installation/conflicting-guest-provider-installation
+    #[test]
+    fn a_second_provider_installation_fails_loudly() {
+        // Whichever provider is already installed (test-injected or the first
+        // call here) stays authoritative; the second installation is refused.
+        drop(set_region_provider(Box::new(HeapRegionProvider::new())));
+        let error = set_region_provider(Box::new(HeapRegionProvider::new()))
+            .expect_err("a conflicting installation must be refused");
+        assert!(
+            error.to_string().contains("already installed"),
+            "the refusal names the conflict: {error}"
+        );
+        assert!(
+            region_provider().is_ok(),
+            "the originally installed provider remains in use"
+        );
+    }
+
     #[test]
     fn heap_provider_attach_unknown_fails() {
         set_provider_for_test();
@@ -940,6 +1061,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // scenario: region-provider/regionmapping-remains-transport-agnostic/regionmapping-used-without-a-provider
     #[test]
     fn region_mapping_read_write_round_trip() {
         let mapping = RegionMapping::allocate(256).expect("allocate");
@@ -948,6 +1070,7 @@ mod tests {
         assert_eq!(data, vec![1, 2, 3, 4]);
     }
 
+    // scenario: guest-shared-memory/native-atomic-access-to-shared-regions/guest-reads-shared-data-via-regionmapping-read-u64
     #[test]
     fn region_mapping_u64_round_trip() {
         let mapping = RegionMapping::allocate(64).expect("allocate");
@@ -975,6 +1098,116 @@ mod tests {
         );
     }
 
+    // scenario: guest-shared-memory/safe-atomic-access-requires-valid-alignment/misaligned-public-atomic-call
+    #[test]
+    fn misaligned_atomic_load_is_rejected() {
+        let mapping = RegionMapping::allocate(64).expect("allocate");
+        mapping.write_u64(0, 0xAABB_CCDD_EEFF_0011).expect("write");
+        assert_eq!(
+            mapping.atomic_load_u64(4, Ordering::Acquire),
+            Err(MemoryError::InvalidLayout)
+        );
+        // The rejected access must not have consumed or changed the bytes.
+        assert_eq!(mapping.read_u64(0).expect("read"), 0xAABB_CCDD_EEFF_0011);
+    }
+
+    #[test]
+    fn misaligned_atomic_store_is_rejected() {
+        let mapping = RegionMapping::allocate(64).expect("allocate");
+        assert_eq!(
+            mapping.atomic_store_u64(4, 1, Ordering::Release),
+            Err(MemoryError::InvalidLayout)
+        );
+        assert_eq!(mapping.read_u64(0).expect("read"), 0);
+    }
+
+    #[test]
+    fn misaligned_fetch_add_and_compare_exchange_are_rejected() {
+        let mapping = RegionMapping::allocate(64).expect("allocate");
+        assert_eq!(
+            mapping.fetch_add_u64(4, 1, Ordering::SeqCst),
+            Err(MemoryError::InvalidLayout)
+        );
+        assert_eq!(
+            mapping.compare_exchange_u64(4, 0, 1),
+            Err(MemoryError::InvalidLayout)
+        );
+        assert_eq!(mapping.read_u64(0).expect("read"), 0);
+    }
+
+    #[test]
+    fn misaligned_wait_and_notify_are_rejected() {
+        let mapping = RegionMapping::allocate(64).expect("allocate");
+        assert_eq!(mapping.atomic_notify(2, 1), Err(MemoryError::InvalidLayout));
+        assert_eq!(
+            mapping.atomic_wait32(2, 0, 0),
+            Err(MemoryError::InvalidLayout)
+        );
+    }
+
+    #[test]
+    fn misaligned_sub_region_atomics_are_rejected() {
+        let mapping = RegionMapping::allocate(128).expect("allocate");
+        let sub = mapping.sub_region(4, 64).expect("sub region");
+        assert_eq!(
+            sub.atomic_load_u64(0, Ordering::Acquire),
+            Err(MemoryError::InvalidLayout)
+        );
+        assert_eq!(
+            sub.atomic_load_u64(4, Ordering::Acquire),
+            Ok(0),
+            "an aligned effective address within an offset sub-region must work"
+        );
+    }
+
+    // scenario: guest-shared-memory/safe-atomic-access-requires-valid-alignment/heap-backed-atomic-operations
+    #[test]
+    fn heap_backing_supports_aligned_atomics_at_every_aligned_offset() {
+        let mapping = RegionMapping::allocate(64).expect("allocate");
+        for offset in (0..64).step_by(8) {
+            mapping
+                .atomic_store_u64(offset, offset + 1, Ordering::SeqCst)
+                .expect("aligned atomic store");
+            assert_eq!(
+                mapping
+                    .atomic_load_u64(offset, Ordering::SeqCst)
+                    .expect("aligned atomic load"),
+                offset + 1
+            );
+        }
+        for offset in 1..8 {
+            assert_eq!(
+                mapping.atomic_load_u64(offset, Ordering::SeqCst),
+                Err(MemoryError::InvalidLayout),
+                "offset {offset} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn heap_provider_backing_is_aligned_for_atomics() {
+        set_provider_for_test();
+        let provider = region_provider().expect("provider");
+        let region = provider
+            .allocate(1, RegionProt::ReadWrite, ResourceKind::SharedMemory)
+            .expect("allocate");
+        let mapping = region.mapping();
+        mapping
+            .atomic_store_u64(0, 7, Ordering::SeqCst)
+            .expect("atomic store on provider backing");
+        let attached = provider
+            .attach(region.region_id(), None, RegionProt::ReadWrite)
+            .expect("attach");
+        assert_eq!(
+            attached
+                .mapping()
+                .atomic_load_u64(0, Ordering::SeqCst)
+                .expect("atomic load through attach"),
+            7
+        );
+        provider.free(region.region_id()).expect("free");
+    }
+
     fn set_provider_for_test() {
         // Ignore errors from repeated test installs.
         drop(set_region_provider(Box::new(HeapRegionProvider::new())));
@@ -984,20 +1217,7 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `region-provider` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: region-provider/regionprovider-trait/provider-allocates-a-region
-// scenario: region-provider/regionprovider-trait/provider-attaches-to-existing-region
-// scenario: region-provider/regionprovider-trait/provider-frees-a-region
-// scenario: region-provider/global-regionprovider-installation/provider-installed-before-i-o-operations
-// scenario: region-provider/global-regionprovider-installation/no-provider-installed
-// scenario: region-provider/heapregionprovider-for-testing/two-heapregions-share-memory
-// scenario: region-provider/regionmapping-remains-transport-agnostic/regionmapping-used-without-a-provider
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `shared-region-builder` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: shared-region-builder/builder-pattern-for-multi-memory-regions/building-an-rpc-session-region
-// scenario: shared-region-builder/builder-pattern-for-multi-memory-regions/adding-memory-after-seal
-// scenario: shared-region-builder/builder-pattern-for-multi-memory-regions/total-memory-exceeds-capacity
-// scenario: shared-region-builder/positional-sub-memory-discovery/server-discovers-request-and-reply-rings
-// scenario: shared-region-builder/positional-sub-memory-discovery/accessing-out-of-bounds-memory-index
-// scenario: shared-region-builder/layout-immutability-after-seal/attaching-party-reads-layout

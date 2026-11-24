@@ -312,6 +312,7 @@ fn stage2_notify_wait_race_conformance() {
     }
 }
 
+// scenario: shared-page-fastpath/optional-per-os-wait-word-primitives-stage-2/conformance-gated-enablement
 /// Stage 2 opt-in gate: the host may wait on OS wait-words only when the
 /// engine reports `RegistryAndOsWake` (its platform wake emission is compiled
 /// in — the conformance-gated opt-in). Everywhere else — including platforms

@@ -167,6 +167,7 @@ impl MultithreadedGuest {
         process_id: selium_abi::ProcessId,
         count: usize,
     ) -> Result<()> {
+        let runtime = runtime.background_handle();
         self.worker_count = count;
         let worker_func = self.worker_func;
         let mut workers = Vec::with_capacity(count);
@@ -187,7 +188,9 @@ impl MultithreadedGuest {
                         // `set_stop` bump makes a worker that has not parked
                         // yet return from its wait immediately, so no
                         // delivery is lost).
-                        if let Some(mailbox) = worker_runtime.mailbox(process_id) {
+                        if let Some(runtime) = worker_runtime.upgrade()
+                            && let Some(mailbox) = runtime.mailbox(process_id)
+                        {
                             for _ in 0..count {
                                 signal_stop_once(&mailbox, process_id);
                                 std::thread::sleep(std::time::Duration::from_millis(1));
@@ -226,7 +229,9 @@ impl MultithreadedGuest {
                     // an instance whose pool was never completed (their stop
                     // path would otherwise never fire, since the runtime's stop
                     // only reaches a fully-registered pool). Then fail the spawn.
-                    signal_stop(&runtime, process_id);
+                    if let Some(runtime) = runtime.upgrade() {
+                        signal_stop(&runtime, process_id);
+                    }
                     return Err(Error::Host(format!("worker thread spawn failed: {error}")));
                 }
             }
@@ -258,7 +263,9 @@ impl MultithreadedGuest {
                 // Announce completion BEFORE the reap so the monitor's own
                 // cleanup never joins the monitor thread from itself.
                 monitor_done.store(true, Ordering::SeqCst);
-                monitor_finished(&monitor_runtime, process_id, stopped, fault);
+                if let Some(runtime) = monitor_runtime.upgrade() {
+                    monitor_finished(&runtime, process_id, stopped, fault);
+                }
             })
             .map_err(|error| Error::Host(format!("worker monitor spawn failed: {error}")));
         let monitor = match monitor {
@@ -267,7 +274,9 @@ impl MultithreadedGuest {
                 // The monitor could not start, so nothing will ever join the
                 // workers: signal the stop so they return instead of parking
                 // forever, then fail the spawn.
-                signal_stop(&runtime, process_id);
+                if let Some(runtime) = runtime.upgrade() {
+                    signal_stop(&runtime, process_id);
+                }
                 return Err(error);
             }
         };

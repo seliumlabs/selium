@@ -1,3 +1,7 @@
+**Status:** post-baseline proposal. The current baseline is single-host; no
+multi-host transport is claimed by the implemented system. This change is kept
+for the scaling design and is not part of the current release gate.
+
 # Proposal: Cluster Scaling Beyond Full Mesh
 
 ## Why

@@ -30,19 +30,19 @@ When a guest instance terminates, `selium-runtime` SHALL automatically clean up 
 - **THEN** the runtime SHALL unmap all shared regions from that guest's memory before releasing the instance
 
 ### Requirement: Network Hostcall Dispatch
-`selium-runtime` SHALL dispatch `TcpConnect`, `TcpBind`, and `UdpBind` hostcalls by spawning tokio tasks that manage the underlying OS sockets and proxy data through shared ring buffers. The kernel's `NetworkState` SHALL be used only for metadata tracking.
+`selium-runtime` SHALL dispatch `TcpConnect`, `TcpBind`, and `UdpBind` hostcalls using non-blocking std sockets registered with the kernel's mio poller for inbound readiness and blocking std threads with generation waits for outbound draining. `NetworkState` SHALL retain lifecycle metadata and running flags.
 
 #### Scenario: Guest connects to TCP endpoint via runtime
 - **WHEN** a guest with a `Network` capability invokes `TcpConnect`
-- **THEN** the runtime SHALL validate the capability, create a shared ring region via the kernel's `MemoryRegistry`, record metadata in the kernel's `NetworkState`, spawn a tokio task for the TCP proxy, and return a `SharedRegionDescriptor`
+- **THEN** the runtime SHALL validate the capability, create a shared ring region, register the stream with the mio poller and lifecycle state, start the outbound drain thread, and return a `SharedRegionDescriptor`
 
 #### Scenario: Guest binds TCP listener via runtime
 - **WHEN** a guest with a `Network` capability invokes `TcpBind`
-- **THEN** the runtime SHALL validate the capability, bind an async `TcpListener`, create a host queue via `HostQueueRegistry`, record metadata in `NetworkState`, spawn a tokio task for the accept loop, and return a `HostQueueDescriptor`
+- **THEN** the runtime SHALL validate the capability, bind a non-blocking std `TcpListener`, create a host queue, register listener lifecycle state and the poller accept path, and return a `HostQueueDescriptor`
 
 #### Scenario: Guest binds UDP socket via runtime
 - **WHEN** a guest with a `Network` capability invokes `UdpBind`
-- **THEN** the runtime SHALL validate the capability, bind an async `UdpSocket`, create a shared ring region via `MemoryRegistry`, record metadata in `NetworkState`, spawn tokio tasks for recv/send proxying, and return a `SharedRegionDescriptor`
+- **THEN** the runtime SHALL validate the capability, bind a non-blocking std `UdpSocket`, create a shared ring region, register lifecycle state and mio receive handling, start outbound draining, and return a `SharedRegionDescriptor`
 
 ### Requirement: Dedicated Timer Driver
 `selium-runtime` SHALL own guest `Sleep` deadlines in a dedicated timer driver
@@ -95,43 +95,37 @@ The runtime SHALL revoke a resource's registration by resource identity (class a
 - **THEN** its registrations SHALL be revoked from the owner recorded in the registry, without the runtime holding per-resource tenant records
 
 ### Requirement: Sub-Struct Architecture
-`selium-runtime` SHALL decompose `Runtime` into sub-structs, each with its own methods:
-
-- `GuestTable` — loaded guests
-- `ProcessAuthorityTable` — process authorities, grants, parent relationships
-- `ResourceTracker` — local handle owners, shared resource owners
-- `HostcallEngine` — operation state machine, mailboxes
-- `DiscoveryState` — discovery publisher, listener handle
+`selium-runtime` SHALL keep one coherent `Runtime` owner for guest, authority, resource, operation, and discovery state while separating hostcall resource families behind a common dispatcher. Network, certificate-signing, and time handlers SHALL live in dedicated modules and share lifecycle helpers rather than duplicate state.
 
 #### Scenario: Sub-structs are independently usable
-- **WHEN** a caller holds a `ResourceTracker` handle
-- **THEN** the caller SHALL be able to call `claim_local_handle`, `release_local_handle`, and other resource tracking methods without accessing `Runtime` directly
+- **WHEN** a resource-family handler is exercised through the runtime dispatcher
+- **THEN** it SHALL perform its resource operation without requiring a second runtime or an unrelated guest execution path
 
 #### Scenario: Cross-subsystem orchestration uses function parameters
-- **WHEN** an operation requires multiple sub-structs (e.g., `cleanup_process_resources` needs `ResourceTracker`, `DiscoveryState`, and `Kernel`)
-- **THEN** it SHALL be implemented as a function that takes the required sub-structs as parameters, rather than as a method on a single monolithic struct
+- **WHEN** an operation crosses resource families or requires kernel and discovery state
+- **THEN** orchestration SHALL pass through explicit runtime/kernel/provider contexts rather than ambient process-global providers
 
 ### Requirement: Tokio Dependency
-`selium-runtime` SHALL depend on tokio with `net`, `rt-multi-thread`, `sync`, `time`, and `macros` features. The runtime SHALL NOT spawn its own tokio runtime — it SHALL use `tokio::spawn` and `tokio::time::sleep` from the ambient context provided by the binary's `#[tokio::main]`.
+`selium-runtime` MAY use Tokio for its binary, native clients, and async integration surfaces, but guest network hostcalls SHALL NOT require an ambient Tokio reactor. The runtime SHALL NOT create a second Tokio runtime inside the library.
 
 #### Scenario: Runtime uses ambient tokio context
-- **WHEN** `Runtime::new` is called outside of a tokio context and a method that spawns tasks is invoked
-- **THEN** the call SHALL panic with "there is no reactor running"
+- **WHEN** `Runtime::new` and network hostcalls are used outside a Tokio context
+- **THEN** std/mio network execution SHALL proceed without a reactor panic; APIs that explicitly require Tokio SHALL document and enforce their own ambient-context requirement
 
 #### Scenario: Tests use #[tokio::test]
-- **WHEN** a test in `selium-runtime` spawns network resources
-- **THEN** the test function SHALL be annotated with `#[tokio::test]`
+- **WHEN** a runtime test exercises an async API that requires a Tokio reactor
+- **THEN** the test SHALL be annotated with `#[tokio::test]`; std/mio-only tests MAY remain synchronous
 
 ### Requirement: Async Network I/O
-`selium-runtime` SHALL implement TCP and UDP proxy I/O using tokio's async `TcpListener`, `TcpStream`, and `UdpSocket` types. All proxy operations (`proxy_inbound`, `proxy_outbound`, `accept_loop`, `udp_proxy_recv`, `udp_proxy_send`) SHALL be async functions spawned as tokio tasks.
+`selium-runtime` SHALL implement event-driven TCP and UDP proxy I/O using non-blocking std sockets and mio readiness for inbound traffic, plus blocking std threads with condition-variable generation waits for outbound traffic. Proxy paths SHALL NOT use Tokio socket tasks or sleep-based polling.
 
 #### Scenario: TCP accept loop uses async I/O
-- **WHEN** the runtime's TCP accept loop is running
-- **THEN** it SHALL use `listener.accept().await` rather than non-blocking accept with `thread::sleep`
+- **WHEN** a registered TCP listener becomes readable
+- **THEN** the kernel's mio poller SHALL accept the connection without a Tokio `listener.accept().await` task or `thread::sleep` retry loop
 
 #### Scenario: TCP proxy uses async I/O
 - **WHEN** the runtime proxies data between a TCP socket and a shared ring buffer
-- **THEN** it SHALL use `stream.read().await` and `stream.write_all().await` rather than blocking `read()`/`write()` with `thread::sleep`
+- **THEN** inbound readiness SHALL come from mio and outbound blocking reads/writes SHALL be coordinated by generation waits rather than async Tokio socket methods or sleep polling
 
 ### Requirement: Discovery-Enabled Bootstrap
 

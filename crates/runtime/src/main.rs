@@ -19,6 +19,11 @@ struct AppDef {
 
 /// Selium runtime — loads and executes WebAssembly system guests.
 #[derive(Parser)]
+#[command(
+    name = "selium-runtime",
+    version,
+    about = "Selium runtime: bootstraps and executes WebAssembly system guests"
+)]
 struct Cli {
     /// Start the discovery subsystem
     #[arg(long, default_value_t = false)]
@@ -51,6 +56,13 @@ struct Cli {
     /// a throwaway volume root and no persisted keys.
     #[arg(long)]
     state_dir: Option<PathBuf>,
+
+    /// Bootstrap the configured guests, prove they loaded and ran, then exit
+    /// zero. This is the packaged-artifact smoke path: it exercises module
+    /// loading, the ABI preamble, guest instantiation, and teardown without
+    /// needing a service loop or a network.
+    #[arg(long, default_value_t = false)]
+    smoke_bootstrap: bool,
 }
 
 #[tokio::main]
@@ -67,7 +79,18 @@ async fn main() -> Result<()> {
                 module_bytes: fs::read(&app.path)?,
                 entrypoint: app.entrypoint.clone(),
                 arguments: Vec::new(),
-                grants: Vec::new(),
+                // The smoke path proves the ABI and the engine, not a
+                // deployment's authority: a smoke guest may allocate and
+                // attach shared memory (the golden-path demo needs exactly
+                // that) but nothing else.
+                grants: if cli.smoke_bootstrap {
+                    vec![CapabilityGrant::new(
+                        Capability::SharedMemory,
+                        vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+                    )]
+                } else {
+                    Vec::new()
+                },
                 tenant: app.tenant.clone(),
                 discovery_service: false,
                 handlers: Vec::new(),
@@ -93,6 +116,23 @@ async fn main() -> Result<()> {
         state_dir,
     };
     let report = runtime.bootstrap_system_guests(config)?;
+
+    if cli.smoke_bootstrap {
+        // The smoke only needs to prove the host and the guest ABI agree; the
+        // activity log below is the evidence a human reads when it fails.
+        let loaded = report.guests.len();
+        if loaded == 0 {
+            anyhow::bail!("smoke-bootstrap: no guests were bootstrapped");
+        }
+        println!(
+            "smoke-bootstrap: {loaded} guest(s) bootstrapped; runtime {}",
+            env!("CARGO_PKG_VERSION")
+        );
+        for guest_report in &report.guests {
+            runtime.stop_process(guest_report.process_id)?;
+        }
+        return Ok(());
+    }
 
     // Print activity log events
     let activity = runtime.activity_log();

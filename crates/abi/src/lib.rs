@@ -137,6 +137,41 @@ pub const HOSTCALL_STATUS_READY: u32 = 0;
 /// for future metadata users (e.g. HTTP identity hints).
 pub const METADATA_MAX_BYTES: usize = 4096;
 
+/// Maximum encoded byte length of a [`HostcallEnvelope`] accepted from a guest.
+///
+/// The host rejects a declared envelope length above this ceiling before
+/// allocating a decode buffer, so hostile input cannot request an unbounded
+/// allocation. The ceiling accommodates inline system-guest modules (hundreds
+/// of KiB) with headroom while keeping per-request host memory bounded.
+pub const HOSTCALL_ENVELOPE_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// Greatest sleep duration, in milliseconds, that a guest may request.
+///
+/// A hundred years is far beyond any legitimate platform timer while leaving
+/// comfortable headroom for `Instant` representation on every supported
+/// target. Requests above this ceiling (including `u64::MAX`) are rejected
+/// with `MalformedPayload` before a deadline or timer is created.
+pub const MAX_SLEEP_MILLIS: u64 = 100 * 365 * 24 * 60 * 60 * 1000;
+
+/// Magic value identifying a Selium hostcall request preamble.
+pub const HOSTCALL_MAGIC: u32 = 0x5345_4C4D;
+/// Current host/guest ABI version for hostcall request encoding.
+///
+/// Host and guest packages share this version in lockstep during the alpha:
+/// a request carrying any other version is rejected before rkyv enum
+/// dispatch, so an incompatible layout is never decoded as another variant.
+/// Version 2 also makes hostcall creation return the full [`OperationId`];
+/// status/length packing remains confined to polling, whose value is a `u32`.
+/// Version 3 replaces executable negotiation with the passive custom section
+/// below, so no guest code runs before its declared version is validated.
+pub const SELIUM_ABI_VERSION: u32 = 3;
+/// Custom section containing the guest's ABI version as four little-endian
+/// bytes. The runtime reads this declaration from the module bytes without
+/// instantiating or executing guest code.
+pub const SELIUM_ABI_VERSION_SECTION: &str = "selium_abi_version";
+/// Fixed preamble size: `[magic: u32 LE][abi version: u32 LE]`.
+pub const HOSTCALL_PREAMBLE_SIZE: usize = 8;
+
 /// Marker trait for values that can be encoded with Selium's rkyv codec.
 pub trait RkyvEncode:
     Archive + for<'a> Serialize<HighSerializer<AlignedVec, ArenaHandle<'a>, RancorError>>
@@ -211,6 +246,73 @@ pub enum Capability {
     /// conferred on a child process. Held solely by the identity system guest,
     /// which owns the mapping durably.
     DomainWrite,
+}
+
+impl Capability {
+    /// Every capability, in declaration order.
+    ///
+    /// This is the single source for whole-vocabulary checks (coverage tests,
+    /// bootstrap-provisioning audits, documentation). [`Self::name`] is
+    /// exhaustive, so adding a variant fails to compile until it is named; the
+    /// coverage test then fails until the variant is listed here too.
+    pub const ALL: &'static [Capability] = &[
+        Self::ProcessLifecycle,
+        Self::SharedMemory,
+        Self::Signal,
+        Self::Network,
+        Self::Storage,
+        Self::SessionLifecycle,
+        Self::ActivityRead,
+        Self::MeteringRead,
+        Self::GuestLogRead,
+        Self::GuestLogWrite,
+        Self::HostQueue,
+        Self::DelegateGrants,
+        Self::RouteClaim,
+        Self::MintCertificate,
+        Self::QuotaWrite,
+        Self::ProcessProbe,
+        Self::DomainWrite,
+    ];
+
+    /// The capability's stable identifier, used in diagnostics and error
+    /// messages.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::ProcessLifecycle => "ProcessLifecycle",
+            Self::SharedMemory => "SharedMemory",
+            Self::Signal => "Signal",
+            Self::Network => "Network",
+            Self::Storage => "Storage",
+            Self::SessionLifecycle => "SessionLifecycle",
+            Self::ActivityRead => "ActivityRead",
+            Self::MeteringRead => "MeteringRead",
+            Self::GuestLogRead => "GuestLogRead",
+            Self::GuestLogWrite => "GuestLogWrite",
+            Self::HostQueue => "HostQueue",
+            Self::DelegateGrants => "DelegateGrants",
+            Self::RouteClaim => "RouteClaim",
+            Self::MintCertificate => "MintCertificate",
+            Self::QuotaWrite => "QuotaWrite",
+            Self::ProcessProbe => "ProcessProbe",
+            Self::DomainWrite => "DomainWrite",
+        }
+    }
+
+    /// True when only the host's bootstrap may provision this capability: a
+    /// spawn that confers it on a child process is denied, even when the
+    /// parent holds it.
+    pub const fn is_bootstrap_provisioned(&self) -> bool {
+        matches!(
+            self,
+            Self::DelegateGrants
+                | Self::RouteClaim
+                | Self::MintCertificate
+                | Self::QuotaWrite
+                | Self::ProcessProbe
+                | Self::DomainWrite
+        )
+    }
 }
 
 /// Identity of a resource in either local-handle or shared-resource space.
@@ -924,6 +1026,22 @@ pub enum HostcallRequest {
         /// Tenant whose CA is minted.
         tenant: String,
     },
+    /// Commit the CA mint after its identity-registry record is durable,
+    /// discarding the host-private snapshot of the displaced CA.
+    CommitTenantCa {
+        /// Tenant whose CA transaction is committed.
+        tenant: String,
+        /// Certificate returned by the corresponding `SignTenantCa` call.
+        ca_cert_der: Vec<u8>,
+    },
+    /// Roll back a CA mint whose identity-registry append definitely failed,
+    /// restoring the displaced CA (or removing a first, uncommitted CA).
+    RollbackTenantCa {
+        /// Tenant whose CA transaction is rolled back.
+        tenant: String,
+        /// Certificate returned by the corresponding `SignTenantCa` call.
+        ca_cert_der: Vec<u8>,
+    },
     /// Sign a user leaf certificate from a client-supplied SPKI via that
     /// tenant's CA key. Returns the DER-encoded leaf certificate.
     SignUserCert {
@@ -954,6 +1072,10 @@ pub enum HostcallRequest {
         /// Resource id within that class.
         resource_id: u64,
     },
+    /// Resolve the platform's current discovery listener after a prior
+    /// discovery session failed. The host records the caller's attach basis
+    /// only when the replacement has declared itself attachable by resolution.
+    DiscoveryListener,
 }
 
 /// Hostcall request paired with the guest task that initiated it.
@@ -1072,6 +1194,39 @@ pub enum RkyvError {
     #[error("decode error: {0}")]
     /// Decoding failed.
     Decode(String),
+}
+
+/// Error returned when a hostcall request preamble is missing or incompatible.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum HostcallPreambleError {
+    /// The request is too short to carry the fixed preamble.
+    #[error("hostcall request is missing the ABI preamble")]
+    Missing,
+    /// The leading magic value is not the Selium hostcall magic.
+    #[error("hostcall request has invalid magic {found:#010x}")]
+    BadMagic {
+        /// Magic value supplied by the sender.
+        found: u32,
+    },
+    /// The sender's ABI version is not the host's supported version.
+    #[error("host ABI version {host} is incompatible with guest ABI version {guest}")]
+    VersionMismatch {
+        /// Version supported by the host.
+        host: u32,
+        /// Version declared by the guest request.
+        guest: u32,
+    },
+}
+
+impl HostcallPreambleError {
+    /// The structured ABI error this rejection is reported as.
+    ///
+    /// The message names both ABI versions, so a refused guest can report why
+    /// it was refused (and against which host version) without reading the
+    /// host's log.
+    pub fn to_abi_error(&self) -> AbiError {
+        AbiError::new(AbiErrorCode::MalformedPayload, self.to_string())
+    }
 }
 
 /// Parsed components of a network endpoint URI (`tcp://` or `udp://`).
@@ -1367,6 +1522,50 @@ impl<T> RkyvEncode for T where
 {
 }
 
+/// Encodes a hostcall request with the fixed ABI magic/version preamble.
+///
+/// The preamble precedes the rkyv envelope so the host can validate
+/// compatibility before attempting to interpret enum variant layouts.
+pub fn encode_hostcall_request(envelope: &HostcallEnvelope) -> Result<Vec<u8>, RkyvError> {
+    let payload = encode_rkyv(envelope)?;
+    let mut encoded = Vec::with_capacity(HOSTCALL_PREAMBLE_SIZE + payload.len());
+    encoded.extend_from_slice(&HOSTCALL_MAGIC.to_le_bytes());
+    encoded.extend_from_slice(&SELIUM_ABI_VERSION.to_le_bytes());
+    encoded.extend_from_slice(&payload);
+    Ok(encoded)
+}
+
+/// Validates a hostcall request preamble, returning the rkyv payload.
+///
+/// Missing preambles, wrong magic, and mismatched ABI versions are rejected
+/// before any rkyv decoding; a version mismatch reports both versions.
+pub fn hostcall_request_payload(bytes: &[u8]) -> Result<&[u8], HostcallPreambleError> {
+    let magic_bytes = bytes
+        .get(..4)
+        .ok_or(HostcallPreambleError::Missing)?
+        .try_into()
+        .map_err(|_error| HostcallPreambleError::Missing)?;
+    let magic = u32::from_le_bytes(magic_bytes);
+    if magic != HOSTCALL_MAGIC {
+        return Err(HostcallPreambleError::BadMagic { found: magic });
+    }
+    let version_bytes = bytes
+        .get(4..HOSTCALL_PREAMBLE_SIZE)
+        .ok_or(HostcallPreambleError::Missing)?
+        .try_into()
+        .map_err(|_error| HostcallPreambleError::Missing)?;
+    let guest = u32::from_le_bytes(version_bytes);
+    if guest != SELIUM_ABI_VERSION {
+        return Err(HostcallPreambleError::VersionMismatch {
+            host: SELIUM_ABI_VERSION,
+            guest,
+        });
+    }
+    bytes
+        .get(HOSTCALL_PREAMBLE_SIZE..)
+        .ok_or(HostcallPreambleError::Missing)
+}
+
 /// Decodes an rkyv value from bytes after validation.
 pub fn decode_rkyv<T>(bytes: &[u8]) -> Result<T, RkyvError>
 where
@@ -1493,9 +1692,27 @@ mod tests {
         }
     }
 
+    // scenario: selium-abi/regionprot-enum/regionprot-serialisation
+    #[test]
+    fn region_prot_serialises_to_stable_discriminants() {
+        // The wire form is the discriminant: `RegionProt` travels inside
+        // `AllocRegion`/`AttachRegion` envelopes, so a reordering would
+        // silently invert a read-only request into a writable one.
+        assert_eq!(RegionProt::ReadOnly as u8, 0);
+        assert_eq!(RegionProt::ReadWrite as u8, 1);
+
+        for prot in [RegionProt::ReadOnly, RegionProt::ReadWrite] {
+            let encoded = encode_rkyv(&prot).expect("encode region protection");
+            let decoded: RegionProt = decode_rkyv(&encoded).expect("decode region protection");
+            assert_eq!(decoded, prot);
+        }
+    }
+
     /// `ResourceSelector::Namespace` matches hierarchically: a tenant selector
     /// admits only its own tenant, and the root selector admits only a root
     /// (tenant-less) scope context.
+    // scenario: capability-enforcement/namespace-selector-hierarchy/tenant-selector-admits-only-its-tenant
+    // scenario: capability-enforcement/namespace-selector-hierarchy/root-selector-admits-the-root-namespace
     #[test]
     fn namespace_selector_matches_exactly_and_root() {
         let acme = ResourceSelector::Namespace(Namespace::Tenant("acme".to_string()));
@@ -1554,6 +1771,7 @@ mod tests {
         assert!(!grant.allows(&denied));
     }
 
+    // scenario: selium-abi/host-guest-boundary-only/hostcall-contract-is-unchanged
     #[test]
     fn encode_and_decode_round_trip() {
         let request = HostcallEnvelope {
@@ -1603,6 +1821,7 @@ mod tests {
         assert_eq!(deframed, b"hello");
     }
 
+    // scenario: selium-abi/hostqueuecreate-serving-tenant/serving-tenant-round-trips
     #[test]
     fn host_queue_create_round_trip() {
         let envelope = HostcallEnvelope {
@@ -1614,6 +1833,101 @@ mod tests {
         let encoded = encode_rkyv(&envelope).expect("encode");
         let decoded: HostcallEnvelope = decode_rkyv(&encoded).expect("decode");
         assert_eq!(decoded, envelope);
+    }
+
+    // scenario: selium-abi/host-and-guest-negotiate-abi-compatibility/current-versions-match
+    #[test]
+    fn hostcall_preamble_accepts_the_matching_abi_version() {
+        let envelope = HostcallEnvelope {
+            request: HostcallRequest::SelfInfo,
+            task_id: Some(5),
+        };
+        let encoded = encode_hostcall_request(&envelope).expect("encode with preamble");
+        assert_eq!(
+            encoded.get(..4),
+            Some(HOSTCALL_MAGIC.to_le_bytes().as_slice())
+        );
+        assert_eq!(
+            encoded.get(4..HOSTCALL_PREAMBLE_SIZE),
+            Some(SELIUM_ABI_VERSION.to_le_bytes().as_slice())
+        );
+        let payload = hostcall_request_payload(&encoded).expect("matching version");
+        let decoded: HostcallEnvelope = decode_rkyv(payload).expect("decode payload");
+        assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn hostcall_preamble_rejects_missing_or_truncated_headers() {
+        assert_eq!(
+            hostcall_request_payload(&[]),
+            Err(HostcallPreambleError::Missing)
+        );
+        assert_eq!(
+            hostcall_request_payload(&HOSTCALL_MAGIC.to_le_bytes()),
+            Err(HostcallPreambleError::Missing),
+            "a magic without a version is still missing the preamble"
+        );
+    }
+
+    #[test]
+    fn hostcall_preamble_rejects_bad_magic() {
+        let mut bytes = HOSTCALL_MAGIC.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&SELIUM_ABI_VERSION.to_le_bytes());
+        bytes[0] ^= 0xff;
+        assert_eq!(
+            hostcall_request_payload(&bytes),
+            Err(HostcallPreambleError::BadMagic {
+                found: u32::from_le_bytes(
+                    bytes
+                        .get(..4)
+                        .and_then(|slice| slice.try_into().ok())
+                        .expect("four bytes")
+                )
+            })
+        );
+    }
+
+    // scenario: selium-abi/host-and-guest-negotiate-abi-compatibility/guest-abi-is-incompatible
+    #[test]
+    fn hostcall_preamble_reports_both_versions_on_mismatch() {
+        for guest in [0, SELIUM_ABI_VERSION + 1, u32::MAX] {
+            let mut bytes = HOSTCALL_MAGIC.to_le_bytes().to_vec();
+            bytes.extend_from_slice(&guest.to_le_bytes());
+            let error = hostcall_request_payload(&bytes).expect_err("version must be rejected");
+            assert_eq!(
+                error,
+                HostcallPreambleError::VersionMismatch {
+                    host: SELIUM_ABI_VERSION,
+                    guest
+                }
+            );
+            let message = error.to_string();
+            assert!(
+                message.contains(&SELIUM_ABI_VERSION.to_string())
+                    && message.contains(&guest.to_string()),
+                "the error must name both versions: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn hostcall_preamble_rejection_is_a_structured_abi_error() {
+        let error = HostcallPreambleError::VersionMismatch {
+            host: SELIUM_ABI_VERSION,
+            guest: SELIUM_ABI_VERSION + 7,
+        };
+        let abi = error.to_abi_error();
+        assert_eq!(abi.code, AbiErrorCode::MalformedPayload);
+        assert!(
+            abi.message.contains(&SELIUM_ABI_VERSION.to_string())
+                && abi.message.contains(&(SELIUM_ABI_VERSION + 7).to_string()),
+            "the guest-visible error names both versions: {}",
+            abi.message
+        );
+        assert_eq!(
+            HostcallPreambleError::Missing.to_abi_error().code,
+            AbiErrorCode::MalformedPayload
+        );
     }
 
     #[test]
@@ -1788,6 +2102,7 @@ mod tests {
         }
     }
 
+    // scenario: selium-abi/volume-resource-class/log-and-blob-classes-are-absent
     #[test]
     fn storage_classes_leave_the_abi() {
         assert_eq!(ResourceClass::Volume.uri_segment(), "volume");
@@ -1798,6 +2113,9 @@ mod tests {
         assert_eq!(ResourceClass::from_uri_segment("log"), None);
         assert_eq!(ResourceClass::from_uri_segment("blob"), None);
     }
+    // scenario: selium-abi/process-metering-observation/observation-fields-round-trip
+    // scenario: selium-abi/process-metering-observation/cpu-microseconds-absent
+    // scenario: selium-abi/process-metering-observation/storage-is-not-a-per-process-field
 
     #[test]
     fn metering_observation_round_trip() {
@@ -1841,6 +2159,7 @@ mod tests {
         assert_eq!(decoded, output);
     }
 
+    // scenario: selium-abi/certificate-signing-hostcall-variants/signtenantca-round-trips
     #[test]
     fn sign_tenant_ca_round_trip() {
         let envelope = HostcallEnvelope {
@@ -1854,6 +2173,29 @@ mod tests {
         assert_eq!(decoded, envelope);
     }
 
+    #[test]
+    fn tenant_ca_transaction_round_trips() {
+        for request in [
+            HostcallRequest::CommitTenantCa {
+                tenant: "acme".to_string(),
+                ca_cert_der: vec![0x30, 0x01],
+            },
+            HostcallRequest::RollbackTenantCa {
+                tenant: "acme".to_string(),
+                ca_cert_der: vec![0x30, 0x02],
+            },
+        ] {
+            let envelope = HostcallEnvelope {
+                request,
+                task_id: None,
+            };
+            let encoded = encode_rkyv(&envelope).expect("encode");
+            let decoded: HostcallEnvelope = decode_rkyv(&encoded).expect("decode");
+            assert_eq!(decoded, envelope);
+        }
+    }
+
+    // scenario: selium-abi/certificate-signing-hostcall-variants/signusercert-round-trips
     #[test]
     fn sign_user_cert_round_trip() {
         let envelope = HostcallEnvelope {
@@ -2006,6 +2348,46 @@ mod tests {
         assert_eq!(decoded, envelope);
     }
 
+    #[test]
+    fn capability_vocabulary_covers_every_variant() {
+        // One list, one exhaustive name match: a new variant breaks the match
+        // at compile time, and this test then fails until `ALL` lists it.
+        let mut seen = std::collections::BTreeSet::new();
+        for capability in Capability::ALL {
+            assert!(
+                seen.insert(capability.name()),
+                "duplicate capability name {}",
+                capability.name()
+            );
+            assert!(!capability.name().is_empty());
+        }
+        assert_eq!(
+            seen.len(),
+            Capability::ALL.len(),
+            "every capability appears exactly once in ALL"
+        );
+
+        // The bootstrap-provisioned set is the non-delegable set; keep it in
+        // declaration order so a reviewer can diff it.
+        let provisioned: Vec<&str> = Capability::ALL
+            .iter()
+            .filter(|capability| capability.is_bootstrap_provisioned())
+            .map(Capability::name)
+            .collect();
+        assert_eq!(
+            provisioned,
+            [
+                "DelegateGrants",
+                "RouteClaim",
+                "MintCertificate",
+                "QuotaWrite",
+                "ProcessProbe",
+                "DomainWrite",
+            ]
+        );
+    }
+
+    // scenario: selium-abi/cpu-resource-class/cpu-variant-joins-the-resource-vocabulary
     #[test]
     fn resource_class_uri_segments_cover_every_variant() {
         // Task 1.3: the segment vocabulary covers the entire closed set, and
@@ -2178,6 +2560,7 @@ mod tests {
         assert!(grant.allows(&ctx));
     }
 
+    // scenario: capability-enforcement/component-aware-uri-prefix-matching/port-wildcard
     #[test]
     fn uri_prefix_wildcard_port() {
         let grant = CapabilityGrant::new(
@@ -2247,6 +2630,7 @@ mod tests {
         assert!(grant.allows(&ctx));
     }
 
+    // scenario: capability-enforcement/component-aware-uri-prefix-matching/label-suffix-attack-rejected
     #[test]
     fn uri_prefix_rejects_label_suffix_attack() {
         // `tcp://example.com:443` must NOT match `tcp://example.com.evil.com:443`.
@@ -2336,6 +2720,7 @@ mod tests {
         assert!(!grant.allows(&ctx_no_match));
     }
 
+    // scenario: capability-enforcement/component-aware-uri-prefix-matching/registry-prefix-respects-segment-boundaries
     #[test]
     fn registry_prefix_respects_segment_boundaries() {
         let grant = CapabilityGrant::new(
@@ -2368,6 +2753,8 @@ mod tests {
         );
     }
 
+    // scenario: capability-enforcement/exact-uri-selector/exact-uri-matches
+    // scenario: capability-enforcement/exact-uri-selector/longer-name-does-not-match
     #[test]
     fn exact_uri_selector_matches_only_the_canonical_name() {
         let selector = ResourceSelector::Uri("sel:///control".to_string());
@@ -2388,6 +2775,7 @@ mod tests {
         assert!(!selector.matches(&nested), "Uri is exact, never a prefix");
     }
 
+    // scenario: capability-enforcement/exact-uri-selector/wire-name-is-normalised
     #[test]
     fn exact_uri_selector_normalises_wire_names_and_trailing_separators() {
         let selector = ResourceSelector::Uri("sel:///control".to_string());
@@ -2403,12 +2791,14 @@ mod tests {
         assert!(selector.matches(&trailing));
     }
 
+    // scenario: selium-abi/route-claim-abi-variants/uri-selector-is-part-of-the-selector-vocabulary
     #[test]
     fn uri_selector_is_evaluatable() {
         let selector = ResourceSelector::Uri("sel:///control".to_string());
         assert!(selector.is_evaluatable(std::slice::from_ref(&selector)));
     }
 
+    // scenario: selium-abi/route-claim-abi-variants/route-claim-variants-round-trip
     #[test]
     fn route_claim_grant_round_trips() {
         let grant = CapabilityGrant {
@@ -2503,6 +2893,7 @@ mod tests {
         assert!(ResourceSelector::Children.is_evaluatable(empty));
     }
 
+    // scenario: selium-abi/waitregister-hostcall/round-trip-encoding
     #[test]
     fn wait_register_round_trip() {
         let envelope = HostcallEnvelope {
@@ -2517,6 +2908,7 @@ mod tests {
         assert_eq!(decoded, envelope);
     }
 
+    // scenario: selium-abi/quota-hostcall-variants/quotaset-round-trips
     #[test]
     fn quota_set_round_trip() {
         let envelope = HostcallEnvelope {
@@ -2550,86 +2942,7 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `selium-abi` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: selium-abi/shared-region-hostcall-variants/allocregion-hostcall-round-trip
-// scenario: selium-abi/shared-region-hostcall-variants/attachregion-with-reader-slot
-// scenario: selium-abi/regionprot-enum/regionprot-serialisation
-// scenario: selium-abi/sleep-hostcall-variant/sleep-operation-created
-// scenario: selium-abi/sleep-hostcall-variant/sleep-operation-polled-before-deadline
-// scenario: selium-abi/sleep-hostcall-variant/sleep-operation-polled-after-deadline
-// scenario: selium-abi/udpbind-hostcall/guest-binds-udp-socket
-// scenario: selium-abi/tcpconnect-hostcall/guest-connects-to-tcp-endpoint
-// scenario: selium-abi/tcpbind-hostcall/guest-binds-tcp-listener
-// scenario: selium-abi/waitregister-hostcall/round-trip-encoding
-// scenario: selium-abi/waitregister-hostcall/wake-routed-via-envelope-task
-// scenario: selium-abi/waitregister-hostcall/unattached-region-rejected
-// scenario: selium-abi/hostqueuecreate-serving-tenant/serving-tenant-round-trips
-// scenario: selium-abi/host-guest-boundary-only/service-messages-are-not-part-of-the-abi
-// scenario: selium-abi/host-guest-boundary-only/hostcall-contract-is-unchanged
-// scenario: selium-abi/certificate-signing-hostcall-variants/signtenantca-round-trips
-// scenario: selium-abi/certificate-signing-hostcall-variants/signusercert-round-trips
-// scenario: selium-abi/certificate-signing-hostcall-variants/revokeca-returns-no-key-material
-// scenario: selium-abi/mintcertificate-capability-variant/signing-hostcall-requires-the-capability
-// scenario: selium-abi/process-start-module-source/spawn-from-inline-bytes
-// scenario: selium-abi/process-start-module-source/spawn-from-a-durable-slice
-// scenario: selium-abi/process-start-module-source/slice-outside-the-caller-s-authority
-// scenario: selium-abi/process-start-module-source/no-host-side-catalogue
-// scenario: selium-abi/capability-probe-gated-by-authority/authorised-probe
-// scenario: selium-abi/capability-probe-gated-by-authority/unauthorised-probe-denied
-// scenario: selium-abi/owner-scoped-attach-authorisation/owner-authorises-a-peer
-// scenario: selium-abi/owner-scoped-attach-authorisation/non-owner-caller-is-denied
-// scenario: selium-abi/owner-scoped-attach-authorisation/recorded-id-authorises-the-attach
-// scenario: selium-abi/owner-scoped-attach-authorisation/no-privileged-guest-identity
-// scenario: selium-abi/owner-declared-resolvable-attach/declared-resource-admits-a-resolver
-// scenario: selium-abi/owner-declared-resolvable-attach/undeclared-resource-refuses-a-record
-// scenario: selium-abi/owner-declared-resolvable-attach/declaration-scope-enforced
-// scenario: selium-abi/quota-hostcall-variants/quotaset-round-trips
-// scenario: selium-abi/quota-hostcall-variants/quotaclear-removes-the-counter
-// scenario: selium-abi/quotawrite-capability-variant/quota-hostcall-requires-the-capability
-// scenario: selium-abi/process-metering-observation/observation-fields-round-trip
-// scenario: selium-abi/process-metering-observation/cpu-microseconds-absent
-// scenario: selium-abi/process-metering-observation/storage-is-not-a-per-process-field
-// scenario: selium-abi/cpu-resource-class/cpu-variant-joins-the-resource-vocabulary
-// scenario: selium-abi/cpu-resource-class/cpu-class-allocates-no-resource
-// scenario: selium-abi/volume-hostcall-variants/bytes-round-trip
-// scenario: selium-abi/volume-hostcall-variants/append-never-rewrites-earlier-bytes
-// scenario: selium-abi/volume-hostcall-variants/sync-is-a-durable-barrier
-// scenario: selium-abi/volume-resource-class/log-and-blob-classes-are-absent
-// scenario: selium-abi/volume-resource-class/volume-is-the-storage-quota-dimension
-// scenario: selium-abi/tenant-volume-usage-hostcall/reading-reflects-resident-bytes
-// scenario: selium-abi/tenant-volume-usage-hostcall/removal-releases-usage
-// scenario: selium-abi/tenant-volume-usage-hostcall/reading-survives-a-restart
-// scenario: selium-abi/tenant-volume-usage-hostcall/unauthorised-caller-denied
-// scenario: selium-abi/resource-authority-hostcall/owned-resource-reports-its-tenant
-// scenario: selium-abi/resource-authority-hostcall/unowned-resource-reports-no-ownership
-// scenario: selium-abi/resource-authority-hostcall/root-minted-resource-reports-the-root-tenant
-// scenario: selium-abi/resource-authority-hostcall/class-mismatch-is-reported
-// scenario: selium-abi/resource-authority-hostcall/authority-survives-projection-lag
-// scenario: selium-abi/capability-probe-scope/route-claim-is-probed-in-the-uri-s-scope
-// scenario: selium-abi/capability-probe-scope/probe-requires-the-probe-authority
-// scenario: selium-abi/expected-claims-and-process-list/expected-claims-are-visible-to-the-owner
-// scenario: selium-abi/expected-claims-and-process-list/another-process-s-expected-claims-require-the-probe-authority
-// scenario: selium-abi/live-process-list/process-list-requires-the-probe-authority
-// scenario: selium-abi/live-process-list/process-list-includes-a-silent-process
-// scenario: selium-abi/route-claim-abi-variants/route-claim-variants-round-trip
-// scenario: selium-abi/route-claim-abi-variants/uri-selector-is-part-of-the-selector-vocabulary
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `addressing` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: addressing/single-canonical-namespace/internal-path-is-canonical
-// scenario: addressing/single-canonical-namespace/no-parallel-namespace
-// scenario: addressing/path-label-reversal/bridge-route-projects-to-a-wire-name
-// scenario: addressing/path-label-reversal/deeper-path-reverses-in-full
-// scenario: addressing/path-label-reversal/root-route-projects-to-a-bare-name
-// scenario: addressing/advisory-domain-to-tenant-table/provisioned-domain-routes-to-its-tenant
-// scenario: addressing/advisory-domain-to-tenant-table/mapping-survives-restart
-// scenario: addressing/advisory-domain-to-tenant-table/mapping-is-advisory-not-authoritative-for-identity
-// scenario: addressing/advisory-domain-to-tenant-table/synthetic-tenant-label-always-resolves
-// scenario: addressing/unified-wire-name-resolution/sni-resolved-through-the-shared-resolver
-// scenario: addressing/unified-wire-name-resolution/host-resolved-through-the-shared-resolver
-// scenario: addressing/named-service-projection-boundary/resource-id-uri-stays-internal
-// scenario: addressing/apex-root-service-alias/domain-maps-directly-to-a-service
-// scenario: addressing/apex-root-service-alias/apex-paths-route-to-the-root-service
-// scenario: addressing/single-serve-declaration/one-declaration-yields-both-names
-// scenario: addressing/single-serve-declaration/resolution-returns-the-registered-route-target
-// scenario: addressing/process-keyed-revocation/guest-exit-revokes-its-routes

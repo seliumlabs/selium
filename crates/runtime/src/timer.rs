@@ -17,14 +17,17 @@
 use std::{
     cmp::Reverse,
     collections::BinaryHeap,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use parking_lot::{Condvar, Mutex};
 use selium_abi::{OperationId, ProcessId, TaskId};
 
-use crate::runtime::Runtime;
+use crate::runtime::{Runtime, WeakRuntime};
 
 /// One outstanding guest sleep, ordered by deadline.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -41,18 +44,19 @@ pub(crate) struct SleepRequest {
 struct DeadlineQueue {
     pending: Mutex<BinaryHeap<Reverse<SleepRequest>>>,
     arrived: Condvar,
+    stopped: AtomicBool,
 }
 
 /// The runtime's timer driver: one thread owning every outstanding guest
 /// sleep deadline.
 ///
 /// Started lazily on the first guest-issued `Sleep`, so a runtime that hosts
-/// no timers never pays for the thread. The thread lives as long as the
-/// process: it holds a [`Runtime`] handle to deliver wakes, so there is no
-/// moment at which the runtime could go away and strand an outstanding
-/// deadline.
+/// no timers never pays for the thread. Runtime shutdown signals and joins it
+/// within a bounded budget; its non-owning runtime handle does not prevent the
+/// final embedder handle from initiating that shutdown.
 pub(crate) struct TimerDriver {
     queue: Arc<DeadlineQueue>,
+    handle: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl DeadlineQueue {
@@ -64,10 +68,14 @@ impl DeadlineQueue {
     }
 
     /// Parks until the earliest deadline is due (or the queue changes),
-    /// returning every sleep that is due on wake.
-    fn take_due(&self) -> Vec<SleepRequest> {
+    /// returning every sleep that is due on wake. Returns `None` once the
+    /// driver is shut down.
+    fn take_due(&self) -> Option<Vec<SleepRequest>> {
         let mut pending = self.pending.lock();
         loop {
+            if self.stopped.load(Ordering::Acquire) {
+                return None;
+            }
             let wait = match pending.peek() {
                 None => None,
                 Some(Reverse(earliest)) => earliest
@@ -96,7 +104,12 @@ impl DeadlineQueue {
                 due.push(request);
             }
         }
-        due
+        Some(due)
+    }
+
+    fn shutdown(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.arrived.notify_all();
     }
 }
 
@@ -109,15 +122,27 @@ impl TimerDriver {
                 .name("selium-timer-driver".to_string())
                 .spawn({
                     let queue = Arc::clone(&queue);
-                    let runtime = runtime.clone();
+                    let runtime = runtime.background_handle();
                     move || drive(queue, runtime)
                 });
-            // A spawn failure degrades to "guest timers never fire" — the
-            // same observable as a dead driver — rather than taking the host
-            // down over a background thread.
-            drop(spawned);
-            TimerDriver { queue }
+            TimerDriver {
+                queue,
+                // A spawn failure degrades to "guest timers never fire" — the
+                // same observable as a dead driver — rather than taking the
+                // host down over a background thread.
+                handle: Mutex::new(spawned.ok()),
+            }
         })
+    }
+
+    /// Stops the driver thread and joins it. Idempotent.
+    pub(crate) fn shutdown(&self) {
+        self.queue.shutdown();
+        if let Some(handle) = self.handle.lock().take() {
+            crate::runtime::join_bounded(handle);
+        }
+        // The driver no longer completes deadlines: release what it retained.
+        self.queue.pending.lock().clear();
     }
 
     /// Registers a guest sleep, to be completed at `deadline`.
@@ -132,9 +157,19 @@ impl TimerDriver {
     /// `Timer` would otherwise leave a queue entry behind for its full
     /// duration (the soak lane's timer finding).
     pub(crate) fn cancel_process(&self, process_id: ProcessId) {
+        self.retain(|request| request.process_id != process_id);
+    }
+
+    /// Drops a single cancelled sleep so a dropped timer operation releases
+    /// its deadline immediately instead of waiting for process teardown.
+    pub(crate) fn cancel_operation(&self, operation_id: OperationId) {
+        self.retain(|request| request.operation_id != operation_id);
+    }
+
+    fn retain(&self, keep: impl Fn(&SleepRequest) -> bool) {
         let mut pending = self.queue.pending.lock();
         let before = pending.len();
-        pending.retain(|Reverse(request)| request.process_id != process_id);
+        pending.retain(|Reverse(request)| keep(request));
         if pending.len() != before {
             // The earliest deadline may have moved; wake the driver so it
             // re-parks against the new head.
@@ -183,9 +218,12 @@ impl Runtime {
 
 /// The driver loop: park until the earliest deadline, then complete every
 /// sleep that came due.
-fn drive(queue: Arc<DeadlineQueue>, runtime: Runtime) {
-    loop {
-        for request in queue.take_due() {
+fn drive(queue: Arc<DeadlineQueue>, runtime: WeakRuntime) {
+    while let Some(due) = queue.take_due() {
+        for request in due {
+            let Some(runtime) = runtime.upgrade() else {
+                return;
+            };
             runtime.complete_sleep(&request);
         }
     }
@@ -210,7 +248,7 @@ mod tests {
         });
 
         let start = Instant::now();
-        let due = queue.take_due();
+        let due = queue.take_due().expect("driver is running");
         assert_eq!(due.len(), 1, "the queued sleep must come back");
         assert!(start.elapsed() >= Duration::from_millis(15));
         assert_eq!(due.first().map(|request| request.operation_id), Some(1));
@@ -234,7 +272,10 @@ mod tests {
             task_id: 1,
         });
 
-        let due = driver.join().expect("driver thread");
+        let due = driver
+            .join()
+            .expect("driver thread")
+            .expect("driver is running");
         assert_eq!(due.len(), 1);
         assert_eq!(due.first().map(|request| request.operation_id), Some(2));
     }

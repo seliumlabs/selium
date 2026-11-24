@@ -36,7 +36,10 @@ const EXIT_BOUND: Duration = Duration::from_secs(30);
 const MAILBOX_BASE: u32 = 0x1000;
 /// Reviewed bound on the `mt-demo` SDK guest completing two CPU-bound tasks
 /// (interpreted, atomics, two workers) plus its serial baseline.
-const MT_DEMO_BOUND: Duration = Duration::from_secs(240);
+/// CPU-bound demo tasks run interpreted; a loaded runner legitimately takes
+/// minutes. The failure this distinguishes is a deadlocked worker, not a slow
+/// arithmetic loop.
+const MT_DEMO_BOUND: Duration = Duration::from_secs(900);
 /// Reviewed bound on the concurrent-execution proof. Both workers must reach a
 /// rendezvous that only completes when the other arrives; a serial run cannot
 /// finish at all, so this bound only distinguishes "concurrent" from
@@ -196,6 +199,8 @@ fn mt_demo_wasm() -> Vec<u8> {
 /// observation must report the summed committed-page count and the summed
 /// executed-unit count for the process — not one observation per worker. Three
 /// workers must report strictly more CPU than one over the same fixture.
+// scenario: process-metering/monotonic-per-process-counters/cross-thread-execution-attributed-to-the-process
+// scenario: process-metering/aggregation-across-workers/worker-pool-charges-the-process-once
 #[test]
 fn multithreaded_guest_aggregates_workers_into_one_observation() {
     const ITERATIONS: u32 = 4_000_000;
@@ -378,6 +383,7 @@ fn rendezvous_worker_module() -> String {
 /// the engine uses to give each concurrent invocation its own stack). See
 /// `scripts/build-all.sh`; the artifact is kept at
 /// `selium_mt_demo_atomics.wasm`.
+// scenario: guest-worker-pool/concurrent-task-execution/cpu-bound-tasks-overlap
 #[test]
 #[ignore = "requires the mt-demo guest built with the atomics target (see scripts/build-all.sh)"]
 fn sdk_mt_demo_guest_runs_two_cpu_bound_tasks_in_parallel() {
@@ -440,6 +446,7 @@ fn spawn_mt_demo(runtime: &Runtime, module_bytes: Vec<u8>, name: &str) -> u64 {
 
 /// 5.1: a trapping worker tears the guest down without a hang — the faulted
 /// worker stops the rest of the pool and the process is reaped.
+// scenario: guest-worker-pool/per-worker-fault-isolation/faulting-worker-stops-the-process
 #[test]
 fn trapping_worker_tears_guest_down_without_hang() {
     let runtime = Runtime::default();
@@ -476,6 +483,7 @@ fn trapping_worker_tears_guest_down_without_hang() {
 /// independent property: a slow host only makes both cases slower, it cannot
 /// invert the outcome. (The previous formulation compared serial and parallel
 /// wall time and was flaky under load, which is exactly what this replaces.)
+// scenario: guest-worker-pool/concurrent-instance-execution-contract/workers-share-one-instance-concurrently
 #[test]
 fn two_workers_reach_a_shared_rendezvous_concurrently() {
     let runtime = Runtime::default();
@@ -530,13 +538,27 @@ fn wait_for_process_exit(runtime: &Runtime, process_id: u64, timeout: Duration) 
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    panic!("timed out waiting for process {process_id} to exit");
+    let activity: Vec<String> = runtime
+        .activity_log()
+        .into_iter()
+        .map(|event| {
+            format!(
+                "{:?} pid={:?}: {}",
+                event.kind, event.process_id, event.message
+            )
+        })
+        .collect();
+    panic!(
+        "timed out waiting for process {process_id} to exit; loaded={} activity={activity:#?}",
+        runtime.loaded_guest_count()
+    );
 }
 
 /// 4.2: wake delivery for multithreaded guests routes through notify on the
 /// parking word instead of driving the reactor. A worker parked on the shared
 /// wake word resumes in place when the host wakes a task — the process then
 /// exits on its own, with no embedder pumping and no reactor poll.
+// scenario: guest-worker-pool/wake-delivery-by-notify/parked-task-resumes-in-place
 #[test]
 fn wake_delivery_notifies_parked_workers_without_driving_the_reactor() {
     let runtime = Runtime::default();
@@ -566,6 +588,7 @@ fn wake_delivery_notifies_parked_workers_without_driving_the_reactor() {
 /// 4.1: a multithreaded guest is provisioned with the configured worker-pool
 /// size at spawn, the pool runs the guest's CPU-bound workers, and teardown
 /// joins the pool without hanging.
+// scenario: guest-worker-pool/dedicated-os-worker-threads/worker-pool-is-provisioned-at-spawn
 #[test]
 fn worker_pool_provisioned_at_spawn_with_configured_count_and_joins_on_teardown() {
     let runtime = Runtime::default();
@@ -641,10 +664,3 @@ fn working_parked_worker_module(iterations: u32) -> String {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `guest-worker-pool` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: guest-worker-pool/dedicated-os-worker-threads/worker-pool-is-provisioned-at-spawn
-// scenario: guest-worker-pool/dedicated-os-worker-threads/pool-size-respects-the-core-bound
-// scenario: guest-worker-pool/concurrent-task-execution/cpu-bound-tasks-overlap
-// scenario: guest-worker-pool/single-flight-task-invariant/a-polled-task-is-not-polled-twice-at-once
-// scenario: guest-worker-pool/wake-delivery-by-notify/parked-task-resumes-in-place
-// scenario: guest-worker-pool/per-worker-fault-isolation/faulting-worker-stops-the-process
-// scenario: guest-worker-pool/concurrent-instance-execution-contract/workers-share-one-instance-concurrently

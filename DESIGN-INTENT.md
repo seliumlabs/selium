@@ -103,19 +103,39 @@ When evaluating any proposal, apply these tests in order:
    get documented as working. Delete docs that describe the next
    prototype.
 6. **The golden path stays green.** WASM guest → bootstrap → channel →
-   pub/sub → log line, in CI (`cargo test -p selium-runtime --test spine`).
-   A feature that cannot be exercised there does not exist yet.
+   pub/sub → log line, in CI (`cargo test -p selium-runtime --test spine --
+   --ignored` after building `selium-spine-demo`). A feature that cannot be
+   exercised there does not exist yet.
 
 ## Current state of truth
 
-The spine works: real WASM guests bootstrap on wasmtiny, allocate and
-attach shared memory, use typed channels, and stream logs to the host —
-proven by the golden-path test. Networking, discovery wiring, AAA
-enforcement, wake/wait, and multi-host are deferred with specs in
-`openspec/changes/` (see `discovery-bootstrap-slice`, `channel-wake-wait`,
-`consolidate-ring-protocol`, `aaa-capability-enforcement`). The README's
-"What runs today" section is the authoritative status; trust it over any
-other document, including this one.
+The golden path works and is not the whole story: real WASM guests bootstrap on
+wasmtiny, allocate and attach shared memory, use typed channels, stream logs to
+the host, and are driven by event wake-ups. Beyond it, the following run and are
+continuously tested (the README's "What runs today" section is the
+authoritative status; trust it over any other document, including this one):
+
+- discovery (Tier-1 feed registration and Tier-2 guest-driven shm RPC
+  resolution, with revocation on process exit) and the store, identity,
+  accounting, control-plane, bridge, and bridge-channel system guests;
+- the DNS, HTTP, and QUIC edge connectors, including an external HTTPS client
+  reaching a real application guest, and an external QUIC client relaying
+  streams through the WASM connector;
+- capability enforcement with real scope contexts, grant-time selector
+  admission, and host-authoritative attach/handoff;
+- wake/wait (generation waits, mailbox wake, timer driver), the shared-page
+  fast path, and the `sel` CLI through the real bridge to the control plane.
+
+Explicitly deferred, and recorded in `docs/known-unknowns.md` rather than
+implied: multi-host clustering (the system guests are single-host); storage
+retention/compaction and a bulk zero-copy storage path; consumer write
+isolation (owned by the parked `hardened-consumer-shared-memory` change);
+scheduler placement and supervision (the control plane records desired state
+but returns a typed deferred-delegation status, and the `guests/scheduler`,
+`guests/supervisor`, and `guests/cluster` sources are frozen out of the
+workspace); and the HTTP domain/apex/raw-path scenarios that remain reviewed
+waivers. OpenSpec changes under `openspec/changes/` describe work that has not
+landed; their task checkboxes say whether they are current.
 
 ## A note on prototypes
 

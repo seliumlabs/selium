@@ -199,7 +199,11 @@ impl Acceptance {
                 Err(error) => return Poll::Ready(Err(error)),
             };
             if generation != self.observed_generation {
-                return Poll::Ready(Ok(()));
+                return match self.region.peer_closed() {
+                    Ok(true) => Poll::Ready(Err(Error::ChannelClosed)),
+                    Ok(false) => Poll::Ready(Ok(())),
+                    Err(error) => Poll::Ready(Err(error)),
+                };
             }
             if !selium_memory::register_generation_wait(
                 self.region.region_id(),
@@ -221,6 +225,75 @@ impl Acceptance {
     }
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EstablishFailure {
+    Attach,
+    RequestTransport,
+    ReplyTransport,
+    Publish,
+    ClientRequest,
+    ClientReply,
+    Snapshot,
+}
+
+#[cfg(test)]
+thread_local! {
+    static ESTABLISH_FAILURE: std::cell::Cell<Option<EstablishFailure>> = const { std::cell::Cell::new(None) };
+    static LAST_ALLOCATED_SESSION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn inject_establish_failure(stage: EstablishFailure) -> std::result::Result<(), RpcError> {
+    let failed = ESTABLISH_FAILURE.with(|failure| {
+        if failure.get() == Some(stage) {
+            failure.set(None);
+            true
+        } else {
+            false
+        }
+    });
+    if failed {
+        Err(RpcError::Serialisation(format!(
+            "injected establishment failure at {stage:?}"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// Closes an announced session unless acceptance reaches establishment.
+///
+/// This deliberately lives on the server side of `accept`: every transport or
+/// generation failure after the handoff must wake the connecting peer rather
+/// than leave it parked forever. The client retains region ownership; closing
+/// here marks departure and does not free the peer's region.
+struct PendingAccept {
+    shared_id: u64,
+    armed: bool,
+}
+
+impl PendingAccept {
+    fn new(shared_id: u64) -> Self {
+        Self {
+            shared_id,
+            armed: true,
+        }
+    }
+
+    fn establish(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingAccept {
+    fn drop(&mut self) {
+        if self.armed {
+            drop(close_session(self.shared_id));
+        }
+    }
+}
+
 /// Accepts an incoming shared-memory RPC session.
 ///
 /// Attaches to the multi-memory region identified by `connection.shared_id`,
@@ -235,13 +308,20 @@ where
     Req: FlatMsg,
     Rep: FlatMsg,
 {
+    let mut pending = PendingAccept::new(connection.shared_id);
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::Attach)?;
     let (request_channel, reply_channel) = attach_rpc_region(connection.shared_id)?;
 
     // The rendezvous recipient treats the client's prior existence as
     // established: an empty request ring with no writers is EOF, not initial
     // absence.
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::RequestTransport)?;
     let request_transport =
         ShmTransport::read_only(&request_channel).map_err(map_transport_error)?;
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::ReplyTransport)?;
     let reply_transport = ShmTransport::write_only(&reply_channel).map_err(map_transport_error)?;
 
     // Publish acceptance only now that the request reader and reply writer
@@ -249,12 +329,13 @@ where
     // request without it landing before the server's reader. A failed bump is
     // a region failure, reported with this module's existing `Serialisation`
     // bucket (no new public error variant).
-    request_channel
-        .ring()
-        .region()
-        .bump_generation()
-        .map_err(|error| RpcError::Serialisation(error.to_string()))?;
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::Publish)?;
+    if let Err(error) = request_channel.ring().region().bump_generation() {
+        return Err(RpcError::Serialisation(error.to_string()));
+    }
 
+    pending.establish();
     Ok(RpcConnection::new(
         FramedRead::new(request_transport),
         FramedWrite::new(reply_transport),
@@ -274,19 +355,27 @@ where
     Req: FlatMsg,
     Item: FlatMsg,
 {
+    let mut pending = PendingAccept::new(connection.shared_id);
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::Attach)?;
     let (request_channel, reply_channel) = attach_rpc_region(connection.shared_id)?;
 
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::RequestTransport)?;
     let request_transport =
         ShmTransport::read_only(&request_channel).map_err(map_transport_error)?;
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::ReplyTransport)?;
     let reply_transport = ShmTransport::write_only(&reply_channel).map_err(map_transport_error)?;
 
     // Announce acceptance after both directions are installed (see `accept`).
-    request_channel
-        .ring()
-        .region()
-        .bump_generation()
-        .map_err(|error| RpcError::Serialisation(error.to_string()))?;
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::Publish)?;
+    if let Err(error) = request_channel.ring().region().bump_generation() {
+        return Err(RpcError::Serialisation(error.to_string()));
+    }
 
+    pending.establish();
     Ok(ServerStreamConnection::new(
         FramedRead::new(request_transport),
         FramedWrite::new(reply_transport),
@@ -317,6 +406,50 @@ pub fn close_session(shared_id: u64) -> std::result::Result<ClosedSession, RpcEr
 
 /// Creates a new shared-memory RPC client.
 ///
+/// Owns a freshly allocated session region until ownership transfers.
+///
+/// Every early return and cancellation drops this guard, reclaiming the region
+/// exactly once. Once the rendezvous has been attempted the peer may attach,
+/// so the guard also marks the session peer-closed before freeing it.
+struct PendingSession {
+    shared_id: Option<u64>,
+    announced: bool,
+}
+
+impl PendingSession {
+    fn new(shared_id: u64) -> Self {
+        Self {
+            shared_id: Some(shared_id),
+            announced: false,
+        }
+    }
+
+    fn announce(&mut self) {
+        self.announced = true;
+    }
+
+    fn transfer(mut self) -> u64 {
+        self.shared_id
+            .take()
+            .expect("a transferred session has not been freed")
+    }
+}
+
+impl Drop for PendingSession {
+    fn drop(&mut self) {
+        let Some(shared_id) = self.shared_id.take() else {
+            return;
+        };
+        if self.announced && close_session(shared_id).is_err() {
+            // The peer may not have attached yet; freeing still prevents it
+            // from parking on a live-but-unserviced region.
+        }
+        if crate::free_region(shared_id).is_err() {
+            // Already reclaimed; the guard attempts reclamation exactly once.
+        }
+    }
+}
+
 /// Allocates a multi-memory region with a request ring and a reply ring,
 /// installs its own directional registrations, snapshots the acceptance
 /// generation, sends the parent `shared_id` to the server through
@@ -344,57 +477,27 @@ where
     };
 
     let (request_channel, reply_channel, shared_id) = create_rpc_region(req_cap, rep_cap)?;
+    let mut pending = PendingSession::new(shared_id);
 
-    // Local registrations come before the rendezvous: a server that accepts
-    // immediately must find them already in place.
-    let client = match build_unary_client(&request_channel, &reply_channel) {
-        Ok(client) => client,
-        Err(error) => {
-            if crate::free_region(shared_id).is_err() {
-                // Best-effort reclaim; surface the transport error instead.
-            }
-            return Err(error);
-        }
-    };
-    let acceptance = match Acceptance::snapshot(&request_channel) {
-        Ok(acceptance) => acceptance,
-        Err(error) => {
-            drop(client);
-            if crate::free_region(shared_id).is_err() {
-                // Best-effort reclaim; surface the snapshot error instead.
-            }
-            return Err(RpcError::Serialisation(error.to_string()));
-        }
-    };
+    let client = build_unary_client(&request_channel, &reply_channel)?;
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::Snapshot)?;
+    let acceptance = Acceptance::snapshot(&request_channel)
+        .map_err(|error| RpcError::Serialisation(error.to_string()))?;
 
-    match rendezvous.send(shared_id).await {
-        Ok(()) => {}
-        Err(error) => {
-            // Rendezvous failed: drop the registrations before reclaiming the
-            // region pair.
-            drop(client);
-            if crate::free_region(shared_id).is_err() {
-                // Best-effort reclaim; surface the rendezvous error instead.
-            }
-            return Err(RpcError::Serialisation(format!(
-                "rendezvous send failed: {error}"
-            )));
-        }
+    pending.announce();
+    if let Err(error) = rendezvous.send(shared_id).await {
+        return Err(RpcError::Serialisation(format!(
+            "rendezvous send failed: {error}"
+        )));
     }
-
     if let Err(error) = acceptance.wait().await {
-        drop(client);
-        if crate::free_region(shared_id).is_err() {
-            // Best-effort reclaim; surface the acceptance error instead.
-        }
-        // A generation read failed: region/setup failures use this module's
-        // existing `Serialisation` bucket (no new public error variant).
-        return Err(RpcError::Serialisation(error.to_string()));
+        return Err(map_transport_error(error));
     }
 
     Ok(OwnedRpcClient {
         inner: ManuallyDrop::new(client),
-        shared_id,
+        shared_id: pending.transfer(),
     })
 }
 
@@ -427,56 +530,28 @@ where
     };
 
     let (request_channel, reply_channel, shared_id) = create_rpc_region(req_cap, rep_cap)?;
+    let mut pending = PendingSession::new(shared_id);
 
     let client: ServerStreamClient<Req, Item> =
-        match build_stream_client(&request_channel, &reply_channel) {
-            Ok(client) => client,
-            Err(error) => {
-                if crate::free_region(shared_id).is_err() {
-                    // Best-effort reclaim; surface the transport error instead.
-                }
-                return Err(error);
-            }
-        };
-    let acceptance = match Acceptance::snapshot(&request_channel) {
-        Ok(acceptance) => acceptance,
-        Err(error) => {
-            drop(client);
-            if crate::free_region(shared_id).is_err() {
-                // Best-effort reclaim; surface the snapshot error instead.
-            }
-            return Err(RpcError::Serialisation(error.to_string()));
-        }
-    };
+        build_stream_client(&request_channel, &reply_channel)?;
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::Snapshot)?;
+    let acceptance = Acceptance::snapshot(&request_channel)
+        .map_err(|error| RpcError::Serialisation(error.to_string()))?;
 
-    match rendezvous.send(shared_id).await {
-        Ok(()) => {}
-        Err(error) => {
-            // Rendezvous failed: drop the registrations before reclaiming the
-            // region pair.
-            drop(client);
-            if crate::free_region(shared_id).is_err() {
-                // Best-effort reclaim; surface the rendezvous error instead.
-            }
-            return Err(RpcError::Serialisation(format!(
-                "rendezvous send failed: {error}"
-            )));
-        }
+    pending.announce();
+    if let Err(error) = rendezvous.send(shared_id).await {
+        return Err(RpcError::Serialisation(format!(
+            "rendezvous send failed: {error}"
+        )));
     }
-
     if let Err(error) = acceptance.wait().await {
-        drop(client);
-        if crate::free_region(shared_id).is_err() {
-            // Best-effort reclaim; surface the acceptance error instead.
-        }
-        // A generation read failed: region/setup failures use this module's
-        // existing `Serialisation` bucket (no new public error variant).
-        return Err(RpcError::Serialisation(error.to_string()));
+        return Err(map_transport_error(error));
     }
 
     Ok(OwnedServerStreamClient {
         inner: ManuallyDrop::new(client),
-        shared_id,
+        shared_id: pending.transfer(),
     })
 }
 
@@ -495,8 +570,12 @@ where
     Req: FlatMsg,
     Item: FlatMsg,
 {
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::ClientRequest)?;
     let request_transport =
         ShmTransport::write_only(request_channel).map_err(map_transport_error)?;
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::ClientReply)?;
     let reply_transport =
         ShmTransport::read_only_awaiting_peer(reply_channel).map_err(map_transport_error)?;
     Ok(WireServerStreamClient::new(
@@ -517,8 +596,12 @@ where
     // Client membership: one counting writer on the request ring and an
     // awaiting-first-peer reader on the reply ring. No writer is retained on
     // the inbound reply ring, so a server that drops is observable.
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::ClientRequest)?;
     let request_transport =
         ShmTransport::write_only(request_channel).map_err(map_transport_error)?;
+    #[cfg(test)]
+    inject_establish_failure(EstablishFailure::ClientReply)?;
     let reply_transport =
         ShmTransport::read_only_awaiting_peer(reply_channel).map_err(map_transport_error)?;
     Ok(WireRpcClient::new(
@@ -536,6 +619,8 @@ where
 fn create_rpc_region(req_capacity: u64, rep_capacity: u64) -> Result<(Channel, Channel, u64)> {
     let (request_channel, reply_channel, shared_id, _region) =
         crate::byte_channel::create(req_capacity, rep_capacity)?;
+    #[cfg(test)]
+    LAST_ALLOCATED_SESSION.with(|last| last.set(shared_id));
     Ok((request_channel, reply_channel, shared_id))
 }
 
@@ -551,6 +636,7 @@ fn map_transport_error(error: selium_wire::error::Error) -> RpcError {
         Error::SerialisationFailed(message) | Error::Guest(message) => {
             RpcError::Serialisation(message)
         }
+        Error::Abi(error) => RpcError::Abi(error),
         other => RpcError::Serialisation(other.to_string()),
     }
 }
@@ -563,6 +649,8 @@ mod tests {
         crate::install_heap_provider();
     }
 
+    // scenario: resource-handshake/departed-rpc-session-release/live-idle-client-keeps-its-region
+    // scenario: selium-rpc/rpc-session-layout/client-and-server-agree-on-channel-layout-for-shm
     #[test]
     fn create_and_attach_rpc_region_round_trip() {
         // Task 2.1: Verify that create_rpc_region produces a multi-memory
@@ -614,6 +702,126 @@ mod tests {
         }
     }
 
+    struct PendingRendezvous {
+        sent: Arc<std::sync::Mutex<Option<u64>>>,
+        complete_send: bool,
+    }
+
+    impl Rendezvous for PendingRendezvous {
+        async fn send(&self, shared_id: u64) -> selium_wire::error::Result<()> {
+            *self
+                .sent
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(shared_id);
+            if self.complete_send {
+                return Ok(());
+            }
+            std::future::pending().await
+        }
+
+        async fn recv(&self) -> selium_wire::error::Result<IncomingConnection> {
+            std::future::pending().await
+        }
+    }
+
+    fn poll_once<F: std::future::Future>(future: std::pin::Pin<&mut F>) -> Poll<F::Output> {
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        future.poll(&mut context)
+    }
+
+    // scenario: selium-rpc/rpc-establishment-owns-resources-across-cancellation/client-connect-is-cancelled-before-rendezvous
+    #[tokio::test]
+    async fn cancelling_connect_during_rendezvous_frees_the_session_region() {
+        setup();
+        let sent = Arc::new(std::sync::Mutex::new(None));
+        let rendezvous = PendingRendezvous {
+            sent: Arc::clone(&sent),
+            complete_send: false,
+        };
+        let mut connect = Box::pin(connect::<PingMsg, PongMsg, _>(rendezvous, 4096, 4096));
+        assert!(poll_once(connect.as_mut()).is_pending());
+        let shared_id = sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .expect("id");
+        drop(connect);
+        assert!(attach_rpc_region(shared_id).is_err());
+    }
+
+    // scenario: selium-rpc/rpc-establishment-owns-resources-across-cancellation/client-connect-is-cancelled-before-rendezvous
+    #[tokio::test]
+    async fn cancelling_connect_while_waiting_for_acceptance_frees_the_session_region() {
+        setup();
+        let sent = Arc::new(std::sync::Mutex::new(None));
+        let rendezvous = PendingRendezvous {
+            sent: Arc::clone(&sent),
+            complete_send: true,
+        };
+        let mut connect = Box::pin(connect::<PingMsg, PongMsg, _>(rendezvous, 4096, 4096));
+        assert!(poll_once(connect.as_mut()).is_pending());
+        let shared_id = sent
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .expect("id");
+        drop(connect);
+        assert!(attach_rpc_region(shared_id).is_err());
+    }
+
+    // scenario: resource-handshake/departed-rpc-session-release/departed-client-s-region-is-released
+    // scenario: selium-rpc/rpc-establishment-owns-resources-across-cancellation/cancellation-after-establishment
+    #[tokio::test]
+    async fn established_client_frees_its_session_once_on_drop() {
+        setup();
+        let rendezvous = crate::ShmRendezvous::new();
+        let server = {
+            let rendezvous = rendezvous.clone();
+            tokio::spawn(async move {
+                let incoming = rendezvous.recv().await.expect("incoming");
+                let _connection: RpcConnection<PingMsg, PongMsg> =
+                    accept(incoming).expect("accept");
+            })
+        };
+        let client: OwnedRpcClient<PingMsg, PongMsg> =
+            connect(rendezvous, 0, 0).await.expect("connect");
+        let shared_id = client.shared_id();
+        server.await.expect("server task");
+        drop(client);
+        assert!(attach_rpc_region(shared_id).is_err());
+    }
+
+    // scenario: resource-handshake/departed-rpc-session-release/graceful-close-releases-the-region
+    #[tokio::test]
+    async fn graceful_close_releases_the_session_region_annotation() {
+        setup();
+        let rendezvous = crate::ShmRendezvous::new();
+        let (server, done) = {
+            let rendezvous = rendezvous.clone();
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let handle = tokio::spawn(async move {
+                let incoming = rendezvous.recv().await.expect("incoming");
+                let connection: RpcConnection<PingMsg, PongMsg> = accept(incoming).expect("accept");
+                drop(connection);
+                let _sent = tx.send(());
+            });
+            (handle, rx)
+        };
+        let client: OwnedRpcClient<PingMsg, PongMsg> =
+            connect(rendezvous, 0, 0).await.expect("connect");
+        done.await.expect("server done");
+        server.await.expect("server task");
+        drop(client);
+    }
+
+    // scenario: selium-rpc/typed-rpc-client/client-sends-request-and-receives-reply
+    // scenario: selium-rpc/typed-rpc-connection/server-receives-request-and-sends-reply
+    // scenario: selium-rpc/rpc-connection-handshake-via-rendezvous/client-connects-to-server-via-shm-rendezvous
+    // scenario: selium-rpc/rpc-connection-handshake-via-rendezvous/server-accepts-client-connection-via-shm-rendezvous
+    // scenario: resource-handshake/rendezvous-trait-for-connection-establishment/client-sends-connection-via-rendezvous
+    // scenario: resource-handshake/rendezvous-trait-for-connection-establishment/server-accepts-connection-via-rendezvous
+    // scenario: resource-handshake/typed-accept-trait/accepting-an-rpc-connection-via-accept-trait
+    // scenario: secure-rpc/one-reply-per-request-enforcement/server-replies-to-a-request
+    // scenario: secure-rpc/bidirectional-rpc-session-isolation/client-connects-to-server
     #[tokio::test]
     async fn unary_connect_accept_round_trip() {
         // Unary mirror of the streaming round-trip: connect allocates the
@@ -772,6 +980,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_server_accept_failure_closes_the_waiting_peer() {
+        for streaming in [false, true] {
+            for stage in [
+                EstablishFailure::Attach,
+                EstablishFailure::RequestTransport,
+                EstablishFailure::ReplyTransport,
+                EstablishFailure::Publish,
+            ] {
+                setup();
+                let (request_channel, reply_channel, shared_id) =
+                    create_rpc_region(4096, 4096).expect("create region");
+                let client: RpcClient<PingMsg, PongMsg> =
+                    build_unary_client(&request_channel, &reply_channel).expect("client");
+                let acceptance = Acceptance::snapshot(&request_channel).expect("snapshot");
+                ESTABLISH_FAILURE.with(|failure| failure.set(Some(stage)));
+                let incoming = IncomingConnection {
+                    client_process_id: 1,
+                    shared_id,
+                };
+                if streaming {
+                    let result: std::result::Result<ServerStreamConnection<PingMsg, PongMsg>, _> =
+                        accept_server_stream(incoming);
+                    assert!(result.is_err());
+                } else {
+                    let result: std::result::Result<RpcConnection<PingMsg, PongMsg>, _> =
+                        accept(incoming);
+                    assert!(result.is_err());
+                }
+                let error = acceptance
+                    .wait()
+                    .await
+                    .expect_err("failed accept must close");
+                assert!(matches!(error, Error::ChannelClosed));
+                drop(client);
+                drop(crate::free_region(shared_id));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn every_client_establishment_failure_reclaims_its_region() {
+        for streaming in [false, true] {
+            for stage in [
+                EstablishFailure::ClientRequest,
+                EstablishFailure::ClientReply,
+                EstablishFailure::Snapshot,
+            ] {
+                setup();
+                let seen = Arc::new(Mutex::new(None));
+                ESTABLISH_FAILURE.with(|failure| failure.set(Some(stage)));
+                if streaming {
+                    let result = connect_server_stream::<PingMsg, PongMsg, _>(
+                        FailingRendezvous { seen: seen.clone() },
+                        4096,
+                        4096,
+                    )
+                    .await;
+                    assert!(result.is_err());
+                } else {
+                    let result = connect::<PingMsg, PongMsg, _>(
+                        FailingRendezvous { seen: seen.clone() },
+                        4096,
+                        4096,
+                    )
+                    .await;
+                    assert!(result.is_err());
+                }
+                assert!(seen.lock().expect("seen").is_none());
+                let shared_id = LAST_ALLOCATED_SESSION.with(std::cell::Cell::get);
+                assert!(shared_id != 0);
+                assert!(
+                    attach_rpc_region(shared_id).is_err(),
+                    "client failure at {stage:?} leaked its session"
+                );
+            }
+        }
+    }
+
+    // scenario: resource-handshake/local-registration-precedes-rendezvous/server-accepts-immediately-after-rendezvous
+    #[tokio::test]
     async fn immediate_accept_is_not_lost() {
         // The server accepts as soon as the handoff is dequeued, before the
         // client's own connect task is polled again.
@@ -800,6 +1088,8 @@ mod tests {
         server.await.expect("server task");
     }
 
+    // scenario: resource-handshake/backpressure-on-send/server-is-slow-to-accept
+    // scenario: resource-handshake/acceptance-is-an-explicit-event/server-has-not-accepted
     #[tokio::test]
     async fn unaccepted_session_parks_without_closing() {
         setup();
@@ -835,6 +1125,7 @@ mod tests {
         }
     }
 
+    // scenario: resource-handshake/acceptance-is-an-explicit-event/server-accepts-and-closes-before-the-client-polls
     #[tokio::test]
     async fn accept_then_close_is_observed() {
         // Acceptance must be a generation transition, not a writer-count
@@ -924,6 +1215,9 @@ mod tests {
         );
     }
 
+    // scenario: selium-rpc/typed-rpc-client/client-handles-disconnected-server
+    // scenario: secure-rpc/connection-close-detection/server-drops-rpcconnection
+    // scenario: secure-rpc/directional-session-membership/server-closes-gracefully
     #[tokio::test]
     async fn graceful_server_drop_closes_the_client_session() {
         setup();
@@ -966,6 +1260,9 @@ mod tests {
         );
     }
 
+    // scenario: selium-rpc/typed-rpc-connection/server-detects-client-disconnect
+    // scenario: secure-rpc/connection-close-detection/client-drops-rpcclient
+    // scenario: secure-rpc/directional-session-membership/client-closes-gracefully
     #[tokio::test]
     async fn graceful_client_drop_closes_the_server_session() {
         setup();
@@ -1004,24 +1301,3 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `resource-handshake` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: resource-handshake/rendezvous-trait-for-connection-establishment/client-sends-connection-via-rendezvous
-// scenario: resource-handshake/rendezvous-trait-for-connection-establishment/server-accepts-connection-via-rendezvous
-// scenario: resource-handshake/host-mediated-connection-queue-resourcesender-resourcelistener/client-sends-connection-request-via-resourcesender
-// scenario: resource-handshake/host-mediated-connection-queue-resourcesender-resourcelistener/server-accepts-connection-via-resourcelistener
-// scenario: resource-handshake/typed-accept-trait/accepting-an-rpc-connection-via-accept-trait
-// scenario: resource-handshake/backpressure-on-send/server-is-slow-to-accept
-// scenario: resource-handshake/connection-identity/server-receives-client-identity
-// scenario: resource-handshake/queue-attach-authorisation/ungranted-attach-denied
-// scenario: resource-handshake/queue-attach-authorisation/discovery-resolved-attach-permitted
-// scenario: resource-handshake/queue-attach-authorisation/owner-attach-always-permitted
-// scenario: resource-handshake/handoff-metadata/metadata-delivered
-// scenario: resource-handshake/handoff-metadata/no-metadata
-// scenario: resource-handshake/handoff-metadata/oversized-metadata-rejected
-// scenario: resource-handshake/pinned-handoff-sender/handoff-from-unpinned-sender-refused
-// scenario: resource-handshake/pinned-handoff-sender/handler-resolution-is-authoritative
-// scenario: resource-handshake/guest-self-identity/self-info
-// scenario: resource-handshake/local-registration-precedes-rendezvous/server-accepts-immediately-after-rendezvous
-// scenario: resource-handshake/acceptance-is-an-explicit-event/server-accepts-and-closes-before-the-client-polls
-// scenario: resource-handshake/acceptance-is-an-explicit-event/server-has-not-accepted
-// scenario: secure-rpc/directional-session-membership/client-closes-gracefully
-// scenario: secure-rpc/directional-session-membership/server-closes-gracefully

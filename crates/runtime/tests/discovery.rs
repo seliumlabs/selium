@@ -27,6 +27,7 @@ use selium_shm::{Channel, transport::ShmTransport};
 use selium_wire::{framed::FramedRead, pubsub::Subscriber};
 
 mod common;
+mod spine_common;
 
 #[expect(clippy::panic, reason = "unexpected hostcall output indicates a bug")]
 fn alloc_region(runtime: &Runtime, process_id: ProcessId, purpose: ResourceKind) -> u64 {
@@ -50,7 +51,8 @@ fn attach_feed_subscriber(runtime: &Runtime) -> Subscriber<DiscoveryRequest, Shm
     let feed_region_id = runtime
         .discovery_feed_region_id()
         .expect("discovery feed region id");
-    let channel = Channel::attach(feed_region_id).expect("attach to discovery feed");
+    let channel = Channel::attach_with_provider(runtime.region_provider().as_ref(), feed_region_id)
+        .expect("attach to discovery feed");
     let capacity = channel.ring().capacity();
     // Replay from the start of the ring so any bootstrap-time events are
     // observable to a reader that attaches later.
@@ -58,6 +60,16 @@ fn attach_feed_subscriber(runtime: &Runtime) -> Subscriber<DiscoveryRequest, Shm
     Subscriber::new(FramedRead::new(transport), Some(capacity))
 }
 
+// scenario: selium-runtime/discovery-enabled-bootstrap/application-guest-receives-discovery-handle
+// scenario: selium-runtime/runtime-discovery-publication-session/runtime-connects-to-discovery-guest
+// scenario: selium-runtime/discovery-handle-passed-to-guest-entrypoints/application-guest-receives-discovery-handle-unchanged
+// scenario: discovery-bootstrap/discovery-enabled-bootstrap/discovery-guest-boots-and-reports-ready
+// scenario: discovery-bootstrap/discovery-enabled-bootstrap/application-guest-receives-a-discovery-handle
+// scenario: discovery-bootstrap/tier-1-registration-flow/process-exit-revokes-registrations
+// scenario: discovery-registration/revocation-only-tier-1-feed/processgone-round-trips-over-the-feed
+// scenario: discovery-registration/revocation-only-tier-1-feed/resourcefreed-round-trips-over-the-feed
+// scenario: discovery-registration/revocation-only-tier-1-feed/no-registration-events-on-the-feed
+// scenario: discovery-registration/revocation-only-tier-1-feed/feed-is-not-rkyv-encoded
 #[test]
 #[ignore = "requires both discovery and discovery-probe guests built for wasm32-unknown-unknown"]
 fn discovery_bootstrap_slice_end_to_end() {
@@ -95,7 +107,15 @@ fn discovery_bootstrap_slice_end_to_end() {
     let _ = discovery_guest;
 
     // --- Drain probe log and verify the guest ran ---
-    let probe_messages = drain_log_messages(&runtime, probe_guest.process_id);
+    // The probe is short-lived: a reaped guest's frames are drained into its
+    // `ProcessExited` activity record, so wait for the milestone rather than
+    // racing a one-shot channel read.
+    let probe_messages = spine_common::wait_for_logs(
+        &runtime,
+        probe_guest.process_id,
+        &[("booting", 1), ("region allocated", 1)],
+        spine_common::CONVERGENCE_BOUND,
+    );
     assert!(
         probe_messages.iter().any(|message| message == "booting"),
         "expected 'booting' in probe log, got: {probe_messages:?}"
@@ -182,6 +202,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
             CapabilityGrant::new(
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
+            ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
             ),
         ],
         tenant: None,
@@ -302,68 +326,7 @@ fn drain_revoke_events(
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `discovery-registration` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: discovery-registration/discovery-uri-registration/caller-registers-a-uri
-// scenario: discovery-registration/discovery-uri-registration/caller-revokes-a-uri
-// scenario: discovery-registration/discovery-uri-registration/register-overwrites-existing-uri
-// scenario: discovery-registration/discovery-uri-registration/revoke-on-unknown-uri
-// scenario: discovery-registration/discovery-uri-registration/owner-revoked-on-exit
-// scenario: discovery-registration/host-authoritative-admission/admission-succeeds-before-the-feed-catches-up
-// scenario: discovery-registration/host-authoritative-admission/projection-cannot-authorise
-// scenario: discovery-registration/host-authoritative-admission/authority-failure-fails-closed
-// scenario: discovery-registration/guest-custom-uri-validation/guest-registers-custom-uri-for-owned-resource
-// scenario: discovery-registration/guest-custom-uri-validation/guest-registration-rejected-for-unowned-resource
-// scenario: discovery-registration/guest-custom-uri-validation/guest-registration-rejected-for-class-mismatch
-// scenario: discovery-registration/guest-custom-uri-validation/guest-alias-rejected-for-unregistered-target
-// scenario: discovery-registration/guest-custom-uri-validation/guest-alias-admitted-while-the-projection-lags
-// scenario: discovery-registration/guest-custom-uri-validation/guest-revokes-their-own-custom-uri
-// scenario: discovery-registration/tenant-scoped-process-uri-resolution/same-tenant-guest-resolves-process-uri
-// scenario: discovery-registration/tenant-scoped-process-uri-resolution/cross-tenant-guest-cannot-resolve-process-uri
-// scenario: discovery-registration/tenant-scoped-process-uri-resolution/failed-tenant-lookup-fails-closed
-// scenario: discovery-registration/context-convenience-methods-for-registration/context-register-sends-register-request
-// scenario: discovery-registration/context-convenience-methods-for-registration/context-register-returns-error-on-forbidden
-// scenario: discovery-registration/context-convenience-methods-for-registration/context-revoke-sends-revoke-request
-// scenario: discovery-registration/deterministic-tenant-scoped-uri-schema/internal-address-is-typed-and-tenant-scoped
-// scenario: discovery-registration/deterministic-tenant-scoped-uri-schema/process-address
-// scenario: discovery-registration/root-tenant-namespace/guest-cannot-register-the-root-namespace
-// scenario: discovery-registration/root-tenant-namespace/system-guest-registers-under-root
-// scenario: discovery-registration/leaf-aliases/alias-resolves-to-a-typed-target
-// scenario: discovery-registration/leaf-aliases/alias-resolves-only-through-its-canonical-target
-// scenario: discovery-registration/leaf-aliases/revoking-a-target-revokes-its-aliases
-// scenario: discovery-registration/classification-labels/label-query-returns-matching-targets
-// scenario: discovery-registration/prefix-and-enumeration-queries/prefix-lists-a-tenant-s-resources
-// scenario: discovery-registration/prefix-and-enumeration-queries/cross-tenant-enumeration-denied
-// scenario: discovery-registration/process-node-addressing/a-process-without-resources-is-addressable
-// scenario: discovery-registration/process-node-addressing/an-unpublished-process-is-accounted-but-undiscoverable
-// scenario: discovery-registration/guest-revocation-authorisation/guest-revokes-own-external-name
-// scenario: discovery-registration/guest-revocation-authorisation/guest-cannot-revoke-a-typed-uri
-// scenario: discovery-registration/guest-revocation-authorisation/guest-cannot-revoke-another-tenant-s-alias
-// scenario: discovery-registration/guest-revocation-authorisation/guest-cannot-revoke-a-registration-it-does-not-own
-// scenario: discovery-registration/guest-revocation-authorisation/revoking-an-unknown-key-returns-notfound
-// scenario: discovery-registration/external-name-resolution-through-addressing/wire-name-resolves-to-a-tenant-route
-// scenario: discovery-registration/external-name-resolution-through-addressing/registered-domain-wire-name-resolves
-// scenario: discovery-registration/advisory-domain-scoping/tenant-registers-within-its-domain
-// scenario: discovery-registration/advisory-domain-scoping/foreign-domain-registration-refused
-// scenario: discovery-registration/serve-based-route-registration/guest-registers-its-own-route
-// scenario: discovery-registration/serve-based-route-registration/route-registration-derives-wire-name-from-the-domain-table
-// scenario: discovery-registration/serve-based-route-registration/canonical-record-is-published-first
-// scenario: discovery-registration/root-registration-capability-gated/root-registration-requires-capability
-// scenario: discovery-registration/root-registration-capability-gated/capability-holding-guest-registers-in-root
-// scenario: discovery-registration/revocation-only-tier-1-feed/processgone-round-trips-over-the-feed
-// scenario: discovery-registration/revocation-only-tier-1-feed/resourcefreed-round-trips-over-the-feed
-// scenario: discovery-registration/revocation-only-tier-1-feed/no-registration-events-on-the-feed
-// scenario: discovery-registration/revocation-only-tier-1-feed/feed-is-not-rkyv-encoded
-// scenario: discovery-registration/route-change-publication/registration-publishes-an-appearance
-// scenario: discovery-registration/route-change-publication/lease-expiry-publishes-a-revocation
-// scenario: discovery-registration/route-change-publication/replacement-advances-the-generation
-// scenario: discovery-registration/lease-sweep-on-the-monotonic-timer/sweep-ticks-in-a-wasm32-guest
-// scenario: discovery-registration/lease-sweep-on-the-monotonic-timer/a-dead-sweep-is-observable
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `discovery-bootstrap` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: discovery-bootstrap/discovery-enabled-bootstrap/discovery-guest-boots-and-reports-ready
-// scenario: discovery-bootstrap/discovery-enabled-bootstrap/application-guest-receives-a-discovery-handle
-// scenario: discovery-bootstrap/tier-1-registration-flow/region-allocation-becomes-resolvable
-// scenario: discovery-bootstrap/tier-1-registration-flow/process-exit-revokes-registrations
-// scenario: discovery-bootstrap/tier-2-guest-registration/owned-resource-registration-succeeds
-// scenario: discovery-bootstrap/tier-2-guest-registration/unowned-resource-registration-is-forbidden

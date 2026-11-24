@@ -14,6 +14,26 @@ The per-page reader-slot mechanism (`reader_slot: Some(n)`) REMAINS SUPPORTED fo
 - **WHEN** a consumer guest with a read-only mapping attempts any WASM store to any page in the shared region
 - **THEN** the store SHALL trap with a memory protection fault
 
+#### Scenario: Consumer attaches with reader slot
+- **WHEN** a guest calls `attach_region` with `reader_slot: Some(3)`
+- **THEN** the host SHALL map the region `PROT_READ` on all pages except page 3, which SHALL be mapped `PROT_READ | PROT_WRITE`
+
+
+#### Scenario: Consumer attempts write to data page
+- **WHEN** a consumer guest with a reader-slot-protected mapping attempts to store to a data page
+- **THEN** the store SHALL trap with a memory protection fault
+
+
+#### Scenario: Consumer writes to its own cursor page
+- **WHEN** a consumer guest writes to its designated reader cursor page
+- **THEN** the store SHALL succeed and update the cursor value
+
+
+#### Scenario: Consumer attempts write to another reader's cursor page
+- **WHEN** a consumer guest attempts to store to a reader cursor page it was not assigned
+- **THEN** the store SHALL trap with a memory protection fault
+
+
 ### Requirement: Producer Full Access
 A producer attaching without a `reader_slot` SHALL receive full read-write access to all pages in the shared region.
 

@@ -304,6 +304,7 @@ mod tests {
         assert_eq!(table.used("beta", ResourceClass::SharedRegion), 0);
     }
 
+    // scenario: selium-abi/quota-hostcall-variants/quotaclear-removes-the-counter
     #[test]
     fn set_lookup_and_clear_cover_the_counter_lifecycle() {
         let table = QuotaTable::new();
@@ -360,6 +361,7 @@ mod tests {
             .expect("platform tenant unrestricted");
     }
 
+    // scenario: selium-accountant/quota-enforcement-at-allocation/pre-authoring-usage-is-inherited
     #[test]
     fn pre_authoring_usage_is_tracked_and_inherited_by_set() {
         let table = QuotaTable::new();

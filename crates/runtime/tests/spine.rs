@@ -60,6 +60,12 @@ fn spine_demo_wasm() -> Vec<u8> {
     common::read_guest_wasm_debug("selium-spine-demo", "selium_spine_demo.wasm")
 }
 
+// scenario: selium-guest/safe-guest-handles/guest-opens-primitive-through-sdk-handle
+// scenario: selium-guest/messaging-pattern-layer/guest-selects-messaging-pattern
+// scenario: selium-guest/guest-log-transport-module/guest-initialises-logging
+// scenario: guest-log-transport/tracing-subscriber-integration/tracing-info-publishes-to-log-channel
+// scenario: guest-log-transport/kernel-log-channel-subscription/host-side-consumer-reads-logs-from-kernel
+// scenario: selium-kernel/kernel-consumes-the-shared-ring-implementation/log-drain-uses-shared-frame-reader
 #[test]
 #[ignore = "requires the spine-demo guest built for wasm32-unknown-unknown"]
 fn wasm_guest_runs_golden_path() {

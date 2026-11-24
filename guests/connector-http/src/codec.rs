@@ -45,6 +45,9 @@ pub enum CodecError {
     RequestTooLarge,
     /// The client closed mid-request.
     PartialClosed,
+    /// The request framing is invalid (bad or conflicting length, bad chunked
+    /// encoding, unparsable head).
+    MalformedRequest,
 }
 
 /// Incremental HTTP/1.1 request parser over a buffered byte stream.
@@ -63,6 +66,7 @@ impl std::fmt::Display for CodecError {
             CodecError::Io(error) => write!(f, "read: {error}"),
             CodecError::RequestTooLarge => write!(f, "request too large"),
             CodecError::PartialClosed => write!(f, "connection closed with partial request"),
+            CodecError::MalformedRequest => write!(f, "malformed request framing"),
         }
     }
 }
@@ -90,7 +94,7 @@ impl HttpCodec {
         use tokio::io::AsyncReadExt;
 
         loop {
-            if let Some(result) = self.try_parse() {
+            if let Some(result) = self.try_parse()? {
                 return Ok(result);
             }
 
@@ -113,41 +117,68 @@ impl HttpCodec {
     }
 
     /// Attempts to parse a complete request from the buffered bytes.
-    fn try_parse(&mut self) -> Option<ReadResult> {
+    fn try_parse(&mut self) -> Result<Option<ReadResult>, CodecError> {
         let data = &self.buf[..self.pos];
-        let header_end = find_subsequence(data, b"\r\n\r\n")?;
+        let Some(header_end) = find_subsequence(data, b"\r\n\r\n") else {
+            return Ok(None);
+        };
         let headers_section = &data[..header_end];
 
-        let (method, uri, headers) = parse_request_head(headers_section).ok()?;
+        let (method, uri, headers) =
+            parse_request_head(headers_section).map_err(|_error| CodecError::MalformedRequest)?;
         let headers_end = header_end + 4;
 
-        let chunked = get_header_str(&headers, "transfer-encoding")
-            .is_some_and(|value| value.to_lowercase().contains("chunked"));
+        let chunked = parse_transfer_encoding(&headers)?;
+        let content_lengths: Vec<&str> = headers
+            .iter()
+            .filter(|(name, _)| name == "content-length")
+            .map(|(_, value)| value.as_str())
+            .collect();
+
+        // Conflicting framing (any TE plus CL, or several differing CLs) is
+        // rejected rather than resolved by a default.
+        if chunked && !content_lengths.is_empty() {
+            return Err(CodecError::MalformedRequest);
+        }
 
         let (body, total_needed) = if chunked {
-            let (decoded, consumed) = decode_chunked_body(&data[headers_end..])?;
-            // Replace the transfer-encoding marker with the decoded length
-            // so downstream guests see an inline body; the typed request
-            // carries the decoded bytes in `body`.
-            (decoded, headers_end + consumed)
+            match decode_chunked_body(&data[headers_end..]) {
+                Ok(Some((decoded, consumed))) => (decoded, headers_end + consumed),
+                Ok(None) => return Ok(None),
+                Err(_) => return Err(CodecError::MalformedRequest),
+            }
         } else {
-            let body_len = if let Some(cl) = get_header_str(&headers, "content-length") {
-                cl.parse::<usize>().unwrap_or(0)
-            } else {
-                0
+            let body_len = match content_lengths.as_slice() {
+                [] => 0,
+                [length] => parse_content_length(length)?,
+                [first, rest @ ..] => {
+                    let first = parse_content_length(first)?;
+                    if rest
+                        .iter()
+                        .any(|other| parse_content_length(other).ok() != Some(first))
+                    {
+                        return Err(CodecError::MalformedRequest);
+                    }
+                    first
+                }
             };
 
-            let total_needed = headers_end + body_len;
-            if self.pos < total_needed {
-                return None;
+            let body_end = headers_end
+                .checked_add(body_len)
+                .ok_or(CodecError::MalformedRequest)?;
+            if body_len > READ_BUF_SIZE.saturating_sub(headers_end) {
+                return Err(CodecError::RequestTooLarge);
+            }
+            if self.pos < body_end {
+                return Ok(None);
             }
 
             let body = if body_len > 0 {
-                data[headers_end..total_needed].to_vec()
+                data[headers_end..body_end].to_vec()
             } else {
                 vec![]
             };
-            (body, total_needed)
+            (body, body_end)
         };
 
         let typed_headers: Vec<HttpHeader> = headers
@@ -163,8 +194,65 @@ impl HttpCodec {
         }
         self.pos = remaining;
 
-        Some(ReadResult::Request(request))
+        Ok(Some(ReadResult::Request(request)))
     }
+}
+
+/// Parses every `Transfer-Encoding` field as an HTTP token list. This edge
+/// implements only a single, final `chunked` coding; substring matches,
+/// repeated chunked codings, non-final chunked, and unsupported chains are all
+/// malformed framing rather than requests with an assumed body length.
+fn parse_transfer_encoding(headers: &[(String, String)]) -> Result<bool, CodecError> {
+    let mut codings = Vec::new();
+    for (_, value) in headers
+        .iter()
+        .filter(|(name, _)| name == "transfer-encoding")
+    {
+        for coding in value.split(',') {
+            let coding = coding.trim();
+            if coding.is_empty() || !coding.bytes().all(is_http_token_byte) {
+                return Err(CodecError::MalformedRequest);
+            }
+            codings.push(coding.to_ascii_lowercase());
+        }
+    }
+
+    match codings.as_slice() {
+        [] => Ok(false),
+        [coding] if coding == "chunked" => Ok(true),
+        _ => Err(CodecError::MalformedRequest),
+    }
+}
+
+fn is_http_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+/// Parses a `Content-Length` value strictly: digits only, no sign, no
+/// whitespace, and representable in `usize`.
+fn parse_content_length(raw: &str) -> Result<usize, CodecError> {
+    if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(CodecError::MalformedRequest);
+    }
+    raw.parse::<usize>()
+        .map_err(|_error| CodecError::MalformedRequest)
 }
 
 impl Default for HttpCodec {
@@ -177,14 +265,6 @@ pub(crate) fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> 
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
-}
-
-pub(crate) fn get_header_str<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
-    let name_lower = name.to_lowercase();
-    headers
-        .iter()
-        .find(|(n, _)| *n == name_lower)
-        .map(|(_, v)| v.as_str())
 }
 
 pub(crate) fn get_typed_header<'a>(headers: &'a [HttpHeader], name: &str) -> Option<&'a str> {
@@ -239,37 +319,58 @@ pub(crate) fn parse_request_head(data: &[u8]) -> Result<ParsedHead, &'static str
 
 /// Decodes a chunked transfer-encoded body.
 ///
-/// Returns the decoded body and the number of consumed bytes (through the
-/// terminating zero chunk and its trailing CRLF — any trailers are
-/// consumed but not forwarded; request trailers are rare and carry no
-/// semantics the typed surface needs). Returns `None` while the buffer
-/// holds an incomplete chunk sequence.
-fn decode_chunked_body(data: &[u8]) -> Option<(Vec<u8>, usize)> {
+/// Returns `Ok(None)` while the buffer holds an incomplete chunk sequence,
+/// `Err(())` for a malformed sequence, and the decoded body plus the number of
+/// consumed bytes (through the terminating zero chunk's complete trailer
+/// section) on success. All trailer fields are consumed so the following
+/// request boundary is preserved.
+fn decode_chunked_body(data: &[u8]) -> Result<Option<(Vec<u8>, usize)>, ()> {
     let mut body = Vec::new();
     let mut offset = 0usize;
 
     loop {
-        let line_end = offset + find_subsequence(&data[offset..], b"\r\n")?;
-        let size_line = std::str::from_utf8(&data[offset..line_end]).ok()?;
+        let Some(line_len) = find_subsequence(&data[offset..], b"\r\n") else {
+            return Ok(None);
+        };
+        let line_end = offset + line_len;
+        let size_line = std::str::from_utf8(&data[offset..line_end]).map_err(|_error| ())?;
         // Chunk extensions (`;name=value`) are permitted and ignored.
-        let size_token = size_line.split(';').next()?.trim();
-        let size = usize::from_str_radix(size_token, 16).ok()?;
+        let size_token = size_line.split(';').next().unwrap_or_default().trim();
+        if size_token.is_empty() || !size_token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(());
+        }
+        let size = usize::from_str_radix(size_token, 16).map_err(|_error| ())?;
         offset = line_end + 2;
 
         if size == 0 {
-            // Terminal chunk: consume trailers up to the blank line.
-            let trailer_end = offset + find_subsequence(&data[offset..], b"\r\n")?;
-            return Some((body, trailer_end + 2));
+            // Consume every trailer field up to and including the blank line.
+            loop {
+                let Some(trailer_len) = find_subsequence(&data[offset..], b"\r\n") else {
+                    return Ok(None);
+                };
+                let trailer_end = offset + trailer_len;
+                let line = &data[offset..trailer_end];
+                offset = trailer_end + 2;
+                if line.is_empty() {
+                    return Ok(Some((body, offset)));
+                }
+            }
         }
 
-        if offset + size + 2 > data.len() {
-            return None;
+        let Some(chunk_end) = offset.checked_add(size) else {
+            return Err(());
+        };
+        let Some(terminator_end) = chunk_end.checked_add(2) else {
+            return Err(());
+        };
+        if terminator_end > data.len() {
+            return Ok(None);
         }
-        if &data[offset + size..offset + size + 2] != b"\r\n" {
-            return None;
+        if &data[chunk_end..terminator_end] != b"\r\n" {
+            return Err(());
         }
-        body.extend_from_slice(&data[offset..offset + size]);
-        offset += size + 2;
+        body.extend_from_slice(&data[offset..chunk_end]);
+        offset = terminator_end;
     }
 }
 
@@ -519,17 +620,6 @@ mod tests {
     }
 
     #[test]
-    fn get_header_case_insensitive() {
-        let headers = vec![
-            ("host".to_string(), "example.com".to_string()),
-            ("content-type".to_string(), "text/html".to_string()),
-        ];
-        assert_eq!(get_header_str(&headers, "HOST"), Some("example.com"));
-        assert_eq!(get_header_str(&headers, "Content-Type"), Some("text/html"));
-        assert_eq!(get_header_str(&headers, "missing"), None);
-    }
-
-    #[test]
     fn get_typed_header_works() {
         let headers = vec![
             HttpHeader::new("Host".to_string(), "example.com".to_string()),
@@ -543,15 +633,114 @@ mod tests {
         assert_eq!(get_typed_header(&headers, "x-missing"), None);
     }
 
-    #[test]
-    fn decode_chunked_incomplete_returns_none() {
-        let data = b"5\r\nhel";
-        assert!(decode_chunked_body(data).is_none());
+    // scenario: http-connector/malformed-http-framing-is-rejected/invalid-content-length
+    #[tokio::test]
+    async fn malformed_and_conflicting_lengths_are_rejected() {
+        for raw in [
+            b"POST / HTTP/1.1\r\nhost: x\r\ncontent-length: nope\r\n\r\n".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ncontent-length: -1\r\n\r\n".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ncontent-length: 3\r\ncontent-length: 4\r\n\r\nabcd".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ncontent-length: 3\r\ntransfer-encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n".as_slice(),
+        ] {
+            let mut codec = HttpCodec::new();
+            let mut stream = raw;
+            assert!(
+                matches!(
+                    codec.read_request(&mut stream).await,
+                    Err(CodecError::MalformedRequest)
+                ),
+                "invalid framing must be rejected: {:?}",
+                String::from_utf8_lossy(raw)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transfer_encoding_requires_one_final_chunked_token() {
+        for raw in [
+            b"POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: xchunked\r\n\r\n".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked, gzip\r\n\r\n".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: gzip, chunked\r\n\r\n".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked, chunked\r\n\r\n".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked\r\ntransfer-encoding: chunked\r\n\r\n".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked,\r\n\r\n".as_slice(),
+            b"POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chu nked\r\n\r\n".as_slice(),
+        ] {
+            let mut codec = HttpCodec::new();
+            let mut stream = raw;
+            assert!(
+                matches!(
+                    codec.read_request(&mut stream).await,
+                    Err(CodecError::MalformedRequest)
+                ),
+                "invalid transfer coding must be rejected: {:?}",
+                String::from_utf8_lossy(raw)
+            );
+        }
+
+        let raw = b"POST / HTTP/1.1\r\nhost: x\r\ntransfer-encoding: Chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+        let mut codec = HttpCodec::new();
+        let mut stream = &raw[..];
+        match codec
+            .read_request(&mut stream)
+            .await
+            .expect("valid chunked")
+        {
+            ReadResult::Request(request) => assert_eq!(request.body, b"abc"),
+            other => panic!("expected request, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_content_length_is_rejected_before_buffering() {
+        let raw = format!(
+            "POST / HTTP/1.1\r\nhost: x\r\ncontent-length: {}\r\n\r\n",
+            READ_BUF_SIZE + 1
+        );
+        let mut codec = HttpCodec::new();
+        let mut stream = raw.as_bytes();
+        assert!(matches!(
+            codec.read_request(&mut stream).await,
+            Err(CodecError::RequestTooLarge)
+        ));
+    }
+
+    // scenario: http-connector/malformed-http-framing-is-rejected/chunked-trailers-terminate-correctly
+    #[tokio::test]
+    async fn multiple_trailers_preserve_the_following_request_boundary() {
+        let data = b"POST /first HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\nx-a: 1\r\nx-b: 2\r\n\r\nGET /second HTTP/1.1\r\nhost: x\r\n\r\n";
+        let mut codec = HttpCodec::new();
+        let mut stream = &data[..];
+        match codec
+            .read_request(&mut stream)
+            .await
+            .expect("first request")
+        {
+            ReadResult::Request(request) => {
+                assert_eq!(request.uri, "/first");
+                assert_eq!(request.body, b"abc");
+            }
+            other => panic!("expected first request, got {other:?}"),
+        }
+        match codec
+            .read_request(&mut stream)
+            .await
+            .expect("second request")
+        {
+            ReadResult::Request(request) => assert_eq!(request.uri, "/second"),
+            other => panic!("expected second request, got {other:?}"),
+        }
     }
 
     #[test]
-    fn decode_chunked_bad_terminator_returns_none() {
+    fn decode_chunked_incomplete_returns_none() {
+        let data = b"5\r\nhel";
+        assert!(matches!(decode_chunked_body(data), Ok(None)));
+    }
+
+    #[test]
+    fn decode_chunked_bad_terminator_is_malformed() {
         let data = b"3\r\nabcXX";
-        assert!(decode_chunked_body(data).is_none());
+        assert!(matches!(decode_chunked_body(data), Err(())));
     }
 }

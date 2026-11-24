@@ -689,6 +689,7 @@ mod tests {
         }
     }
 
+    // scenario: quic-connector/failed-route-attachment-evicts-cached-target/cached-queue-is-no-longer-attachable
     #[tokio::test]
     async fn attach_failure_evicts_the_cached_route() {
         let resolver: ResolverHandle = Arc::new(tokio::sync::Mutex::new(
@@ -723,4 +724,3 @@ mod tests {
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: quic-connector/failed-route-attachment-evicts-cached-target/cached-queue-is-no-longer-attachable

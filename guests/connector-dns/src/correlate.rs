@@ -124,6 +124,7 @@ mod tests {
         assert!(inflight.take(0x1234).is_none());
     }
 
+    // scenario: dns-connector/reply-correlation/concurrent-queries-do-not-cross
     #[test]
     fn out_of_order_replies_do_not_cross() {
         let inflight = InFlight::new();

@@ -126,6 +126,17 @@ struct CatalogueState {
     projection: Arc<Mutex<ResourceCatalogue>>,
 }
 
+/// State shared by every accepted control session, including the guest-wide
+/// mutation lane that orders both durable logs against their projections.
+#[derive(Clone)]
+struct SharedState {
+    desired: Arc<Mutex<ControlPlaneState>>,
+    log: DurableLog,
+    catalogue: CatalogueState,
+    blobs: BlobStore,
+    mutations: Arc<tokio::sync::Mutex<()>>,
+}
+
 /// One accepted session's scope: the requestor namespace derived from the
 /// delivering process's tenant and the process id that opened the session.
 #[derive(Clone)]
@@ -427,6 +438,16 @@ async fn control_plane_main(mut ctx: Context) -> anyhow::Result<()> {
     }
 
     let discovery_handle = ctx.raw_handle();
+    // Every desired-state and catalogue mutation shares one commit lane. The
+    // lane spans durable append + sync and projection, so concurrent sessions
+    // cannot append B after A but project A after B.
+    let shared = SharedState {
+        desired: state,
+        log,
+        catalogue,
+        blobs,
+        mutations: Arc::new(tokio::sync::Mutex::new(())),
+    };
 
     loop {
         let incoming = match listener.recv().await {
@@ -463,10 +484,7 @@ async fn control_plane_main(mut ctx: Context) -> anyhow::Result<()> {
         spawn(handle_connection(
             connection,
             discovery_handle,
-            state.clone(),
-            log.clone(),
-            catalogue.clone(),
-            blobs.clone(),
+            shared.clone(),
             Session {
                 namespace,
                 client_process_id,
@@ -503,10 +521,7 @@ fn delegation_status(response: SchedulerResponse) -> DelegationStatus {
 async fn handle_connection(
     mut connection: rpc::RpcConnection<ControlRequest, ControlResponse>,
     discovery_handle: u64,
-    state: Arc<Mutex<ControlPlaneState>>,
-    log: DurableLog,
-    catalogue: CatalogueState,
-    blobs: BlobStore,
+    shared: SharedState,
     session: Session,
 ) {
     // Each connection builds its own discovery client for `Resolve`; the
@@ -523,12 +538,7 @@ async fn handle_connection(
         match connection.recv().await {
             Ok(request) => {
                 let response = match request.payload() {
-                    Ok(payload) => {
-                        handle_request(
-                            &mut ctx, &log, &catalogue, &blobs, &state, &session, payload,
-                        )
-                        .await
-                    }
+                    Ok(payload) => handle_request(&mut ctx, &shared, &session, payload).await,
                     Err(error) => {
                         warn!("control-plane: request decode failed: {error}");
                         ControlResponse::Error {
@@ -551,18 +561,53 @@ async fn handle_connection(
     }
 }
 
-/// Handles one decoded control request, scoped to the session's requestor
-/// namespace: `Resolve` routes through the async discovery client, every other
-/// verb records tenant-tagged desired state and/or delegates.
+/// Runs one projection mutation in the guest-wide commit lane.
+async fn serialised_mutation<R>(
+    lane: &tokio::sync::Mutex<()>,
+    mutation: impl std::future::Future<Output = R>,
+) -> R {
+    let _guard = lane.lock().await;
+    mutation.await
+}
+
+/// Handles one decoded control request, serialising the full commit critical
+/// section for desired-state and catalogue mutations across all sessions.
 async fn handle_request(
     ctx: &mut Context,
-    log: &DurableLog,
-    catalogue: &CatalogueState,
-    blobs: &BlobStore,
-    state: &Mutex<ControlPlaneState>,
+    shared: &SharedState,
     session: &Session,
     request: ControlRequest,
 ) -> ControlResponse {
+    if matches!(
+        &request,
+        ControlRequest::Deploy { .. }
+            | ControlRequest::Scale { .. }
+            | ControlRequest::Stop { .. }
+            | ControlRequest::RegisterResource { .. }
+            | ControlRequest::RemoveResource { .. }
+    ) {
+        serialised_mutation(
+            &shared.mutations,
+            handle_request_locked(ctx, shared, session, request),
+        )
+        .await
+    } else {
+        handle_request_locked(ctx, shared, session, request).await
+    }
+}
+
+/// Handles a request, with projection mutations called inside the guest-wide
+/// mutation lane.
+async fn handle_request_locked(
+    ctx: &mut Context,
+    shared: &SharedState,
+    session: &Session,
+    request: ControlRequest,
+) -> ControlResponse {
+    let log = &shared.log;
+    let catalogue = &shared.catalogue;
+    let blobs = &shared.blobs;
+    let state = &*shared.desired;
     let namespace = &session.namespace;
     let client_process_id = session.client_process_id;
     let tenant = tenant_label(namespace);
@@ -775,6 +820,20 @@ async fn handle_request(
     }
 }
 
+/// Appends a record and completes its sync barrier.
+///
+/// The desired state a caller was told was accepted must survive a power
+/// cycle, so the acknowledgement boundary is append **and** sync: the store
+/// batches its own writes, and this call is what makes the record durable
+/// before the projection changes or the caller is told it succeeded.
+async fn append_durably(log: &DurableLog, payload: Vec<u8>) -> selium_guest::Result<()> {
+    let timestamp_ms = selium_guest::time::now().map(|nanos| nanos / 1_000_000)?;
+    log.append(timestamp_ms, Vec::new(), payload)
+        .await
+        .map(|_sequence| ())?;
+    log.sync().await
+}
+
 /// Appends a desired-state record to the durable log and applies it to the
 /// projection, keeping the store of record and the read model in step.
 async fn record(
@@ -782,9 +841,8 @@ async fn record(
     state: &Mutex<ControlPlaneState>,
     record: DesiredStateRecord,
 ) -> selium_guest::Result<()> {
-    let timestamp_ms = selium_guest::time::now().map(|nanos| nanos / 1_000_000)?;
     let payload = FlatMsg::encode(&record);
-    log.append(timestamp_ms, Vec::new(), payload).await?;
+    append_durably(log, payload).await?;
     state
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -800,9 +858,8 @@ async fn record_catalogue(
     catalogue: &Mutex<ResourceCatalogue>,
     record: CatalogueLogRecord,
 ) -> selium_guest::Result<()> {
-    let timestamp_ms = selium_guest::time::now().map(|nanos| nanos / 1_000_000)?;
     let payload = FlatMsg::encode(&record);
-    log.append(timestamp_ms, Vec::new(), payload).await?;
+    append_durably(log, payload).await?;
     catalogue
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -849,6 +906,57 @@ mod tests {
     use super::*;
     use selium_wire::Rendezvous;
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_mutations_project_in_durable_order() {
+        let lane = Arc::new(tokio::sync::Mutex::new(()));
+        let ledger = Arc::new(Mutex::new(Vec::new()));
+        let projection = Arc::new(Mutex::new(Vec::new()));
+        let first_appended = Arc::new(tokio::sync::Notify::new());
+        let release_first = Arc::new(tokio::sync::Notify::new());
+
+        let first = {
+            let lane = lane.clone();
+            let ledger = ledger.clone();
+            let projection = projection.clone();
+            let first_appended = first_appended.clone();
+            let release_first = release_first.clone();
+            tokio::spawn(async move {
+                serialised_mutation(&lane, async move {
+                    ledger.lock().expect("ledger").push("A");
+                    first_appended.notify_one();
+                    // Hold A between its durable append and projection. B may
+                    // not pass this point and then be overwritten by A.
+                    release_first.notified().await;
+                    projection.lock().expect("projection").push("A");
+                })
+                .await;
+            })
+        };
+        first_appended.notified().await;
+
+        let second = {
+            let lane = lane.clone();
+            let ledger = ledger.clone();
+            let projection = projection.clone();
+            tokio::spawn(async move {
+                serialised_mutation(&lane, async move {
+                    ledger.lock().expect("ledger").push("B");
+                    projection.lock().expect("projection").push("B");
+                })
+                .await;
+            })
+        };
+        tokio::task::yield_now().await;
+        assert_eq!(*ledger.lock().expect("ledger"), vec!["A"]);
+        assert!(projection.lock().expect("projection").is_empty());
+
+        release_first.notify_one();
+        first.await.expect("first mutation");
+        second.await.expect("second mutation");
+        assert_eq!(*ledger.lock().expect("ledger"), vec!["A", "B"]);
+        assert_eq!(*projection.lock().expect("projection"), vec!["A", "B"]);
+    }
+
     fn deployment(workload_id: &str, replicas: u32, module: &str) -> Deployment {
         Deployment {
             workload_id: workload_id.to_string(),
@@ -891,6 +999,8 @@ mod tests {
     }
 
     /// 4.2: the projection reconstructs from replay of appended records.
+    // scenario: control-plane/user-facing-desired-state-ownership/deployment-update-recorded
+    // scenario: control-plane/user-facing-desired-state-ownership/pipeline-binding-recorded
     #[test]
     fn projection_reconstructs_from_replayed_records() {
         let mut state = ControlPlaneState::default();
@@ -925,6 +1035,8 @@ mod tests {
 
     /// 4.1 + 4.2: an accepted deployment intent round-trips through the log
     /// encoding and is recorded in the projection.
+    // scenario: control-plane/flatbuffers-desired-state-log-records/deployment-intent-is-recorded-as-flatbuffers
+    // scenario: control-plane/flatbuffers-desired-state-log-records/projection-rebuilds-from-flatbuffers-replay
     #[test]
     fn deployment_intent_is_recorded_in_projection() {
         let record = deployment_record("acme", deployment("api", 3, "api/v1"));
@@ -941,6 +1053,7 @@ mod tests {
     }
 
     /// 4.3: status reads return the last accepted desired state.
+    // scenario: control-plane/user-facing-desired-state-ownership/desired-state-read-reflects-accepted-updates
     #[test]
     fn status_reads_return_last_accepted_desired_state() {
         let mut state = ControlPlaneState::default();
@@ -996,6 +1109,7 @@ mod tests {
     }
 
     /// 5.1: a discovery lookup maps to a typed resolve response.
+    // scenario: control-plane/narrow-delegation/resolution-delegated-to-discovery
     #[test]
     fn resolve_response_maps_found_and_missing_targets() {
         let found = resolve_response(Some(ResourceTarget {
@@ -1026,6 +1140,7 @@ mod tests {
 
     /// 5.2: the scheduler seam returns a typed deferred status (mapped to a
     /// delegation status by the dispatcher).
+    // scenario: control-plane/narrow-delegation/placement-delegated-to-scheduler
     #[test]
     fn scheduler_seam_returns_typed_deferred_status() {
         let client = SchedulerClient;
@@ -1044,6 +1159,7 @@ mod tests {
 
     /// 6.2: an accepted deployment carries its module reference in the
     /// recorded desired state.
+    // scenario: control-plane/module-upload-to-the-durable-store/deploy-references-a-stored-module
     #[test]
     fn deployment_records_module_reference() {
         let record = deployment_record("acme", deployment("api", 3, "api/v1"));
@@ -1086,6 +1202,7 @@ mod tests {
     /// class-scoped control-plane set admits any tenant (the per-session
     /// tenant comes from the authenticated identity, not from a tenant
     /// selector on the grant).
+    // scenario: control-plane/capability-enforced-access/unprivileged-client-is-refused
     #[test]
     fn authority_boundary_refuses_unprivileged_clients() {
         // A data-plane-only client: host queue in another tenant.
@@ -1122,6 +1239,8 @@ mod tests {
 
     /// 3.3: each session is scoped by the delivering process owner's tenant —
     /// a named process tenant maps to its namespace, an unset one to root.
+    // scenario: control-plane/requestor-tenant-derivation/tenant-scoped-deliverer-scoped-to-its-tenant
+    // scenario: control-plane/requestor-tenant-derivation/root-deliverer-scoped-as-root
     #[test]
     fn session_scope_comes_from_process_owner() {
         assert_eq!(
@@ -1138,6 +1257,7 @@ mod tests {
 
     /// 3.2: a client half sends a typed request and receives a correlated
     /// typed reply over the shared-memory RPC path (two-ring session).
+    // scenario: control-plane/typed-wire-protocol/typed-request-and-reply
     #[tokio::test]
     async fn shared_memory_rpc_round_trips_typed_request_and_reply() {
         drop(selium_memory::set_region_provider(Box::new(
@@ -1223,6 +1343,11 @@ mod tests {
 
     /// 2.1: catalogue records apply into the registering tenant's partition
     /// and lookups are tenant-scoped.
+    // scenario: resource-catalogue/named-resource-registration/owner-registers-a-name
+    // scenario: resource-catalogue/catalogue-backed-lookup/name-resolves-to-its-resource
+    // scenario: resource-catalogue/catalogue-backed-lookup/cross-tenant-lookup-refused
+    // scenario: control-plane/resource-catalogue-ownership/registration-recorded-durably
+    // scenario: control-plane/resource-catalogue-ownership/lookup-is-tenant-scoped
     #[test]
     fn catalogue_records_apply_and_scope_by_tenant() {
         let mut catalogue = ResourceCatalogue::default();
@@ -1248,6 +1373,7 @@ mod tests {
 
     /// 2.1: a session may only register or remove a name it owns — naming a
     /// resource owned by another process is refused with a typed error.
+    // scenario: resource-catalogue/named-resource-registration/non-owner-registration-rejected
     #[test]
     fn a_catalogue_registration_or_removal_requires_session_ownership() {
         assert_eq!(
@@ -1264,6 +1390,8 @@ mod tests {
 
     /// 2.1: removal stops resolving the name, and replay rebuilds the
     /// projection from the ordered log records.
+    // scenario: resource-catalogue/catalogue-ownership-by-a-system-guest/catalogue-survives-restart
+    // scenario: resource-catalogue/catalogue-ownership-by-a-system-guest/removal-is-recorded
     #[test]
     fn catalogue_replay_rebuilds_projection_with_removals() {
         let records = vec![
@@ -1302,11 +1430,3 @@ mod tests {
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
 // These tests are the evidence for the `resource-catalogue` scenarios. One scenario may
 // be claimed by several tests; the annotation lives next to the evidence.
-// scenario: resource-catalogue/catalogue-ownership-by-a-system-guest/catalogue-survives-restart
-// scenario: resource-catalogue/catalogue-ownership-by-a-system-guest/removal-is-recorded
-// scenario: resource-catalogue/named-resource-registration/owner-registers-a-name
-// scenario: resource-catalogue/named-resource-registration/non-owner-registration-rejected
-// scenario: resource-catalogue/anonymous-allocation-is-not-catalogued/scratch-region-without-the-catalogue
-// scenario: resource-catalogue/anonymous-allocation-is-not-catalogued/catalogue-unreachable
-// scenario: resource-catalogue/catalogue-backed-lookup/name-resolves-to-its-resource
-// scenario: resource-catalogue/catalogue-backed-lookup/cross-tenant-lookup-refused

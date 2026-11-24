@@ -28,6 +28,8 @@ fn backpressure_queue_grants() -> Vec<CapabilityGrant> {
         ),
     ]
 }
+// scenario: resource-handshake/connection-identity/server-receives-client-identity
+// scenario: resource-handshake/handoff-metadata/metadata-delivered
 
 /// A sender enqueues a connection with an opaque metadata payload; the
 /// receiver's `ConnectionInfo` surfaces exactly that payload.
@@ -94,6 +96,7 @@ fn handoff_metadata_delivered() {
     assert_eq!(value, 42);
     assert_eq!(received, metadata, "metadata must survive the handoff");
 }
+// scenario: resource-handshake/handoff-metadata/no-metadata
 
 /// A sender enqueues a connection without metadata; the receiver sees an
 /// empty metadata value.

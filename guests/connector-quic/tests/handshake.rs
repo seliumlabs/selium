@@ -229,6 +229,7 @@ impl std::fmt::Debug for TokioTimer {
 
 /// A client presenting no certificate (or one outside the anchors) fails the
 /// handshake before any guest is contacted: `incoming.await` errors.
+// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/untrusted-client-refused
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn certless_client_handshake_is_refused() {
     let (server_config, _anchors) = mtls_server_config();
@@ -343,6 +344,7 @@ fn client_config_with_certificate(
 /// streams per connection. A client opening exactly the cap succeeds; the
 /// next stream is refused (blocked on stream credit the connector never
 /// grants), so no per-stream channel would be allocated for it.
+// scenario: quic-connector/per-connection-bidirectional-stream-cap/connection-exceeds-the-stream-cap
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_bidi_streams_beyond_the_cap_are_refused() {
     let cert = quinn::rustls::pki_types::CertificateDer::from(CERT_DER.to_vec());
@@ -520,6 +522,7 @@ async fn handshake_completes_and_relays_a_stream() {
 /// mTLS is opt-in: with no trust anchors configured, the connector serves
 /// without client authentication, so a certless client completes the
 /// handshake (restoring pre-mTLS behaviour for non-bridge deployments).
+// scenario: quic-connector/edge-termination-of-quic-over-tls-1-3/mtls-disabled
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mtls_off_accepts_certless_client() {
     let cert = quinn::rustls::pki_types::CertificateDer::from(CERT_DER.to_vec());
@@ -604,6 +607,7 @@ fn mtls_server_config() -> (ServerConfig, ClientAnchorSet) {
 /// This is the compile-level verification for the wasm-only types (they cannot
 /// drive a real handshake natively); the wire behaviour is exercised by the
 /// runtime substrate tests once the guest is built for wasm32.
+// scenario: udp-transport/binary-datagram-frame-format/quinn-adapter-compatibility
 #[test]
 fn production_adapter_types_satisfy_quinn_trait_bounds() {
     fn assert_udp<T: quinn::AsyncUdpSocket>() {}
@@ -616,6 +620,7 @@ fn production_adapter_types_satisfy_quinn_trait_bounds() {
 
 /// Task 6.2: a burst above the admission rate is refused with a distinct
 /// stream reset while the connection itself stays up for further streams.
+// scenario: quic-connector/per-tenant-stream-admission-rate-limit/flood-above-the-rate-is-refused-cheaply
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn refused_stream_resets_but_connection_stays_up() {
     let (server_config, cert) = server_config();
@@ -741,6 +746,7 @@ fn test_anchor_set() -> ClientAnchorSet {
 /// handshake, and the server derives the authenticated identity (tenant +
 /// fingerprint) from the connection — the identity later attached as handoff
 /// metadata.
+// scenario: quic-connector/authenticated-client-identity-on-handoff/handoff-carries-verified-identity
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn trusted_client_handshake_derives_identity() {
     let (server_config, anchors) = mtls_server_config();
@@ -809,6 +815,7 @@ async fn trusted_client_handshake_derives_identity() {
 
 /// Unknown SNI is refused: the connector closes the connection before ever
 /// contacting an app guest (no discovery context = nothing to contact).
+// scenario: quic-connector/sni-based-discovery-route-resolution/unknown-sni-refused-at-the-handshake
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn unknown_sni_is_refused_without_guest_contact() {
     let (server_config, cert) = server_config();

@@ -100,6 +100,9 @@ fn bootstrap_discovery_and_consumer(runtime: &Runtime) -> (u64, u64) {
 
 /// Task 4.2: a consumer started before its provider converges, and re-attaches
 /// after the provider restarts.
+// scenario: selium-runtime/cross-process-channel-wake-delivery/host-commit-wakes-its-subscriber
+// scenario: route-watch/reactive-route-watch/provider-is-revoked
+// scenario: route-watch/convergence-without-a-readiness-gate/provider-restarts-mid-life
 #[test]
 #[ignore = "requires the discovery and discovery-probe guests built for wasm32-unknown-unknown"]
 fn consumer_converges_on_a_provider_that_starts_later_and_restarts() {
@@ -182,6 +185,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
             CapabilityGrant::new(
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
+            ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
             ),
         ],
         tenant: None,

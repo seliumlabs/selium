@@ -41,6 +41,7 @@ impl Wake for CountingWaker {
     }
 }
 
+// scenario: peer-lifecycle/accepting-peers-start-attached/sender-closes-before-handoff-processing
 #[test]
 fn accepting_peer_starts_attached() {
     install_heap_provider();
@@ -60,6 +61,9 @@ fn accepting_peer_starts_attached() {
     assert!(reader.peer_closed().expect("peer close"));
 }
 
+// scenario: selium-shm/reader-writer-wait-semantics/pending-implies-registered
+// scenario: peer-lifecycle/peer-attachment-is-observable/peer-attaches-while-remaining-idle
+// scenario: channel-wake-wait/writer-attachment-wakes-channel-readers/reader-wakes-on-attachment-without-data
 #[test]
 fn attachment_without_data_wakes_a_parked_reader() {
     install_heap_provider();
@@ -103,6 +107,43 @@ fn counting_waker() -> (Arc<CountingWaker>, Waker) {
 }
 
 #[test]
+fn frame_commit_wakes_a_parked_reader() {
+    install_heap_provider();
+    install_generation_callbacks();
+    let channel = park_channel(4096);
+    let mut reader = channel
+        .blocking_reader_awaiting_peer()
+        .expect("awaiting reader");
+    let _writer = channel.blocking_writer().expect("peer attaches");
+
+    // Park on an attached-but-empty ring.
+    let (counter, waker) = counting_waker();
+    let (result, _filled) = poll_read_once(&mut reader, &waker);
+    assert!(
+        matches!(result, Poll::Pending),
+        "empty ring parks the reader"
+    );
+    let parked_wakes = counter.0.load(Ordering::SeqCst);
+
+    // A committed frame must publish its generation advance: the bump alone
+    // leaves the parked reader asleep until an unrelated event re-enters the
+    // guest, which is the regression this test pins.
+    write_frame(&channel, b"hello");
+    assert!(
+        counter.0.load(Ordering::SeqCst) > parked_wakes,
+        "committing a frame must wake a reader parked on the ring"
+    );
+
+    let (result, filled) = poll_read_once(&mut reader, &waker);
+    assert!(matches!(result, Poll::Ready(Ok(()))), "frame is readable");
+    assert!(
+        filled.ends_with(b"hello"),
+        "the committed payload is readable: {filled:?}"
+    );
+}
+
+// scenario: channel-wake-wait/writer-attachment-wakes-channel-readers/writer-registration-fails
+#[test]
 fn failed_writer_registration_publishes_nothing() {
     install_heap_provider();
     let channel = park_channel(64);
@@ -129,6 +170,7 @@ fn failed_writer_registration_publishes_nothing() {
     );
 }
 
+// scenario: peer-lifecycle/buffered-data-precedes-eof/peer-writes-a-final-frame-and-closes
 #[test]
 fn final_frame_precedes_eof() {
     install_heap_provider();
@@ -151,6 +193,7 @@ fn final_frame_precedes_eof() {
     assert!(filled.is_empty());
 }
 
+// scenario: peer-lifecycle/initial-peer-absence-is-not-closure/relay-starts-before-its-serving-peer
 #[test]
 fn initial_peer_absence_is_not_closure() {
     install_heap_provider();
@@ -190,6 +233,7 @@ fn noop_waker() -> Waker {
     futures::task::noop_waker()
 }
 
+// scenario: peer-lifecycle/initial-peer-absence-is-not-closure/ordinary-channel-retains-its-membership-policy
 #[test]
 fn ordinary_channel_retains_immediate_eof() {
     install_heap_provider();
@@ -210,7 +254,9 @@ fn park_channel(capacity: u64) -> Channel {
     )
     .expect("create channel")
 }
+// scenario: channel-wake-wait/wakeable-channel-reads/reader-observes-disconnect-without-spinning
 
+// scenario: peer-lifecycle/peer-attachment-is-observable/peer-attaches-and-closes-before-the-first-read
 #[test]
 fn peer_attaches_and_closes_before_the_first_poll() {
     install_heap_provider();
@@ -279,11 +325,3 @@ fn write_frame(channel: &Channel, payload: &[u8]) {
 // These tests are the evidence for the `peer-lifecycle` and
 // `channel-wake-wait` writer-attachment scenarios. The ids resolve against
 // `openspec/specs` once this change is archived.
-// scenario: peer-lifecycle/initial-peer-absence-is-not-closure/relay-starts-before-its-serving-peer
-// scenario: peer-lifecycle/initial-peer-absence-is-not-closure/ordinary-channel-retains-its-membership-policy
-// scenario: peer-lifecycle/peer-attachment-is-observable/peer-attaches-while-remaining-idle
-// scenario: peer-lifecycle/peer-attachment-is-observable/peer-attaches-and-closes-before-the-first-read
-// scenario: peer-lifecycle/buffered-data-precedes-eof/peer-writes-a-final-frame-and-closes
-// scenario: peer-lifecycle/accepting-peers-start-attached/sender-closes-before-handoff-processing
-// scenario: channel-wake-wait/writer-attachment-wakes-channel-readers/reader-wakes-on-attachment-without-data
-// scenario: channel-wake-wait/writer-attachment-wakes-channel-readers/writer-registration-fails

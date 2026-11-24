@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Blocking Reader Position Updates via Hostcall
 `BlockingReader` SHALL update its reader slot position through `ChannelRegion::write_table_slot` rather than through direct shared memory writes. `ChannelRegion` SHALL delegate to `SharedRegion::write_table_slot`, which under a consumer mapping (`PROT_READ`) SHALL invoke the `write_slot` hostcall transparently. The `BlockingReader` does not branch on the write mechanism.

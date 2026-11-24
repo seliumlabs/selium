@@ -32,6 +32,10 @@ fn descriptors_build_from_macro_metadata() {
 
     assert_eq!(descriptor.entrypoint, "demo_entrypoint");
 }
+// scenario: selium-guest-macros/guest-entrypoint-macro/macro-generated-entrypoint-glue
+// scenario: selium-guest-macros/backward-compatible-entrypoint-return-types/existing-void-entrypoint-unchanged
+// scenario: selium-guest-macros/generated-pattern-metadata/messaging-interface-metadata-emitted
+// scenario: selium-guest-macros/bootstrap-aware-macro-integration/runtime-bootstraps-macro-based-guest
 
 #[tokio::test(flavor = "current_thread")]
 async fn macros_generate_metadata_compatible_with_runtime_and_tracing() {

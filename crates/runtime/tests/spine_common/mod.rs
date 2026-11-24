@@ -28,7 +28,7 @@ use selium_abi::{
 };
 use selium_client::{ClientIdentity, ConnectOptions, FlatMsg as _};
 use selium_kernel::Kernel;
-use selium_runtime::{Runtime, SystemGuestArg, SystemGuestDescriptor};
+use selium_runtime::{Runtime, RuntimeConfig, SystemGuestArg, SystemGuestDescriptor};
 
 /// The single-instance bridge route's server certificate (SAN `bridge`),
 /// provisioned into the `tls-certs` blob store before the connector guest
@@ -53,7 +53,11 @@ pub(crate) const CONVERGENCE_BOUND: Duration = Duration::from_secs(120);
 /// Reviewed bound on the interpreted-guest QUIC/TLS handshake. The handshake
 /// runs inside the wasm connector, so it is an order of magnitude slower than
 /// a native one; 240 s separates "loaded runner" from "never completes".
-pub(crate) const HANDSHAKE_BOUND: Duration = Duration::from_secs(240);
+/// Bound on the interpreted connector's mutual-TLS handshake. The connector
+/// runs in a WASM guest, a dropped datagram costs a retransmission round, and
+/// the server's own idle budget is 300 s; the client must outlast both so the
+/// bound distinguishes "never completes" from "slow under load".
+pub(crate) const HANDSHAKE_BOUND: Duration = Duration::from_secs(420);
 pub(crate) const LEAF_MANIFEST: &str = "acme-leaf";
 /// Reviewed bound on observing one state change after it is triggered
 /// (anchor-set rebuild, revocation refusal, a probe's catalogue round trip).
@@ -82,9 +86,13 @@ pub(crate) struct StateRoot {
 
 /// Cross-process guard for the connector's fixed listener port: the spine
 /// test binaries (one runtime per process) must not bind `0.0.0.0:4433`
-/// concurrently. Spin-acquired via an exclusive lock file, released on
-/// drop.
-pub(crate) struct SpinePortGuard(PathBuf);
+/// concurrently.
+///
+/// The operating system holds the lock on an open file handle, so a process
+/// killed while holding it releases the lock on exit; no stale-file age
+/// heuristic or wall-clock comparison is involved. Acquisition is bounded so a
+/// wedged holder fails the test instead of hanging the lane.
+pub(crate) struct SpinePortGuard(std::fs::File);
 
 impl StateRoot {
     /// Creates a unique temporary state root.
@@ -132,33 +140,29 @@ impl Drop for StateRoot {
 }
 
 impl SpinePortGuard {
-    /// Acquires the spine port, blocking until no other spine binary holds
-    /// it.
-    ///
-    /// A holder that is killed before its `Drop` runs leaves the lock file
-    /// behind, which would otherwise wedge every later spine test in this
-    /// container forever. A lock older than [`STALE_LOCK_AGE`] is therefore
-    /// treated as abandoned and removed: live spine binaries hold it for at
-    /// most a couple of minutes, so anything that old belongs to a dead run.
+    /// Acquires the spine port, blocking until no other spine binary holds it.
     pub(crate) fn acquire() -> Self {
-        const STALE_LOCK_AGE: Duration = Duration::from_secs(600);
+        const ACQUIRE_BOUND: Duration = Duration::from_secs(600);
         let path = std::env::temp_dir().join("selium-quic-spine-4433.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .expect("open spine port lock");
+        let deadline = std::time::Instant::now() + ACQUIRE_BOUND;
         loop {
-            match OpenOptions::new().create_new(true).write(true).open(&path) {
-                Ok(_) => return Self(path),
-                Err(_) => {
-                    if let Ok(metadata) = std::fs::metadata(&path)
-                        && let Ok(age) = metadata.modified().and_then(|modified| {
-                            std::time::SystemTime::now()
-                                .duration_since(modified)
-                                .map_err(std::io::Error::other)
-                        })
-                        && age > STALE_LOCK_AGE
-                    {
-                        drop(std::fs::remove_file(&path));
-                        continue;
-                    }
+            match file.try_lock() {
+                Ok(()) => return Self(file),
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "timed out acquiring the spine port lock after {ACQUIRE_BOUND:?}"
+                    );
                     std::thread::sleep(Duration::from_millis(200));
+                }
+                Err(std::fs::TryLockError::Error(error)) => {
+                    panic!("spine port lock failed: {error}")
                 }
             }
         }
@@ -167,9 +171,11 @@ impl SpinePortGuard {
 
 impl Drop for SpinePortGuard {
     fn drop(&mut self) {
-        // Best-effort release; a crash between create and drop leaves a
-        // stale lock file (tests are expected to run on a clean temp dir).
-        drop(std::fs::remove_file(&self.0));
+        // Explicit unlock is best-effort; closing the handle releases the OS
+        // lock in any case.
+        if let Err(error) = self.0.unlock() {
+            eprintln!("spine port unlock failed: {error}");
+        }
     }
 }
 
@@ -232,6 +238,11 @@ pub(crate) fn client_options_no_identity() -> ConnectOptions {
         300_000u32,
     ))));
     transport.initial_rtt(Duration::from_millis(250));
+    // Keep-alives hold a control connection open across the interpreted
+    // connector's slow phases (identity onboarding, CLI subprocess spines):
+    // the server's idle budget is shorter than a long test section, and an
+    // idle QUIC connection is reaped as lost.
+    transport.keep_alive_interval(Some(Duration::from_secs(10)));
 
     ConnectOptions {
         server_name: SERVER_NAME.to_string(),
@@ -335,6 +346,10 @@ pub(crate) fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescript
             CapabilityGrant::new(
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
+            ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
             ),
         ],
         tenant: None,
@@ -627,6 +642,40 @@ pub(crate) fn store_descriptor(_dependencies: Vec<String>) -> SystemGuestDescrip
         discovery_service: false,
         handlers: Vec::new(),
     }
+}
+
+/// Boots a resident probe that lists the current discovery domain table.
+pub(crate) fn probe_domains(runtime: &Runtime, name: &str) -> u64 {
+    let report = runtime
+        .bootstrap_system_guests(RuntimeConfig {
+            start_discovery: false,
+            system_guests: vec![SystemGuestDescriptor {
+                name: name.to_string(),
+                module_id: format!("{name}-module"),
+                module_bytes: read_wasm("selium-discovery-probe", "selium_discovery_probe.wasm"),
+                entrypoint: "discovery_probe".to_string(),
+                arguments: vec![
+                    SystemGuestArg::Pointer(Vec::new()),
+                    SystemGuestArg::Integer(13),
+                ],
+                grants: vec![
+                    CapabilityGrant::new(
+                        Capability::HostQueue,
+                        vec![ResourceSelector::ResourceClass(ResourceClass::HostQueue)],
+                    ),
+                    CapabilityGrant::new(
+                        Capability::SharedMemory,
+                        vec![ResourceSelector::ResourceClass(ResourceClass::SharedRegion)],
+                    ),
+                ],
+                tenant: None,
+                discovery_service: false,
+                handlers: Vec::new(),
+            }],
+            state_dir: None,
+        })
+        .expect("bootstrap domain-list probe");
+    report.guests.first().expect("domain-list probe").process_id
 }
 
 #[expect(clippy::panic, reason = "test helper")]

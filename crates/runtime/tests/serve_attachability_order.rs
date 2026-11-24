@@ -55,6 +55,7 @@ fn collect_after(
     );
 }
 
+// scenario: guest-context/attachability-precedes-route-publication/attachability-declaration-fails
 #[test]
 #[ignore = "requires the discovery and discovery-probe guests built for wasm32-unknown-unknown"]
 fn declaration_failure_publishes_neither_route() {
@@ -120,6 +121,10 @@ fn discovery_descriptor(module_bytes: Vec<u8>) -> SystemGuestDescriptor {
             CapabilityGrant::new(
                 Capability::RouteClaim,
                 vec![ResourceSelector::Uri("sel:///discovery-routes".to_string())],
+            ),
+            CapabilityGrant::new(
+                Capability::RouteClaim,
+                vec![ResourceSelector::Uri("sel:///discovery".to_string())],
             ),
         ],
         tenant: None,
@@ -198,4 +203,3 @@ fn spawn_probe(runtime: &Runtime, mode: u64) -> u64 {
 }
 
 // --- Spec traceability (scripts/check-traceability.sh) -------------------
-// scenario: guest-context/attachability-precedes-route-publication/attachability-declaration-fails

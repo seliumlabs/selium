@@ -1,0 +1,25 @@
+[package]
+name = "selium-connector-resolve"
+version.workspace = true
+edition.workspace = true
+description = "Discovery-backed HTTP and QUIC connector route resolvers"
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[dependencies]
+selium-abi.workspace = true
+selium-guest.workspace = true
+selium-service.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+
+[lints]
+workspace = true

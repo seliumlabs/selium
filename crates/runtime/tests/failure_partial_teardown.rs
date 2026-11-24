@@ -14,6 +14,7 @@ use selium_runtime::Runtime;
 mod common;
 mod failure_common;
 
+// scenario: verification-gate/failure-injection-coverage/partial-teardown-is-retryable
 #[test]
 #[ignore = "requires the discovery and discovery-probe guests built for wasm32-unknown-unknown"]
 fn partial_teardown_is_retryable_after_a_publish_failure() {
