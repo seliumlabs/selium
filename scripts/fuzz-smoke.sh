@@ -20,15 +20,9 @@ FUZZ_SECONDS="${FUZZ_SECONDS:-15}"
 FUZZ_TARGETS="${FUZZ_TARGETS:-hostcall_envelope multi_memory_header frame_codec module_probing}"
 MAX_LEN="${FUZZ_MAX_LEN:-4096}"
 NIGHTLY="${SELIUM_NIGHTLY_TOOLCHAIN:-nightly}"
-# CARGO_FUZZ_VERSION="${CARGO_FUZZ_VERSION:-0.13.2}"
 
 if ! command -v cargo-fuzz >/dev/null 2>&1; then
-  echo "fuzz-smoke: install cargo-fuzz $CARGO_FUZZ_VERSION (cargo install cargo-fuzz --version $CARGO_FUZZ_VERSION --locked)" >&2
-  exit 2
-fi
-ACTUAL_CARGO_FUZZ_VERSION="$(cargo-fuzz --version)"
-if [ "$ACTUAL_CARGO_FUZZ_VERSION" != "cargo-fuzz $CARGO_FUZZ_VERSION" ]; then
-  echo "fuzz-smoke: expected cargo-fuzz $CARGO_FUZZ_VERSION, found $ACTUAL_CARGO_FUZZ_VERSION" >&2
+  echo "fuzz-smoke: install cargo-fuzz (cargo install cargo-fuzz --locked)" >&2
   exit 2
 fi
 if ! rustc +"$NIGHTLY" --version >/dev/null 2>&1; then
