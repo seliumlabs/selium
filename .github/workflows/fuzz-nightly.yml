@@ -8,6 +8,11 @@ name: Fuzz nightly
 # A failing job means the target crashed, timed out, or exhausted memory. The
 # reproducer is in the uploaded `fuzz-artifacts-*` artifact; copy a trimmed
 # version into fuzz/seeds/<target>/ as a named regression seed once fixed.
+#
+# The minimised working corpus is also uploaded as `fuzz-corpus-*`. The Actions
+# cache is not downloadable from a developer machine, so that artifact is the
+# supported way to pull a nightly corpus back for a reviewed seed refresh (see
+# fuzz/seeds/README.md).
 
 permissions:
   contents: read
@@ -105,6 +110,17 @@ jobs:
           path: fuzz/artifacts/${{ matrix.target }}/
           if-no-files-found: ignore
           retention-days: 30
+      # The cache is workflow-only; this artifact is the supported way to pull
+      # a target's minimised corpus back to a developer machine. On a crash the
+      # minimise step is skipped, so this uploads the unminimised corpus too.
+      - name: upload working corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fuzz/corpus/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: save working corpus
         if: always()
         uses: actions/cache/save@v4

@@ -7,8 +7,9 @@ a target crash, hang, or exhaust memory fails CI in seconds.
 Inputs discovered by a run are written to the gitignored
 `fuzz/corpus/<target>/` instead, so a local or CI fuzz run never dirties the
 tree. The scheduled nightly workflow (`.github/workflows/fuzz-nightly.yml`)
-extends the budget per target, keeps that working corpus in the Actions cache,
-and uploads crash reproducers as workflow artifacts.
+extends the budget per target, keeps that working corpus in the Actions cache
+for its next run, and uploads both crash reproducers and the minimised corpus
+as workflow artifacts.
 
 ## Naming
 
@@ -16,6 +17,27 @@ Most files are named by the SHA-1 of their contents, which is libFuzzer's
 convention. `frame_codec` keeps human-readable names for its hand-written
 seeds (`bad_checksum`, `truncated`, `valid_empty_ready`, ...). Keep those names
 when editing them: the seed is a test case and the name is the description.
+
+## Pulling a nightly corpus from CI
+
+The Actions cache is only visible to workflows and cannot be downloaded from a
+developer machine. Use the `fuzz-corpus-<target>-*` artifact instead (retained
+for 14 days; crash artifacts for 30):
+
+```bash
+# Choose a scheduled or workflow_dispatch run.
+gh run list --workflow=fuzz-nightly.yml --limit 5
+
+# Download just one target's corpus. The artifact contents are the files
+# themselves, not a fuzz/corpus/... tree.
+gh run download <run-id> --pattern 'fuzz-corpus-<target>-*' -D /tmp/fuzz-nightly
+
+mkdir -p fuzz/corpus/<target>
+cp -R /tmp/fuzz-nightly/fuzz-corpus-<target>-*/. fuzz/corpus/<target>/
+```
+
+Do not copy the artifact straight into `fuzz/seeds/`: minimise it first, as
+below, so the committed corpus stays small and reviewable.
 
 ## Refreshing a minimised corpus
 
