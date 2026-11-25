@@ -7,12 +7,13 @@ name: Fuzz nightly
 #
 # A failing job means the target crashed, timed out, or exhausted memory. The
 # reproducer is in the uploaded `fuzz-artifacts-*` artifact; copy a trimmed
-# version into fuzz/seeds/<target>/ as a named regression seed once fixed.
+# version into fuzz/seeds/<target>/ as a named regression seed once fixed. The
+# full triage and reproduction procedure is docs/fuzzing-playbook.md.
 #
 # The minimised working corpus is also uploaded as `fuzz-corpus-*`. The Actions
 # cache is not downloadable from a developer machine, so that artifact is the
 # supported way to pull a nightly corpus back for a reviewed seed refresh (see
-# fuzz/seeds/README.md).
+# docs/fuzzing-playbook.md).
 
 permissions:
   contents: read

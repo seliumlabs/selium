@@ -87,7 +87,8 @@ The fuzz nightly lane is not a merge requirement either: it extends each target
 to a 60-minute budget on a schedule and keeps the working corpus in the Actions
 cache, while the merge gate keeps only the short seed-replay lane above. A
 crash there fails the scheduled workflow and leaves the reproducer in the run's
-artifact.
+artifact. Triage, local reproduction, `tmin`/`cmin` use, and the seed-refresh
+sequence are in [`fuzzing-playbook.md`](fuzzing-playbook.md).
 
 The audit lane is strict: an advisory that cannot be fixed must be a written,
 reviewed entry in `docs/known-unknowns.md`, not a silent ignore. Dependencies

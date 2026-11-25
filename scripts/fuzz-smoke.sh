@@ -8,7 +8,8 @@
 #
 # Checked-in seeds live in fuzz/seeds/<target>/; inputs discovered by a run are
 # written to the gitignored fuzz/corpus/<target>/ so a run never dirties the
-# tree.
+# tree. Failure triage and the local reproduction workflow are documented in
+# docs/fuzzing-playbook.md.
 #
 # Usage:
 #   scripts/fuzz-smoke.sh                  # default budget per target

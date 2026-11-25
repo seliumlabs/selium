@@ -1,5 +1,9 @@
 # Fuzz seed corpus
 
+New to fuzzing? Read [`docs/fuzzing-playbook.md`](../../docs/fuzzing-playbook.md)
+first: it explains triage, `tmin` versus `cmin`, and the whole failure workflow.
+This file is the reference for the corpus itself.
+
 Each `fuzz/seeds/<target>/` directory is the checked-in input corpus for that
 target. `scripts/fuzz-smoke.sh` replays it before fuzzing, so a seed that makes
 a target crash, hang, or exhaust memory fails CI in seconds.
@@ -15,8 +19,22 @@ as workflow artifacts.
 
 Most files are named by the SHA-1 of their contents, which is libFuzzer's
 convention. `frame_codec` keeps human-readable names for its hand-written
-seeds (`bad_checksum`, `truncated`, `valid_empty_ready`, ...). Keep those names
-when editing them: the seed is a test case and the name is the description.
+seeds (`bad_checksum`, `truncated`, `valid_empty_ready`, ...), and new
+regression seeds should also get a descriptive name
+(`table_min_overflow.wasm`). Keep those names when editing them: the seed is a
+test case and the name is the description.
+
+## `cmin` or `tmin`?
+
+They minimise different things:
+
+| Command | Minimises | Use it for |
+| --- | --- | --- |
+| `cargo fuzz tmin <target> <one-input>` | One crashing input into the smallest input that still triggers it | Triage and regression seeds |
+| `cargo fuzz cmin <target> <out-dir> <corpus-dir>` | A whole corpus into a coverage-equivalent subset | Refreshing `fuzz/seeds/` |
+
+Using `cmin` on a single crash does not produce a minimal reproducer; using
+`tmin` on a corpus is not a corpus refresh.
 
 ## Pulling a nightly corpus from CI
 
@@ -36,8 +54,15 @@ mkdir -p fuzz/corpus/<target>
 cp -R /tmp/fuzz-nightly/fuzz-corpus-<target>-*/. fuzz/corpus/<target>/
 ```
 
-Do not copy the artifact straight into `fuzz/seeds/`: minimise it first, as
-below, so the committed corpus stays small and reviewable.
+Add `--repo <owner>/<repo>` if `gh` reports a 404 because it resolved the wrong
+remote, and use underscores in the target name (`module_probing`, not
+`module-probing`).
+
+This is the **corpus**, not a crash. If a run failed, download
+`fuzz-artifacts-<target>-*` and follow
+[`docs/fuzzing-playbook.md`](../../docs/fuzzing-playbook.md) before refreshing
+anything. Do not copy an artifact straight into `fuzz/seeds/`: minimise it
+first, as below, so the committed corpus stays small and reviewable.
 
 ## Refreshing a minimised corpus
 
@@ -58,7 +83,26 @@ hashes and loses their descriptions.
 
 ## Adding a regression seed
 
-Copy a crash input from `fuzz/artifacts/<target>/` into
-`fuzz/seeds/<target>/` with a descriptive name, and reference it in the commit
-message. Prefer a small, hand-trimmed input over the raw artifact when the
-failure reproduces with less data.
+After fixing a crash, minimise that one input with `tmin` (not `cmin`) while
+keeping the original artifact:
+
+```bash
+mkdir -p /tmp/fuzz-case
+# The crash is either a downloaded CI artifact or a local fuzz/artifacts/ file.
+cp <crash-artifact> /tmp/fuzz-case/original
+cargo +nightly fuzz tmin <target> /tmp/fuzz-case/original
+```
+
+`tmin` leaves the original alone, writes a new minimised artifact under
+`fuzz/artifacts/<target>/`, and prints its path. Replay the minimised file with
+`cargo +nightly fuzz run <target> <minimised> -- -runs=1`; after the fix it
+must exit cleanly. Copy it into `fuzz/seeds/<target>/` with a descriptive name,
+reference the original failure in the commit message, and run
+`scripts/fuzz-smoke.sh`.
+
+Add the seed only after the fix. A seed that still crashes turns the merge-gate
+smoke lane red.
+
+The full sequence, including dependency pin bumps and the corpus refresh after
+CI is green, is in
+[`docs/fuzzing-playbook.md`](../../docs/fuzzing-playbook.md).
