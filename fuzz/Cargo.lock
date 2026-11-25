@@ -809,7 +809,7 @@ dependencies = [
 [[package]]
 name = "wasmtiny"
 version = "0.1.0"
-source = "git+https://github.com/seliumlabs/wasmtiny?rev=99e0c537c08aac877e7db733bc346e0b213983dc#99e0c537c08aac877e7db733bc346e0b213983dc"
+source = "git+https://github.com/seliumlabs/wasmtiny?rev=867c5b25361c225d08c342577232763f4f9aeb65#867c5b25361c225d08c342577232763f4f9aeb65"
 dependencies = [
  "libc",
  "log",

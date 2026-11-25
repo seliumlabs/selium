@@ -12,7 +12,7 @@ libfuzzer-sys = "0.4"
 selium-abi = { path = "../crates/abi" }
 selium-memory = { path = "../crates/memory" }
 selium-shm = { path = "../crates/shm" }
-wasmtiny = { git = "https://github.com/seliumlabs/wasmtiny", rev = "99e0c537c08aac877e7db733bc346e0b213983dc" }
+wasmtiny = { git = "https://github.com/seliumlabs/wasmtiny", rev = "867c5b25361c225d08c342577232763f4f9aeb65" }
 
 [[bin]]
 name = "hostcall_envelope"

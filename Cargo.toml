@@ -146,6 +146,6 @@ getrandom = { git = "https://github.com/seliumlabs/getrandom", rev = "1cd6d1f288
 ring = { git = "https://github.com/briansmith/ring", rev = "840167e18e4fa837eb48de46500454a616a15a6e" }
 # wasmtiny = { path = "../wasmtiny/crates/core" }
 # wasmtiny-aotc = { path = "../wasmtiny/crates/aotc" }
-wasmtiny = { git = "https://github.com/seliumlabs/wasmtiny", rev = "99e0c537c08aac877e7db733bc346e0b213983dc" }
-wasmtiny-aotc = { git = "https://github.com/seliumlabs/wasmtiny", rev = "99e0c537c08aac877e7db733bc346e0b213983dc" }
+wasmtiny = { git = "https://github.com/seliumlabs/wasmtiny", rev = "867c5b25361c225d08c342577232763f4f9aeb65" }
+wasmtiny-aotc = { git = "https://github.com/seliumlabs/wasmtiny", rev = "867c5b25361c225d08c342577232763f4f9aeb65" }
 web-time = { path = "vendor/web-time" }
