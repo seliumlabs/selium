@@ -79,8 +79,15 @@ each pinned tool version is checked in.
 | --- | --- | --- |
 | Security audit | `cargo audit -D warnings -D unmaintained -D unsound -D yanked` | `cargo-audit 0.22.2` |
 | Fuzz smoke | `scripts/fuzz-smoke.sh` (short bounded run over the checked-in seed corpus) | `cargo-fuzz 0.13.2`, `nightly-2026-10-25` (the script checks both) |
+| Fuzz nightly | `.github/workflows/fuzz-nightly.yml` (60 min per target, working corpus cached between runs) | `cargo-fuzz` (latest), `nightly` (latest) |
 | Soak and crash | `scripts/gate.sh --soak` (`soak`, `crash_consistency`) | — |
 | Miri | `rustup component add miri --toolchain nightly-2026-10-25 && cargo +nightly-2026-10-25 miri test -p selium-memory --lib` | dated nightly + `miri` component |
+
+The fuzz nightly lane is not a merge requirement either: it extends each target
+to a 60-minute budget on a schedule and keeps the working corpus in the Actions
+cache, while the merge gate keeps only the short seed-replay lane above. A
+crash there fails the scheduled workflow and leaves the reproducer in the run's
+artifact.
 
 The audit lane is strict: an advisory that cannot be fixed must be a written,
 reviewed entry in `docs/known-unknowns.md`, not a silent ignore. Dependencies

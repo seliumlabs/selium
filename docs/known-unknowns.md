@@ -95,9 +95,11 @@ released in lockstep; no broader compatibility window is claimed.
 
 Short fuzz-smoke targets cover hostcall envelopes, multi-memory headers, frame
 codecs, and module probing (`scripts/fuzz-smoke.sh`, seed corpus under
-`fuzz/seeds/`), and run in a bounded CI lane. They are not continuous fuzzing:
-coverage beyond each lane's short wall-clock budget, dictionary quality, and
-long-horizon discovery remain unknown.
+`fuzz/seeds/`), and run in a bounded CI lane. A scheduled nightly workflow
+(`.github/workflows/fuzz-nightly.yml`) extends each target's budget and caches
+the working corpus between runs. Neither lane is continuous fuzzing: coverage
+beyond each budget, dictionary quality, and long-horizon discovery remain
+unknown.
 
 ## Traceability is claimed, not proven
 

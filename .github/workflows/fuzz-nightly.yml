@@ -1,0 +1,113 @@
+name: Fuzz nightly
+
+# Long-budget fuzzing, separate from the merge gate. One job per target, so a
+# crash in one target does not stop the others. The evolving working corpus is
+# kept in the Actions cache (never committed); checked-in seeds remain the
+# reproducible starting point in fuzz/seeds/.
+#
+# A failing job means the target crashed, timed out, or exhausted memory. The
+# reproducer is in the uploaded `fuzz-artifacts-*` artifact; copy a trimmed
+# version into fuzz/seeds/<target>/ as a named regression seed once fixed.
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Offset from the audit (00:00) and gate/soak (03:17) schedules.
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Fuzz budget per target, in seconds"
+        required: false
+        default: "3600"
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Do not let a manual dispatch and the nightly run fuzz the same corpus
+    # concurrently; the second waits rather than interleaving cache saves.
+    concurrency:
+      group: fuzz-nightly-${{ matrix.target }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - hostcall_envelope
+          - multi_memory_header
+          - frame_codec
+          - module_probing
+    env:
+      CARGO_TERM_COLOR: always
+      FUZZ_TARGETS: ${{ matrix.target }}
+      FUZZ_SECONDS: ${{ github.event.inputs.seconds || '3600' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: nightly
+      - name: install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+        env:
+          RUSTFLAGS: ""
+      - name: ensure working corpus directory
+        if: always()
+        run: mkdir -p "fuzz/corpus/${{ matrix.target }}"
+      # Caches are immutable, so the key changes every attempt and the prefix
+      # selects the most recent corpus for this target. Restore and save are
+      # split so the corpus is kept even when fuzzing finds a crash and fails
+      # the job. The cache is best-effort: a miss only costs rediscovery, and
+      # correctness never depends on it.
+      - name: restore working corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+      - name: fuzz
+        run: scripts/fuzz-smoke.sh
+      # Keep the cached corpus small. This does not touch fuzz/seeds/: the
+      # checked-in corpus changes only through a reviewed refresh.
+      - name: minimise working corpus
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          if [ -z "$(find "fuzz/corpus/$target" -type f -print -quit)" ]; then
+            echo "no corpus to minimise"
+            exit 0
+          fi
+          tmp="$(mktemp -d)"
+          cargo +nightly fuzz cmin "$target" "$tmp" "fuzz/corpus/$target"
+          rm -rf "fuzz/corpus/$target"
+          mkdir -p "fuzz/corpus/$target"
+          cp "$tmp"/* "fuzz/corpus/$target"/
+          rm -rf "$tmp"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### Fuzz ${{ matrix.target }}"
+            echo ""
+            echo "- budget: ${FUZZ_SECONDS}s"
+            echo "- corpus: $(find "fuzz/corpus/${{ matrix.target }}" -type f 2>/dev/null | wc -l) files"
+            echo "- crash artifacts: $(find "fuzz/artifacts/${{ matrix.target }}" -type f 2>/dev/null | wc -l)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: upload crash artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: save working corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}

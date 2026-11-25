@@ -6,7 +6,9 @@ a target crash, hang, or exhaust memory fails CI in seconds.
 
 Inputs discovered by a run are written to the gitignored
 `fuzz/corpus/<target>/` instead, so a local or CI fuzz run never dirties the
-tree.
+tree. The scheduled nightly workflow (`.github/workflows/fuzz-nightly.yml`)
+extends the budget per target, keeps that working corpus in the Actions cache,
+and uploads crash reproducers as workflow artifacts.
 
 ## Naming
 
