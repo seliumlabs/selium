@@ -73,12 +73,12 @@ CI runner can sustain. Sustained multi-tenant load, adversarial scheduling, and
 hour-scale runs are not covered, so slow leaks beyond the soak window are
 unknown.
 
-## Adversarial wire input beyond the fuzz-smoke corpus
+## Adversarial wire input beyond the fuzz-smoke seed corpus
 
 Hand-written codec tests cover malformed, truncated, and conflicting frames at
-each parser, and `scripts/fuzz-smoke.sh` replays a checked-in corpus through
-every hardening target. What remains unknown is coverage beyond each lane's
-short wall-clock budget and the quality of the seed corpus; see the
+each parser, and `scripts/fuzz-smoke.sh` replays a checked-in seed corpus
+through every hardening target. What remains unknown is coverage beyond each
+lane's short wall-clock budget and the quality of the seed corpus; see the
 continuous-fuzzing limitation below.
 
 ## Guest ABI drift is lockstep, not a compatibility window
@@ -94,8 +94,8 @@ released in lockstep; no broader compatibility window is claimed.
 ## Continuous fuzzing is not yet a merge gate
 
 Short fuzz-smoke targets cover hostcall envelopes, multi-memory headers, frame
-codecs, and module probing (`scripts/fuzz-smoke.sh`, seeded corpus under
-`fuzz/corpus/`), and run in a bounded CI lane. They are not continuous fuzzing:
+codecs, and module probing (`scripts/fuzz-smoke.sh`, seed corpus under
+`fuzz/seeds/`), and run in a bounded CI lane. They are not continuous fuzzing:
 coverage beyond each lane's short wall-clock budget, dictionary quality, and
 long-horizon discovery remain unknown.
 

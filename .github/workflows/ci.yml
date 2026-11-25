@@ -100,8 +100,8 @@ jobs:
         run: cargo install cargo-fuzz --locked
         env:
           RUSTFLAGS: ""
-      # Short bounded lane over the checked-in corpus: catches a harness or
-      # target that is broken on its seeds without waiting for long fuzzing.
+      # Short bounded lane over the checked-in seed corpus: catches a harness
+      # or target that is broken on its seeds without waiting for long fuzzing.
       - name: fuzz smoke
         run: scripts/fuzz-smoke.sh
         working-directory: proto/arch3

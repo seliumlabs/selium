@@ -78,7 +78,7 @@ each pinned tool version is checked in.
 | Lane | Command | Pin |
 | --- | --- | --- |
 | Security audit | `cargo audit -D warnings -D unmaintained -D unsound -D yanked` | `cargo-audit 0.22.2` |
-| Fuzz smoke | `scripts/fuzz-smoke.sh` (short bounded run over the checked-in corpus) | `cargo-fuzz 0.13.2`, `nightly-2026-10-25` (the script checks both) |
+| Fuzz smoke | `scripts/fuzz-smoke.sh` (short bounded run over the checked-in seed corpus) | `cargo-fuzz 0.13.2`, `nightly-2026-10-25` (the script checks both) |
 | Soak and crash | `scripts/gate.sh --soak` (`soak`, `crash_consistency`) | — |
 | Miri | `rustup component add miri --toolchain nightly-2026-10-25 && cargo +nightly-2026-10-25 miri test -p selium-memory --lib` | dated nightly + `miri` component |
 

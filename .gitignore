@@ -2,5 +2,8 @@
 /fuzz/target
 /fuzz/artifacts
 /fuzz/coverage
+# Working corpus written by `cargo fuzz run`; checked-in seeds live in
+# fuzz/seeds/.
+/fuzz/corpus
 .opencode
 .worktree
