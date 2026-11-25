@@ -31,7 +31,7 @@ They minimise different things:
 | Command | Minimises | Use it for |
 | --- | --- | --- |
 | `cargo fuzz tmin <target> <one-input>` | One crashing input into the smallest input that still triggers it | Triage and regression seeds |
-| `cargo fuzz cmin <target> <out-dir> <corpus-dir>` | A whole corpus into a coverage-equivalent subset | Refreshing `fuzz/seeds/` |
+| `cargo fuzz cmin <target> <corpus-dir>` | A whole corpus into a coverage-equivalent subset, in place | Refreshing `fuzz/seeds/` |
 
 Using `cmin` on a single crash does not produce a minimal reproducer; using
 `tmin` on a corpus is not a corpus refresh.
@@ -67,16 +67,27 @@ first, as below, so the committed corpus stays small and reviewable.
 ## Refreshing a minimised corpus
 
 The committed corpus is a minimised snapshot, not a dump of every input a run
-ever found. After a longer run has populated `fuzz/corpus/<target>/`, refresh
-a target's seeds with `cargo fuzz cmin`:
+ever found. After a longer run has populated `fuzz/corpus/<target>/`, minimise
+that working corpus in place:
 
 ```bash
-cargo +nightly fuzz cmin <target> fuzz/seeds/<target> fuzz/corpus/<target>
+cargo +nightly fuzz cmin <target> fuzz/corpus/<target>
 ```
 
-The first directory is the output (and receives the minimised union); the
-remaining directories are merged into it. Re-run the smoke lane afterwards and
-commit the result as a deliberate corpus refresh.
+`cmin` takes **one** corpus directory. To build a union with the seeds, copy
+both into a temporary directory first:
+
+```bash
+tmp="$(mktemp -d)"
+cp -R fuzz/seeds/<target>/. "$tmp"/
+cp -R fuzz/corpus/<target>/. "$tmp"/
+cargo +nightly fuzz cmin <target> "$tmp"
+```
+
+Then promote the coverage-adding files additively: copy new files into
+`fuzz/seeds/<target>/` without replacing or deleting the existing named
+regression seeds. Re-run the smoke lane and commit the result as a deliberate
+corpus refresh.
 
 Do not run `cmin` on `frame_codec`: it renames the hand-written seeds to content
 hashes and loses their descriptions.

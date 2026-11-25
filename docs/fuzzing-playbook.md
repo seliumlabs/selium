@@ -222,17 +222,21 @@ gh run download <run-id> --repo <owner>/<repo> \
 mkdir -p fuzz/corpus/<target>
 cp -R /tmp/fuzz-nightly/fuzz-corpus-<target>-*/. fuzz/corpus/<target>/
 
-# Minimise the union of the existing seeds and the downloaded corpus.
-cargo +nightly fuzz cmin <target> fuzz/seeds/<target> fuzz/corpus/<target>
+# `cmin` takes one directory. Minimise the working corpus in place...
+cargo +nightly fuzz cmin <target> fuzz/corpus/<target>
 
-git status --short fuzz/seeds
-scripts/fuzz-smoke.sh
+# ...or minimise a union of seeds and corpus in a temporary directory.
+tmp="$(mktemp -d)"
+cp -R fuzz/seeds/<target>/. "$tmp"/
+cp -R fuzz/corpus/<target>/. "$tmp"/
+cargo +nightly fuzz cmin <target> "$tmp"
 ```
 
-Review the seed delta (mostly hash-named files), run the smoke lane, and commit
-it as a deliberate corpus refresh. The named regression seed from step 6 stays:
-`cmin` minimises for coverage, and a crash reproducer may not add unique
-coverage, so it can disappear from the minimised output.
+Promote files additively: copy the new files from the minimised directory into
+`fuzz/seeds/<target>/` without replacing or deleting the existing seeds. Run
+the smoke lane and commit the result as a deliberate corpus refresh. Keep the
+named regression seed from step 6: `cmin` minimises for coverage, and a crash
+reproducer may not add unique coverage.
 
 Do not run `cmin` on `frame_codec`: it renames the hand-written seeds by
 content hash and loses their descriptions. Add new `frame_codec` regression
@@ -247,7 +251,7 @@ seeds by hand.
 | Download corpus | `gh run download <id> --pattern 'fuzz-corpus-<target>-*' -D /tmp/fuzz-nightly` |
 | Reproduce one input | `cargo +nightly fuzz run <target> <input> -- -runs=1` |
 | Minimise one crash | `cargo +nightly fuzz tmin <target> <input>` |
-| Minimise the corpus | `cargo +nightly fuzz cmin <target> fuzz/seeds/<target> fuzz/corpus/<target>` |
+| Minimise the corpus | `cargo +nightly fuzz cmin <target> <corpus-dir>` (one directory, in place) |
 | Replay seeds + fuzz | `scripts/fuzz-smoke.sh` |
 | Run one target longer | `FUZZ_TARGETS=<target> FUZZ_SECONDS=300 scripts/fuzz-smoke.sh` |
 | Trigger a short nightly | `gh workflow run fuzz-nightly.yml -f seconds=300` |

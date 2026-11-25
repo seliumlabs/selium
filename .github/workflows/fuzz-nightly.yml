@@ -77,8 +77,11 @@ jobs:
             fuzz-corpus-${{ matrix.target }}-
       - name: fuzz
         run: scripts/fuzz-smoke.sh
-      # Keep the cached corpus small. This does not touch fuzz/seeds/: the
-      # checked-in corpus changes only through a reviewed refresh.
+      # Keep the cached corpus small. cargo-fuzz 0.13.2's `cmin` minimises one
+      # directory in place; the checked-in seeds are passed separately during
+      # fuzzing, so minimising the working corpus is enough for the cache. This
+      # does not touch fuzz/seeds/: that changes only through a reviewed
+      # refresh.
       - name: minimise working corpus
         run: |
           set -euo pipefail
@@ -87,12 +90,7 @@ jobs:
             echo "no corpus to minimise"
             exit 0
           fi
-          tmp="$(mktemp -d)"
-          cargo +nightly fuzz cmin "$target" "$tmp" "fuzz/corpus/$target"
-          rm -rf "fuzz/corpus/$target"
-          mkdir -p "fuzz/corpus/$target"
-          cp "$tmp"/* "fuzz/corpus/$target"/
-          rm -rf "$tmp"
+          cargo +nightly fuzz cmin "$target" "fuzz/corpus/$target"
       - name: summary
         if: always()
         run: |
