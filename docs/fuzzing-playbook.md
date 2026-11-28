@@ -340,7 +340,10 @@ then opens a **draft** PR. It never merges.
 It needs:
 
 - `FUZZ_BOT_TOKEN` — the same PAT as the corpus job;
-- `OPENCODE_GO_API_KEY` — mapped to OpenCode's `OPENCODE_API_KEY` in the job;
+- `id-token: write` and an OpenCode Console workspace that trusts this
+  repository's GitHub OIDC token. The job exchanges the OIDC token for a
+  short-lived `OPENCODE_API_KEY`, exposes it only to the agent step, and stores
+  no long-lived model key;
 - `OPENCODE_MODEL` — defaults to `opencode-go/deepseek-v4.1-flash`.
 
 If the crash cannot be reproduced, has no attributable symbols, or is in

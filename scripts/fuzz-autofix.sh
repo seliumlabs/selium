@@ -148,6 +148,7 @@ PROMPT="$TMP/prompt.md"
 echo "fuzz-autofix: asking opencode ($OPENCODE_MODEL) to fix $TARGET"
 # Do not give the agent the GitHub write token.
 env -u GH_TOKEN -u GITHUB_TOKEN -u GIT_ASKPASS -u GIT_ASKPASS_TOKEN \
+  -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
   opencode run --standalone --auto --archived \
     --model "$OPENCODE_MODEL" \
     --file "$LOG" \

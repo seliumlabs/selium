@@ -9,7 +9,8 @@ name: Fuzz autofix
 #   - repository variable FUZZ_AUTOFIX_ENABLED=true
 #   - secret FUZZ_BOT_TOKEN: a fine-grained PAT with contents:write and
 #     pull-requests:write (GITHUB_TOKEN cannot trigger the PR's own CI)
-#   - secret OPENCODE_GO_API_KEY
+#   - id-token: write and an OpenCode Console workspace that trusts this
+#     repository's GitHub OIDC token; no long-lived model key is stored
 #   - an llvm symbolizer so the stack can distinguish selium from wasmtiny
 
 on:
@@ -34,6 +35,7 @@ jobs:
       actions: read
       contents: write
       pull-requests: write
+      id-token: write
     env:
       OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode-go/deepseek-v4.1-flash' }}
     steps:
@@ -54,6 +56,28 @@ jobs:
           RUSTFLAGS: ""
       - name: install opencode
         run: npm install --global @opencode/cli
+      # Short-lived OpenCode Console credential via GitHub OIDC. The token is
+      # masked and exposed only to the step that runs the agent; it is not
+      # written to the persistent Actions environment.
+      - name: sign in to OpenCode
+        id: opencode-auth
+        env:
+          AUDIENCE: https://opencode.ai/console
+        run: |
+          set -euo pipefail
+          oidc="$(curl -sSf --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value)"
+          token="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+            -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+            -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+            -d client_id=sk_c33f0e5c-9179-4a39-987f-c94e1331afa0 \
+            -d subject_token="$oidc" | jq -r .access_token)"
+          if [ -z "$token" ] || [ "$token" = "null" ]; then
+            echo "OpenCode token exchange returned no access token" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
       - name: download crash artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,7 +91,7 @@ jobs:
       - name: attempt fix
         env:
           GH_TOKEN: ${{ secrets.FUZZ_BOT_TOKEN }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
+          OPENCODE_API_KEY: ${{ steps.opencode-auth.outputs.token }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}
         run: scripts/fuzz-autofix.sh "$RUNNER_TEMP/crashes"
