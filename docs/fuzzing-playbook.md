@@ -306,8 +306,10 @@ The working order is therefore:
 
 ## 7. Automated helpers
 
-Two optional lanes reduce the manual work; both are fail-closed and require a
-bot token because `GITHUB_TOKEN`-created PRs do not trigger their own CI.
+Two optional lanes reduce the manual work; both are fail-closed and use the
+upstream fuzz GitHub App because `GITHUB_TOKEN`-created PRs do not trigger
+their own CI. They run only when `github.repository` is
+`seliumlabs/selium`; a copy on a personal fork skips the jobs.
 
 ### Corpus PRs
 
@@ -324,9 +326,10 @@ Tune it with repository variables:
 - `FUZZ_SEED_MAX_FILES` (default `100`)
 - `FUZZ_SEED_MAX_BYTES` (default `262144`)
 
-The job needs `FUZZ_BOT_TOKEN` to be a PAT, not `GITHUB_TOKEN`, with repository
-contents and pull-request write access. Corpus candidates are add-only; named
-regression seeds are never deleted by the bot.
+The upstream repository needs the fuzz GitHub App installed, with secrets
+`FUZZ_APP_ID` and `FUZZ_APP_PRIVATE_KEY` (contents and pull-request write).
+Corpus candidates are add-only; named regression seeds are never deleted by
+the bot.
 
 ### Auto-fix
 
@@ -339,8 +342,9 @@ then opens a **draft** PR. It never merges.
 
 It needs:
 
-- `FUZZ_BOT_TOKEN` — the same PAT as the corpus job;
-- `id-token: write` and an OpenCode Console workspace that trusts this
+- the same fuzz GitHub App installation (`FUZZ_APP_ID`,
+  `FUZZ_APP_PRIVATE_KEY`) on the upstream repository;
+- `id-token: write` and an OpenCode Console workspace that trusts the upstream
   repository's GitHub OIDC token. The job exchanges the OIDC token for a
   short-lived `OPENCODE_API_KEY`, exposes it only to the agent step, and stores
   no long-lived model key;

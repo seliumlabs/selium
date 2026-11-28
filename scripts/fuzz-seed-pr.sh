@@ -31,7 +31,7 @@ RUN_URL="${RUN_URL:-}"
 FAILED=0
 
 if [ -z "${GH_TOKEN:-}" ]; then
-  echo "fuzz-seed-pr: FUZZ_BOT_TOKEN is not configured; skipping corpus PRs"
+  echo "fuzz-seed-pr: no GitHub App token in GH_TOKEN; skipping corpus PRs"
   exit 0
 fi
 if [ -z "${GITHUB_REPOSITORY:-}" ]; then

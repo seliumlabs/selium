@@ -1,8 +1,9 @@
 name: Fuzz nightly
 
-# Long-budget fuzzing, separate from the merge gate. One job per target, so a
-# crash in one target does not stop the others. The evolving working corpus is
-# kept in the Actions cache (never committed); checked-in seeds remain the
+# Long-budget fuzzing, separate from the merge gate. Sensitive lanes run only
+# on the upstream repository; copies on forks are inert. One job per target, so
+# a crash in one target does not stop the others. The evolving working corpus
+# is kept in the Actions cache (never committed); checked-in seeds remain the
 # reproducible starting point in fuzz/seeds/.
 #
 # A failing job means the target crashed, timed out, or exhausted memory. The
@@ -34,6 +35,7 @@ on:
 jobs:
   fuzz:
     name: Fuzz ${{ matrix.target }}
+    if: github.repository == 'seliumlabs/selium'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -151,12 +153,15 @@ jobs:
 
   # One PR per target, updated in place on later runs. The branch is always
   # reset onto the base branch, so PRs never depend on one another and each is
-  # independently mergeable. This requires a bot PAT in FUZZ_BOT_TOKEN:
-  # GITHUB_TOKEN-created PRs do not trigger their own CI.
+  # independently mergeable. Uses the upstream fuzz GitHub App: the installation
+  # token triggers the PR's own CI, unlike GITHUB_TOKEN.
   corpus-pr:
     name: Corpus PRs
     needs: fuzz
-    if: always() && (github.event_name == 'schedule' || inputs.open_prs)
+    if: >-
+      always() &&
+      github.repository == 'seliumlabs/selium' &&
+      (github.event_name == 'schedule' || inputs.open_prs)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -164,9 +169,17 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.FUZZ_APP_ID }}
+          private-key: ${{ secrets.FUZZ_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
+          token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
         with:
@@ -190,7 +203,7 @@ jobs:
           fi
       - name: open or update corpus PRs
         env:
-          GH_TOKEN: ${{ secrets.FUZZ_BOT_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
