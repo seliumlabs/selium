@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Attempt a gated auto-fix for a failed fuzz target.
+# Prepare a gated auto-fix for a failed fuzz target.
 #
-# Usage: scripts/fuzz-autofix.sh <downloaded-crash-artifacts-dir>
+# Usage: scripts/fuzz-autofix-prepare.sh <downloaded-crash-artifacts-dir>
 #
-# The caller has already checked out the base branch, installed nightly,
-# cargo-fuzz, symbolizer tools, and OpenCode. This script:
-#   1. reproduces and classifies the first crash;
-#   2. refuses to patch when the fault is in wasmtiny or cannot be attributed;
-#   3. asks OpenCode to fix a Selium-owned fault;
-#   4. rejects changes outside source/tests/seeds, verifies, and opens a draft PR.
+# This phase needs no GitHub write credential. It reproduces and classifies the
+# crash, mints a short-lived OpenCode token just before invoking the agent,
+# applies the path allowlist, verifies the result, and commits locally. A
+# separate publish step mints the GitHub App token and pushes the branch.
 #
 # Environment:
-#   GH_TOKEN           bot token (contents:write, pull-requests:write)
-#   OPENCODE_API_KEY   provider key
+#   GH_TOKEN           optional read-only token, for duplicate-PR checks
 #   OPENCODE_MODEL     model id (default: opencode-go/deepseek-v4.1-flash)
+#   AUDIENCE           OpenCode OIDC audience (default: https://opencode.ai/console)
+#   OPENCODE_CLIENT_ID OpenCode OAuth client id
 #   BASE_BRANCH        base branch (default: main)
 #   RUN_URL            link to the failed nightly run
+#   GITHUB_OUTPUT      set by Actions; receives eligible/target/branch/hash
 
 set -euo pipefail
 
@@ -28,30 +28,32 @@ if [ $# -ne 1 ]; then
 fi
 
 ARTIFACTS="$1"
-BASE_BRANCH="${BASE_BRANCH:-main}"
 NIGHTLY="${SELIUM_NIGHTLY_TOOLCHAIN:-nightly}"
 OPENCODE_MODEL="${OPENCODE_MODEL:-opencode-go/deepseek-v4.1-flash}"
+OPENCODE_CLIENT_ID="${OPENCODE_CLIENT_ID:-sk_c33f0e5c-9179-4a39-987f-c94e1331afa0}"
+AUDIENCE="${AUDIENCE:-https://opencode.ai/console}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
 RUN_URL="${RUN_URL:-}"
 
-if [ -z "${GH_TOKEN:-}" ] || [ -z "${OPENCODE_API_KEY:-}" ]; then
-  echo "fuzz-autofix: GH_TOKEN and OPENCODE_API_KEY are required" >&2
-  exit 1
-fi
-if [ -z "${GITHUB_REPOSITORY:-}" ]; then
-  echo "fuzz-autofix: GITHUB_REPOSITORY is required" >&2
-  exit 1
-fi
-REMOTE_URL="https://x-access-token@github.com/${GITHUB_REPOSITORY}.git"
+set_output() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf '%s\n' "$1" >> "$GITHUB_OUTPUT"
+  fi
+}
+
+not_eligible() {
+  echo "fuzz-autofix: $1"
+  set_output "eligible=false"
+  exit 0
+}
 
 if [ ! -d "$ARTIFACTS" ]; then
-  echo "fuzz-autofix: no crash artifacts at $ARTIFACTS"
-  exit 0
+  not_eligible "no crash artifacts at $ARTIFACTS"
 fi
 
 CRASH="$(find "$ARTIFACTS" -type f -print | sort | head -n 1)"
 if [ -z "$CRASH" ]; then
-  echo "fuzz-autofix: no crash files in $ARTIFACTS"
-  exit 0
+  not_eligible "no crash files in $ARTIFACTS"
 fi
 
 ARTIFACT_DIR="$(basename "$(dirname "$CRASH")")"
@@ -79,15 +81,6 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/selium-fuzz-autofix.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 LOG="$TMP/repro.log"
 
-# Feed the token to git through an askpass helper rather than embedding it in a
-# remote URL or leaving it in the checkout's credential store.
-ASKPASS="$TMP/git-askpass.sh"
-printf '#!/bin/sh\nprintf "%%s\\n" "$GIT_ASKPASS_TOKEN"\n' > "$ASKPASS"
-chmod +x "$ASKPASS"
-export GIT_ASKPASS="$ASKPASS"
-export GIT_ASKPASS_TOKEN="$GH_TOKEN"
-export GIT_TERMINAL_PROMPT=0
-
 SYMBOLIZER="$(rustc +"$NIGHTLY" --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-symbolizer"
 if [ -x "$SYMBOLIZER" ]; then
   export ASAN_SYMBOLIZER_PATH="$SYMBOLIZER"
@@ -105,8 +98,7 @@ REPRO_STATUS=$?
 set -e
 
 if [ "$REPRO_STATUS" -eq 0 ]; then
-  echo "fuzz-autofix: the crash did not reproduce; not patching"
-  exit 0
+  not_eligible "the crash did not reproduce; not patching"
 fi
 
 if grep -qiE 'wasmtiny' "$LOG"; then
@@ -119,19 +111,18 @@ fi
 
 echo "fuzz-autofix: owner=$OWNER"
 if [ "$OWNER" != "selium" ]; then
-  echo "fuzz-autofix: refusing to patch a non-Selium fault; see the attached log"
-  exit 0
+  not_eligible "refusing to patch a non-Selium fault; see the attached log"
 fi
 
 BRANCH="fuzz-autofix/$TARGET-${HASH:0:12}"
-EXISTING_PR="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
-if [ -n "$EXISTING_PR" ]; then
-  echo "fuzz-autofix: PR #$EXISTING_PR already tracks $BRANCH; leaving it alone"
-  exit 0
+if [ -n "${GH_TOKEN:-}" ]; then
+  EXISTING_PR="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+  if [ -n "$EXISTING_PR" ]; then
+    not_eligible "PR #$EXISTING_PR already tracks $BRANCH"
+  fi
 fi
 
-git fetch "$REMOTE_URL" "$BASE_BRANCH"
-git checkout -B "$BRANCH" FETCH_HEAD
+git checkout -B "$BRANCH"
 
 PROMPT="$TMP/prompt.md"
 {
@@ -145,17 +136,39 @@ PROMPT="$TMP/prompt.md"
   fi
 } > "$PROMPT"
 
+if [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+  echo "fuzz-autofix: OIDC request environment is missing" >&2
+  exit 1
+fi
+
+echo "fuzz-autofix: minting a short-lived OpenCode token"
+OIDC="$(curl -sSf --oauth2-bearer "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+  "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE" | jq -r .value)"
+OPENCODE_TOKEN="$(curl -sSf https://opencode.ai/console/auth/oauth/token \
+  -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+  -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
+  -d client_id="$OPENCODE_CLIENT_ID" \
+  -d subject_token="$OIDC" | jq -r .access_token)"
+if [ -z "$OPENCODE_TOKEN" ] || [ "$OPENCODE_TOKEN" = "null" ]; then
+  echo "fuzz-autofix: OpenCode token exchange returned no access token" >&2
+  exit 1
+fi
+echo "::add-mask::$OPENCODE_TOKEN"
+unset OIDC ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+
 echo "fuzz-autofix: asking opencode ($OPENCODE_MODEL) to fix $TARGET"
-# Do not give the agent the GitHub write token.
+# The agent gets the model token, but no GitHub credential and no OIDC request
+# environment from which it could mint another one.
 env -u GH_TOKEN -u GITHUB_TOKEN -u GIT_ASKPASS -u GIT_ASKPASS_TOKEN \
   -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+  OPENCODE_API_KEY="$OPENCODE_TOKEN" \
   opencode run --standalone --auto --archived \
     --model "$OPENCODE_MODEL" \
     --file "$LOG" \
     "$(cat "$PROMPT")"
 
 if [ -z "$(git status --porcelain)" ]; then
-  echo "fuzz-autofix: opencode made no changes; not opening a PR"
+  echo "fuzz-autofix: opencode made no changes; not opening a PR" >&2
   exit 1
 fi
 
@@ -176,7 +189,7 @@ fi
 git add -A
 CHANGED="$(git diff --cached --name-only)"
 if [ -z "$CHANGED" ]; then
-  echo "fuzz-autofix: no staged changes; not opening a PR"
+  echo "fuzz-autofix: no staged changes; not opening a PR" >&2
   exit 1
 fi
 
@@ -210,26 +223,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 git config user.name "selium-fuzz-bot"
 git config user.email "fuzz-bot@users.noreply.github.com"
 git commit -m "Fix $TARGET fuzz crash" --quiet
-git push --force "$REMOTE_URL" "$BRANCH"
 
-BODY="$TMP/pr-body.md"
-{
-  echo "Automated fix attempt for a \`$TARGET\` fuzz crash."
-  echo ""
-  echo "- reproducer: \`$HASH\`"
-  if [ -n "$RUN_URL" ]; then
-    echo "- failed run: $RUN_URL"
-  fi
-  echo "- model: \`$OPENCODE_MODEL\`"
-  echo ""
-  echo "The change passed the local reproduction, the target smoke lane,"
-  echo "formatting, and workspace clippy. The normal CI gate still applies;"
-  echo "this PR is a draft and is not auto-merged."
-} > "$BODY"
-
-gh pr create \
-  --draft \
-  --base "$BASE_BRANCH" \
-  --head "$BRANCH" \
-  --title "[fuzz] Fix $TARGET crash" \
-  --body-file "$BODY"
+set_output "eligible=true"
+set_output "target=$TARGET"
+set_output "branch=$BRANCH"
+set_output "hash=$HASH"
+echo "fuzz-autofix: prepared $BRANCH; the publish step will mint the App token"

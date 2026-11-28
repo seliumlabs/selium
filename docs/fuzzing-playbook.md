@@ -345,10 +345,14 @@ It needs:
 - the same fuzz GitHub App installation (`FUZZ_APP_ID`,
   `FUZZ_APP_PRIVATE_KEY`) on the upstream repository;
 - `id-token: write` and an OpenCode Console workspace that trusts the upstream
-  repository's GitHub OIDC token. The job exchanges the OIDC token for a
-  short-lived `OPENCODE_API_KEY`, exposes it only to the agent step, and stores
-  no long-lived model key;
+  repository's GitHub OIDC token. The OIDC exchange happens immediately before
+  the agent, the resulting `OPENCODE_API_KEY` is exposed only to that child
+  process, and no long-lived model key is stored;
 - `OPENCODE_MODEL` — defaults to `opencode-go/deepseek-v4.1-flash`.
+
+The GitHub App installation token is minted only after the agent and local
+verification finish, immediately before the short push/PR step. A long agent
+run therefore cannot expire the App token.
 
 If the crash cannot be reproduced, has no attributable symbols, or is in
 `wasmtiny`, the job stops without a PR. The agent is treated as untrusted: it
