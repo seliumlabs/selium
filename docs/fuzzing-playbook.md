@@ -303,3 +303,47 @@ The working order is therefore:
 - [ ] Added it as a named seed and ran `scripts/fuzz-smoke.sh`.
 - [ ] Pushed and confirmed the smoke and gate jobs.
 - [ ] Only after green: downloaded the corpus and ran `cmin`.
+
+## 7. Automated helpers
+
+Two optional lanes reduce the manual work; both are fail-closed and require a
+bot token because `GITHUB_TOKEN`-created PRs do not trigger their own CI.
+
+### Corpus PRs
+
+On a scheduled `Fuzz nightly` run, or a manual dispatch with
+`open_prs: true`, each successful target computes a coverage-adding candidate
+and the `Corpus PRs` job opens or updates one branch per target
+(`fuzz-seeds/<target>`). The branch is always based on the default branch and
+is force-updated by the next run, so there is at most one open PR per target
+and each PR is independently mergeable.
+
+Tune it with repository variables:
+
+- `FUZZ_SEED_MIN_FEATURE_DELTA` (default `1`)
+- `FUZZ_SEED_MAX_FILES` (default `100`)
+- `FUZZ_SEED_MAX_BYTES` (default `262144`)
+
+The job needs `FUZZ_BOT_TOKEN` to be a PAT, not `GITHUB_TOKEN`, with repository
+contents and pull-request write access. Corpus candidates are add-only; named
+regression seeds are never deleted by the bot.
+
+### Auto-fix
+
+On a failed **scheduled** run, with repository variable
+`FUZZ_AUTOFIX_ENABLED=true`, the `Fuzz autofix` workflow reproduces the crash,
+symbolises the stack, and refuses to patch anything owned by `wasmtiny`. For a
+Selium-owned fault it asks OpenCode to fix it, enforces a source/test/seed path
+allowlist, replays the reproducer, runs the smoke lane, formatting, and clippy,
+then opens a **draft** PR. It never merges.
+
+It needs:
+
+- `FUZZ_BOT_TOKEN` — the same PAT as the corpus job;
+- `OPENCODE_GO_API_KEY` — mapped to OpenCode's `OPENCODE_API_KEY` in the job;
+- `OPENCODE_MODEL` — defaults to `opencode-go/deepseek-v4.1-flash`.
+
+If the crash cannot be reproduced, has no attributable symbols, or is in
+`wasmtiny`, the job stops without a PR. The agent is treated as untrusted: it
+gets no GitHub write token, cannot change CI, scripts, manifests, lockfiles, or
+build scripts, and its changes are reviewed in a draft PR.
