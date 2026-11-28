@@ -52,14 +52,14 @@ jobs:
           repository: seliumlabs/wasmtiny
           path: wasmtiny
           continue-on-error: true
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: stable
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
       # The atomics net-demo and mt-demo prerequisites need nightly + rust-src;
       # scripts/build-all.sh builds them as part of the gate.
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: nightly
           components: rust-src
@@ -94,7 +94,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: proto/arch3
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: nightly
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -127,11 +127,11 @@ jobs:
           repository: seliumlabs/wasmtiny
           path: wasmtiny
           continue-on-error: true
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc
         with:
           toolchain: nightly
           components: rust-src
